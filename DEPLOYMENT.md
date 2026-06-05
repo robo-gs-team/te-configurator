@@ -30,7 +30,8 @@ SHOPIFY_API_SECRET=your_client_secret
 SCOPES=read_products,write_products,read_themes,write_themes
 SHOPIFY_APP_URL=https://your-tunnel-url.com
 SHOP=your-store.myshopify.com
-DATABASE_URL="file:./dev.sqlite"
+DATABASE_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
+DIRECT_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
 ```
 
 ## 3. Install dependencies
@@ -46,7 +47,7 @@ npm run db:push
 npm run db:seed
 ```
 
-For production with PostgreSQL, change `provider` in `prisma/schema.prisma` to `postgresql` and set `DATABASE_URL`.
+The schema uses PostgreSQL. Use a Neon, Vercel Postgres, or Supabase database for both local dev and production.
 
 ## 5. Link app config
 
@@ -97,18 +98,60 @@ Configured in `shopify.app.toml`:
 
 The CLI updates proxy URL on deploy. Verify in Partners → App setup → App proxy.
 
-## 10. Production build
+## 10. Deploy to Vercel
+
+### Prerequisites
+
+- GitHub repo connected to [Vercel](https://vercel.com)
+- PostgreSQL database (Neon, Vercel Postgres, or Supabase)
+- Shopify Partners app credentials
+
+### Vercel project setup
+
+1. **Import** the `robo-gs-team/te-configurator` repo in Vercel
+2. Framework preset: **Remix** (auto-detected)
+3. **Disable Vercel Authentication** under Project Settings → Deployment Protection (prevents 401 in Shopify admin iframe)
+4. Set **Node.js version** to `20.x`
+
+Build settings are configured in `vercel.json` — the `vercel-build` script runs Prisma migrations then builds the app.
+
+### Environment variables (Vercel → Settings → Environment Variables)
+
+| Variable | Description |
+|----------|-------------|
+| `SHOPIFY_API_KEY` | Client ID from Partners Dashboard |
+| `SHOPIFY_API_SECRET` | Client secret |
+| `SCOPES` | `read_products,write_products,read_themes,write_themes` |
+| `SHOPIFY_APP_URL` | Your Vercel URL, e.g. `https://te-configurator.vercel.app` |
+| `SHOP` | Store domain, e.g. `your-store.myshopify.com` |
+| `DATABASE_URL` | PostgreSQL pooled connection string |
+| `DIRECT_URL` | PostgreSQL direct connection string (for migrations) |
+
+If using **Vercel Postgres**, set `DATABASE_URL` to `POSTGRES_PRISMA_URL` and `DIRECT_URL` to `POSTGRES_URL_NON_POOLING`.
+
+### After first Vercel deploy
+
+1. Copy your live Vercel URL
+2. Update `shopify.app.production.toml` with that URL (`application_url`, `redirect_urls`, `app_proxy.url`)
+3. Update the same URLs in **Partners → App setup**
+4. Deploy Shopify extensions:
 
 ```bash
-npm run build
-npm run setup
-npm run start
+npm run config:use production
+shopify app deploy
 ```
 
-Deploy to your host (Fly.io, Railway, Render, VPS). Set all env vars including:
+5. Reinstall the app on your store if OAuth URLs changed
 
-- `SHOPIFY_APP_URL` = production HTTPS URL
-- `DATABASE_URL` = PostgreSQL connection string
+### Local development with PostgreSQL
+
+Local dev also uses PostgreSQL now. Point `.env` at a Neon/Supabase database (or a local Postgres instance) using the same `DATABASE_URL` and `DIRECT_URL` format from `.env.example`.
+
+```bash
+npm run db:migrate   # apply migrations
+npm run db:seed      # optional seed data
+npm run dev
+```
 
 ## 11. Deploy extensions
 
@@ -126,7 +169,7 @@ app/                    Remix admin + API routes
   lib/                  Business logic, types, conditional rules
 storefront/             Customer-facing modal (React + Zustand + Framer Motion)
 extensions/             Theme app extension (button + embed)
-prisma/                 Database schema (SQLite dev / Postgres prod)
+prisma/                 Database schema (PostgreSQL)
 ```
 
 ## Cart integration
@@ -151,3 +194,6 @@ Uses Shopify `/cart/add.js` with line item properties. Compatible with:
 | Modal doesn't open | Check product ID is assigned to a configurator |
 | Proxy 401 | Verify app proxy URL matches deployed app URL |
 | Cart add fails | Ensure variant IDs are set on options |
+| Vercel 401 in admin | Disable Vercel Authentication in deployment protection |
+| Prisma session table missing | Ensure `vercel-build` runs and `DATABASE_URL`/`DIRECT_URL` are set |
+| Vercel build peer dep error | `vercel.json` uses `npm install --legacy-peer-deps` |

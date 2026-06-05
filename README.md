@@ -18,7 +18,7 @@ Private Shopify app for building premium product configurators on a single store
 - Shopify Remix template
 - React + Vite + Polaris + TailwindCSS
 - Zustand + Framer Motion (storefront)
-- Prisma + SQLite (dev) / PostgreSQL (prod)
+- Prisma + PostgreSQL (Neon / Vercel Postgres)
 
 ## Quick start
 
@@ -63,7 +63,8 @@ prisma/             Database schema + seed
 | `SCOPES` | OAuth scopes |
 | `SHOPIFY_APP_URL` | Public app URL |
 | `SHOP` | Fixed shop domain (private app) |
-| `DATABASE_URL` | SQLite or PostgreSQL connection |
+| `DATABASE_URL` | PostgreSQL pooled connection |
+| `DIRECT_URL` | PostgreSQL direct connection (migrations) |
 
 ## Scripts
 

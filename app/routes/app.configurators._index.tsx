@@ -1,5 +1,5 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
+import { json, redirect } from "@vercel/remix";
 import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
 import {
   Badge,

@@ -4,7 +4,7 @@ import { RemixServer } from "@remix-run/react";
 import {
   createReadableStreamFromReadable,
   type EntryContext,
-} from "@remix-run/node";
+} from "@vercel/remix";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
 
