@@ -1,0 +1,193 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model Shop {
+  id        String   @id @default(cuid())
+  domain    String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  configurators Configurator[]
+  themeSettings ThemeSetting?
+  analytics     Analytics[]
+}
+
+model Configurator {
+  id          String   @id @default(cuid())
+  shopId      String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  productIds  String   @default("[]")
+  basePrice   Float    @default(0)
+  currency    String   @default("USD")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shop   Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  steps  ConfiguratorStep[]
+  addons Addon[]
+  rules  ConditionalRule[]
+
+  @@index([shopId])
+}
+
+model ConfiguratorStep {
+  id             String @id @default(cuid())
+  configuratorId String
+  title          String
+  description    String?
+  stepType       String @default("variant")
+  sortOrder      Int    @default(0)
+  isRequired     Boolean @default(true)
+
+  configurator Configurator  @relation(fields: [configuratorId], references: [id], onDelete: Cascade)
+  optionGroups OptionGroup[]
+
+  @@index([configuratorId])
+}
+
+model OptionGroup {
+  id          String  @id @default(cuid())
+  stepId      String
+  name        String
+  displayType String  @default("swatch")
+  sortOrder   Int     @default(0)
+  isRequired  Boolean @default(true)
+
+  step    ConfiguratorStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  options Option[]
+
+  @@index([stepId])
+}
+
+model Option {
+  id             String  @id @default(cuid())
+  optionGroupId  String
+  label          String
+  value          String
+  imageUrl       String?
+  previewLayer   String?
+  priceAdjust    Float   @default(0)
+  variantId      String?
+  colorHex       String?
+  sortOrder      Int     @default(0)
+  isDefault      Boolean @default(false)
+  metadata       String  @default("{}")
+
+  optionGroup OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+
+  @@index([optionGroupId])
+}
+
+model ConditionalRule {
+  id             String @id @default(cuid())
+  configuratorId String
+  name           String?
+  conditionField String
+  conditionOp    String @default("equals")
+  conditionValue String
+  actionType     String
+  actionTarget   String?
+  actionValue    String @default("{}")
+  isActive       Boolean @default(true)
+  sortOrder      Int    @default(0)
+
+  configurator Configurator @relation(fields: [configuratorId], references: [id], onDelete: Cascade)
+
+  @@index([configuratorId])
+}
+
+model Addon {
+  id             String  @id @default(cuid())
+  configuratorId String
+  name           String
+  description    String?
+  imageUrl       String?
+  price          Float   @default(0)
+  variantId      String?
+  maxQuantity    Int     @default(1)
+  isActive       Boolean @default(true)
+  sortOrder      Int     @default(0)
+  metadata       String  @default("{}")
+
+  configurator Configurator @relation(fields: [configuratorId], references: [id], onDelete: Cascade)
+
+  @@index([configuratorId])
+}
+
+model ThemeSetting {
+  id              String  @id @default(cuid())
+  shopId          String  @unique
+  buttonEnabled   Boolean @default(true)
+  buttonLabel     String  @default("Customize Product")
+  buttonBgColor   String  @default("#111827")
+  buttonTextColor String  @default("#ffffff")
+  buttonRadius    String  @default("12px")
+  buttonPosition  String  @default("after_add_to_cart")
+  modalTheme      String  @default("dark")
+  modalAccent     String  @default("#6366f1")
+  overlayBlur     Int     @default(12)
+  fontFamily      String  @default("system-ui")
+  customCss       String?
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+}
+
+model Analytics {
+  id             String   @id @default(cuid())
+  shopId         String
+  configuratorId String?
+  eventType      String
+  productId      String?
+  sessionId      String?
+  metadata       String   @default("{}")
+  createdAt      DateTime @default(now())
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, eventType])
+  @@index([createdAt])
+}
+
+model SavedConfiguration {
+  id             String   @id @default(cuid())
+  shareId        String   @unique @default(cuid())
+  configuratorId String
+  productId      String
+  selections     String
+  addons         String   @default("[]")
+  totalPrice     Float
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime?
+
+  @@index([shareId])
+  @@index([configuratorId])
+}

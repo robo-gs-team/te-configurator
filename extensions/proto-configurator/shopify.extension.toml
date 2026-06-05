@@ -1,0 +1,6 @@
+api_version = "2025-01"
+name = "proto-configurator"
+type = "theme"
+uid = "90a6476f-451c-7e03-48e1-1349fcf790520bc3eb8d"
+
+[settings]

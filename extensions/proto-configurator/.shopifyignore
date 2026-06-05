@@ -1,0 +1,9 @@
+# Ignore invalid files — Shopify theme extensions only allow specific asset types
+*.ico
+*.gif
+*.webp
+*.woff
+*.woff2
+*.ttf
+*.eot
+*.map

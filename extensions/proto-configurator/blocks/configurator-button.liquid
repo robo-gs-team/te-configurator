@@ -1,0 +1,248 @@
+{% comment %}
+  Proto Switcher Configurator — Product Page Button Block
+  Add via Theme Editor > Product pages > Add block
+
+  When stringing dropdown is enabled, the configure button stays hidden
+  until the merchant-configured trigger option (default: Strung) is selected.
+{% endcomment %}
+
+{% assign button_label = block.settings.button_label | default: 'Configure' %}
+{% assign button_bg = block.settings.button_bg | default: '#c8102e' %}
+{% assign button_text = block.settings.button_text | default: '#ffffff' %}
+{% assign button_radius = block.settings.button_radius | default: 6 %}
+{% assign show_button = block.settings.show_button %}
+{% assign enable_dropdown = block.settings.enable_stringing_dropdown %}
+{% assign dropdown_label = block.settings.dropdown_label | default: 'Choose Your Stringing' %}
+{% assign trigger_option = block.settings.trigger_option | default: 'Strung' %}
+{% assign dropdown_options_raw = block.settings.dropdown_options | default: "Unstrung\nStrung" %}
+{% assign dropdown_options = dropdown_options_raw | newline_to_br | split: '<br />' %}
+
+{% if show_button %}
+  <div
+    class="proto-configurator-button-wrapper"
+    {% if enable_dropdown %}
+      data-proto-stringing-gate
+      data-trigger-value="{{ trigger_option | escape }}"
+      data-hide-theme-buybox="{{ block.settings.hide_theme_buybox | default: true }}"
+    {% endif %}
+    {{ block.shopify_attributes }}
+  >
+    {% if enable_dropdown %}
+      <div class="proto-configurator-field">
+        <label class="proto-configurator-label" for="proto-stringing-{{ block.id }}">
+          {{ dropdown_label }}
+        </label>
+        <div class="proto-configurator-select-wrap">
+          <select
+            id="proto-stringing-{{ block.id }}"
+            class="proto-configurator-select"
+            data-proto-stringing-select
+            aria-label="{{ dropdown_label | escape }}"
+          >
+            {% for option in dropdown_options %}
+              {% assign option_trimmed = option | strip %}
+              {% if option_trimmed != blank %}
+                <option value="{{ option_trimmed | escape }}">{{ option_trimmed | escape }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    {% endif %}
+
+    <div
+      class="proto-configurator-actions"
+      data-proto-configurator-actions
+      {% if enable_dropdown %}
+        hidden
+        aria-hidden="true"
+      {% endif %}
+    >
+      <button
+        type="button"
+        class="proto-configurator-trigger"
+        data-proto-configurator-trigger
+        data-product-id="{{ product.id }}"
+        style="
+          background-color: {{ button_bg }};
+          color: {{ button_text }};
+          border-radius: {{ button_radius }}px;
+        "
+      >
+        {{ button_label }}
+      </button>
+    </div>
+  </div>
+
+  <style>
+    .proto-configurator-button-wrapper {
+      margin-top: 16px;
+      position: relative;
+      z-index: 20;
+      isolation: isolate;
+    }
+
+    .proto-configurator-field {
+      margin-bottom: 12px;
+    }
+
+    .proto-configurator-label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: inherit;
+    }
+
+    .proto-configurator-select-wrap {
+      position: relative;
+    }
+
+    .proto-configurator-select-wrap::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      right: 16px;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid currentColor;
+      transform: translateY(-25%);
+      opacity: 0.65;
+    }
+
+    .proto-configurator-select {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 100%;
+      min-height: 48px;
+      padding: 12px 44px 12px 16px;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+      background: #fff;
+      color: inherit;
+      font: inherit;
+      line-height: 1.4;
+      cursor: pointer;
+    }
+
+    .proto-configurator-select:focus {
+      outline: 2px solid rgba(59, 130, 246, 0.45);
+      outline-offset: 1px;
+    }
+
+    .proto-configurator-actions {
+      margin-top: 12px;
+      position: relative;
+      z-index: 21;
+    }
+
+    .proto-configurator-actions[hidden] {
+      display: none !important;
+    }
+
+    .proto-configurator-trigger {
+      width: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      padding: 14px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      pointer-events: auto;
+      position: relative;
+      z-index: 22;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+      letter-spacing: 0.01em;
+      min-height: 48px;
+    }
+
+    .proto-configurator-trigger:hover {
+      transform: scale(1.01);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    }
+  </style>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Configurator Button",
+  "target": "section",
+  "enabled_on": {
+    "templates": ["product"]
+  },
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "show_button",
+      "label": "Show configurator block",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_stringing_dropdown",
+      "label": "Show stringing dropdown on product page",
+      "default": true,
+      "info": "Choose Your Stringing dropdown. Configure appears only when Strung is selected."
+    },
+    {
+      "type": "text",
+      "id": "dropdown_label",
+      "label": "Dropdown label",
+      "default": "Choose Your Stringing"
+    },
+    {
+      "type": "textarea",
+      "id": "dropdown_options",
+      "label": "Dropdown options",
+      "default": "Unstrung\nStrung",
+      "info": "One option per line."
+    },
+    {
+      "type": "text",
+      "id": "trigger_option",
+      "label": "Option that reveals the button",
+      "default": "Strung",
+      "info": "Must match one of the dropdown options exactly."
+    },
+    {
+      "type": "checkbox",
+      "id": "hide_theme_buybox",
+      "label": "Hide theme quantity, Add to cart, and Buy now when Strung is selected",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "button_label",
+      "label": "Button label",
+      "default": "Configure"
+    },
+    {
+      "type": "color",
+      "id": "button_bg",
+      "label": "Button background",
+      "default": "#c8102e"
+    },
+    {
+      "type": "color",
+      "id": "button_text",
+      "label": "Button text color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "range",
+      "id": "button_radius",
+      "label": "Button border radius",
+      "min": 0,
+      "max": 32,
+      "step": 2,
+      "default": 6,
+      "unit": "px"
+    }
+  ]
+}
+{% endschema %}

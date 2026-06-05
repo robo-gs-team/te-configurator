@@ -1,0 +1,76 @@
+{% comment %}
+  Proto Switcher Configurator — App Embed
+  Enable via Theme Editor > App embeds > Proto Configurator
+  Loads the configurator modal script globally on the storefront.
+{% endcomment %}
+
+{% if block.settings.enabled %}
+  <script>
+    window.ProtoConfiguratorSettings = {
+      appProxyUrl: {{ block.settings.app_proxy_url | default: '/apps/proto-configurator' | json }},
+      productId: {{ product.id | default: '' | json }},
+      shopDomain: {{ shop.permanent_domain | default: shop.domain | json }}
+    };
+  </script>
+  <script src="{{ 'proto-configurator.js' | asset_url }}" defer></script>
+  {{ 'proto-configurator.css' | asset_url | stylesheet_tag }}
+
+  <style>
+    #proto-configurator-root {
+      position: relative;
+      z-index: 99999;
+    }
+
+    /* Fallback when JS marks body — Dawn / OS 2.0 themes */
+    body.proto-stringing-strung .product-form__quantity,
+    body.proto-stringing-strung quantity-input,
+    body.proto-stringing-strung .quantity-selector,
+    body.proto-stringing-strung .product-form__submit,
+    body.proto-stringing-strung button[name="add"],
+    body.proto-stringing-strung .shopify-payment-button,
+    body.proto-stringing-strung shopify-accelerated-checkout,
+    body.proto-stringing-strung .shopify-buy-it-now-button {
+      display: none !important;
+    }
+
+    .proto-configurator-button-wrapper {
+      position: relative;
+      z-index: 20;
+      isolation: isolate;
+    }
+
+    .proto-configurator-actions {
+      position: relative;
+      z-index: 21;
+    }
+
+    .proto-configurator-trigger {
+      position: relative;
+      z-index: 22;
+      pointer-events: auto !important;
+      cursor: pointer !important;
+    }
+  </style>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Proto Configurator",
+  "target": "body",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enabled",
+      "label": "Enable configurator",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "app_proxy_url",
+      "label": "App proxy URL",
+      "default": "/apps/proto-configurator",
+      "info": "Default app proxy path. Change only if customized in Partners dashboard."
+    }
+  ]
+}
+{% endschema %}

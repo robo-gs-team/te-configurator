@@ -1,0 +1,39 @@
+# Production config — use with: shopify app config use production && shopify app deploy
+
+client_id = "5128d0a83c186a0970979939c562c58a"
+name = "TE Configurator"
+application_url = "https://example.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+include_config_on_deploy = true
+
+[access_scopes]
+scopes = "read_products,write_products,read_themes,write_themes"
+
+[auth]
+redirect_urls = [
+  "https://example.com/auth/callback",
+  "https://example.com/auth/shopify/callback",
+  "https://example.com/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2025-01"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = ["app/uninstalled"]
+
+  [[webhooks.subscriptions]]
+  topics = ["app/scopes_update"]
+  uri = "/webhooks/app/scopes_update"
+
+[app_proxy]
+url = "https://example.com/proxy"
+subpath = "proto-configurator"
+prefix = "apps"
+
+[pos]
+embedded = false
