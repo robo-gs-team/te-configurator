@@ -129,6 +129,19 @@ Build settings are configured in `vercel.json` — the `vercel-build` script run
 
 If using **Vercel Postgres**, set `DATABASE_URL` to `POSTGRES_PRISMA_URL` and `DIRECT_URL` to `POSTGRES_URL_NON_POOLING`.
 
+#### Supabase + Vercel (important)
+
+Vercel **cannot** connect to Supabase's `db.xxxx.supabase.co:5432` direct host during builds (P1001 error). Use the **pooler** URLs from Supabase → **Connect**:
+
+| Variable | Supabase tab | Port | Example host |
+|----------|--------------|------|--------------|
+| `DATABASE_URL` | **Connection pooling → Transaction** | 6543 | `*.pooler.supabase.com` |
+| `DIRECT_URL` | **Connection pooling → Session** | 5432 | `*.pooler.supabase.com` |
+
+Do **not** paste the "Direct connection" (`db.xxxx.supabase.co`) string into Vercel env vars.
+
+After updating env vars in Vercel, redeploy (Deployments → ⋯ → Redeploy).
+
 ### After first Vercel deploy
 
 1. Copy your live Vercel URL
@@ -196,4 +209,5 @@ Uses Shopify `/cart/add.js` with line item properties. Compatible with:
 | Cart add fails | Ensure variant IDs are set on options |
 | Vercel 401 in admin | Disable Vercel Authentication in deployment protection |
 | Prisma session table missing | Ensure `vercel-build` runs and `DATABASE_URL`/`DIRECT_URL` are set |
+| P1001 Can't reach database (Supabase) | Use **Session pooler** for `DIRECT_URL`, not `db.xxxx.supabase.co` |
 | Vercel build peer dep error | `vercel.json` uses `npm install --legacy-peer-deps` |
