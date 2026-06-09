@@ -24,7 +24,8 @@
     "vite": "vite",
     "db:seed": "tsx prisma/seed.ts",
     "db:migrate": "prisma migrate dev",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "db:verify": "node scripts/verify-db-connection.mjs"
   },
   "type": "module",
   "engines": {
