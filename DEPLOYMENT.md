@@ -113,7 +113,7 @@ The CLI updates proxy URL on deploy. Verify in Partners → App setup → App pr
 3. **Disable Vercel Authentication** under Project Settings → Deployment Protection (prevents 401 in Shopify admin iframe)
 4. Set **Node.js version** to `20.x`
 
-Build settings are configured in `vercel.json` — the `vercel-build` script runs Prisma migrations then builds the app.
+Build settings are configured in `vercel.json` — the `vercel-build` script runs Prisma migrations then builds the app. For Supabase, it **derives `DIRECT_URL` from `DATABASE_URL`** (same password, port 5432) so a mistyped session-pooler string does not fail the build with P1000.
 
 ### Environment variables (Vercel → Settings → Environment Variables)
 
@@ -209,5 +209,6 @@ Uses Shopify `/cart/add.js` with line item properties. Compatible with:
 | Cart add fails | Ensure variant IDs are set on options |
 | Vercel 401 in admin | Disable Vercel Authentication in deployment protection |
 | Prisma session table missing | Ensure `vercel-build` runs and `DATABASE_URL`/`DIRECT_URL` are set |
+| P1000 Authentication failed (Supabase) | Ensure `DATABASE_URL` password matches Supabase → Connect → Transaction pooler; fix or remove a wrong `DIRECT_URL` in Vercel (build derives it from `DATABASE_URL`) |
 | P1001 Can't reach database (Supabase) | Use **Session pooler** for `DIRECT_URL`, not `db.xxxx.supabase.co` |
 | Vercel build peer dep error | `vercel.json` uses `npm install --legacy-peer-deps` |

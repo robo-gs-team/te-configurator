@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate && prisma migrate deploy && npm run build",
+    "vercel-build": "node scripts/vercel-build.mjs",
     "build": "npm run build:storefront && remix vite:build",
     "build:storefront": "vite build --config vite.storefront.config.ts && node scripts/copy-storefront-assets.mjs",
     "dev": "node scripts/free-dev-port.mjs && npm run build:storefront && shopify app dev",
