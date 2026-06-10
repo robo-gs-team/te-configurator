@@ -95,10 +95,19 @@
 
   <style>
     .proto-configurator-button-wrapper {
-      margin-top: 16px;
+      margin: 12px 0;
+      width: 100%;
+      max-width: 100%;
       position: relative;
       z-index: 20;
       isolation: isolate;
+    }
+
+    .product__info .proto-configurator-button-wrapper,
+    #ProductInfo .proto-configurator-button-wrapper,
+    .product-info .proto-configurator-button-wrapper {
+      margin-top: 8px;
+      margin-bottom: 12px;
     }
 
     .proto-configurator-field {
@@ -206,7 +215,7 @@
       "id": "enable_stringing_dropdown",
       "label": "Show stringing dropdown on product page",
       "default": true,
-      "info": "Choose Your Stringing dropdown. Configure appears only when Strung is selected."
+      "info": "Placed in the product info column automatically (above quantity / add to cart). Configure appears only when Strung is selected."
     },
     {
       "type": "text",

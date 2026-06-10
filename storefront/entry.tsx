@@ -6,6 +6,10 @@ import { clearConfigureError, showConfigureError } from "./lib/configure-feedbac
 import { collectImageUrls, preloadImages } from "./lib/image-preloader";
 import { normalizeProductId } from "./lib/product-id";
 import { refreshThemeBuyBoxHidden, setThemeBuyBoxHidden } from "./lib/theme-buybox";
+import {
+  getProductInfoInsertPoint,
+  scheduleConfiguratorRelocation,
+} from "./lib/theme-placement";
 import type { StorefrontConfigurator } from "~/lib/configurator.types";
 import { getDefaultSelections } from "~/lib/conditional-logic";
 import "./styles.css";
@@ -275,23 +279,14 @@ function initButtons() {
   });
 }
 
-function findProductFormAnchor(): Element | null {
-  return (
-    document.querySelector("product-form") ??
-    document.querySelector('form[action*="/cart/add"]') ??
-    document.querySelector(".product-form") ??
-    document.querySelector("[data-product-form]")
-  );
-}
-
 /** Fallback when the app embed is on but the theme block was not added. */
 function injectProductPageButton() {
   const productId = window.ProtoConfiguratorSettings?.productId;
   if (!productId) return;
   if (document.querySelector(".proto-configurator-button-wrapper")) return;
 
-  const anchor = findProductFormAnchor();
-  if (!anchor) return;
+  const insertParent = getProductInfoInsertPoint();
+  if (!insertParent) return;
 
   const wrapper = document.createElement("div");
   wrapper.className = "proto-configurator-button-wrapper";
@@ -308,13 +303,20 @@ function injectProductPageButton() {
   button.dataset.productId = productId;
   button.textContent = "Configure";
   button.style.cssText =
-    "width:100%;display:inline-flex;align-items:center;justify-content:center;border:none;padding:14px 20px;font-size:15px;font-weight:600;cursor:pointer;min-height:48px;background-color:#c8102e;color:#fff;border-radius:6px;margin-top:16px;";
+    "width:100%;display:inline-flex;align-items:center;justify-content:center;border:none;padding:14px 20px;font-size:15px;font-weight:600;cursor:pointer;min-height:48px;background-color:#c8102e;color:#fff;border-radius:6px;";
 
   actions.appendChild(button);
   wrapper.appendChild(actions);
 
-  const insertAfter = anchor.closest(".product-form") ?? anchor;
-  insertAfter.insertAdjacentElement("afterend", wrapper);
+  const insertBefore = insertParent.querySelector(
+    ".product-form__quantity, quantity-input, .quantity-selector, button[name='add'], .product-form__submit, form[action*='/cart/add'], product-form",
+  );
+  if (insertBefore) {
+    insertParent.insertBefore(wrapper, insertBefore);
+  } else {
+    insertParent.appendChild(wrapper);
+  }
+
   initButtons();
 }
 
@@ -349,6 +351,7 @@ function initShareRestore() {
 function initStorefrontUi() {
   initConfigureClickDelegation();
   injectProductPageButton();
+  scheduleConfiguratorRelocation();
   initStringingGates();
   initButtons();
 }
