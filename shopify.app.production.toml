@@ -1,13 +1,12 @@
 # Production config — use with: shopify app config use production && shopify app deploy
 
-client_id = "5128d0a83c186a0970979939c562c58a"
+client_id = "fd9710371f83899efbb78a277a55939f"
 name = "TE Configurator"
 application_url = "https://te-configurator.vercel.app"
 embedded = true
 
 [build]
 automatically_update_urls_on_dev = true
-include_config_on_deploy = true
 
 [access_scopes]
 scopes = "read_products,write_products,read_themes,write_themes"

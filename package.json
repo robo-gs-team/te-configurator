@@ -11,7 +11,7 @@
     "dev:storefront": "vite build --config vite.storefront.config.ts --watch",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
-    "deploy": "shopify app deploy",
+    "deploy": "shopify app deploy --config production --allow-updates",
     "config:use": "shopify app config use",
     "env": "shopify app env",
     "start": "remix-serve ./build/server/index.js",

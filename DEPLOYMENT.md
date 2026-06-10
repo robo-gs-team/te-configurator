@@ -172,7 +172,17 @@ npm run dev
 npm run deploy
 ```
 
-This pushes the theme app extension to Shopify.
+This pushes the theme app extension to Shopify using `shopify.app.production.toml`.
+
+### Automatic Shopify deploy (GitHub Actions)
+
+Pushes to `main` that change `extensions/`, `storefront/`, or Shopify config files trigger `.github/workflows/deploy-shopify.yml`.
+
+1. Create an **App Automation Token** in the Dev Dashboard → your app → Settings.
+2. Add it to GitHub → **Settings → Secrets → Actions** as `SHOPIFY_APP_AUTOMATION_TOKEN`.
+3. The workflow builds storefront assets and runs `shopify app deploy --config production --allow-updates`.
+
+Vercel still deploys the Remix app separately when you push to `main`.
 
 ## Architecture overview
 
