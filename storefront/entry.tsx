@@ -275,6 +275,49 @@ function initButtons() {
   });
 }
 
+function findProductFormAnchor(): Element | null {
+  return (
+    document.querySelector("product-form") ??
+    document.querySelector('form[action*="/cart/add"]') ??
+    document.querySelector(".product-form") ??
+    document.querySelector("[data-product-form]")
+  );
+}
+
+/** Fallback when the app embed is on but the theme block was not added. */
+function injectProductPageButton() {
+  const productId = window.ProtoConfiguratorSettings?.productId;
+  if (!productId) return;
+  if (document.querySelector(".proto-configurator-button-wrapper")) return;
+
+  const anchor = findProductFormAnchor();
+  if (!anchor) return;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "proto-configurator-button-wrapper";
+  wrapper.dataset.protoAutoInjected = "true";
+
+  const actions = document.createElement("div");
+  actions.className = "proto-configurator-actions";
+  actions.dataset.protoConfiguratorActions = "";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "proto-configurator-trigger";
+  button.dataset.protoConfiguratorTrigger = "";
+  button.dataset.productId = productId;
+  button.textContent = "Configure";
+  button.style.cssText =
+    "width:100%;display:inline-flex;align-items:center;justify-content:center;border:none;padding:14px 20px;font-size:15px;font-weight:600;cursor:pointer;min-height:48px;background-color:#c8102e;color:#fff;border-radius:6px;margin-top:16px;";
+
+  actions.appendChild(button);
+  wrapper.appendChild(actions);
+
+  const insertAfter = anchor.closest(".product-form") ?? anchor;
+  insertAfter.insertAdjacentElement("afterend", wrapper);
+  initButtons();
+}
+
 function initShareRestore() {
   const params = new URLSearchParams(window.location.search);
   const shareId = params.get("proto_config");
@@ -305,6 +348,7 @@ function initShareRestore() {
 
 function initStorefrontUi() {
   initConfigureClickDelegation();
+  injectProductPageButton();
   initStringingGates();
   initButtons();
 }

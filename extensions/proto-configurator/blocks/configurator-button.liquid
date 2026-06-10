@@ -14,8 +14,22 @@
 {% assign enable_dropdown = block.settings.enable_stringing_dropdown %}
 {% assign dropdown_label = block.settings.dropdown_label | default: 'Choose Your Stringing' %}
 {% assign trigger_option = block.settings.trigger_option | default: 'Strung' %}
-{% assign dropdown_options_raw = block.settings.dropdown_options | default: "Unstrung\nStrung" %}
+{% assign dropdown_options_raw = block.settings.dropdown_options | default: "Strung\nUnstrung" %}
 {% assign dropdown_options = dropdown_options_raw | newline_to_br | split: '<br />' %}
+
+{% assign hide_configure_actions = false %}
+{% if enable_dropdown %}
+  {% assign hide_configure_actions = true %}
+  {% for option in dropdown_options %}
+    {% assign option_trimmed = option | strip %}
+    {% if option_trimmed != blank %}
+      {% if option_trimmed == trigger_option %}
+        {% assign hide_configure_actions = false %}
+      {% endif %}
+      {% break %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
 
 {% if show_button %}
   <div
@@ -42,7 +56,12 @@
             {% for option in dropdown_options %}
               {% assign option_trimmed = option | strip %}
               {% if option_trimmed != blank %}
-                <option value="{{ option_trimmed | escape }}">{{ option_trimmed | escape }}</option>
+                <option
+                  value="{{ option_trimmed | escape }}"
+                  {% if option_trimmed == trigger_option %}selected{% endif %}
+                >
+                  {{ option_trimmed | escape }}
+                </option>
               {% endif %}
             {% endfor %}
           </select>
@@ -53,7 +72,7 @@
     <div
       class="proto-configurator-actions"
       data-proto-configurator-actions
-      {% if enable_dropdown %}
+      {% if hide_configure_actions %}
         hidden
         aria-hidden="true"
       {% endif %}
@@ -199,7 +218,7 @@
       "type": "textarea",
       "id": "dropdown_options",
       "label": "Dropdown options",
-      "default": "Unstrung\nStrung",
+      "default": "Strung\nUnstrung",
       "info": "One option per line."
     },
     {
