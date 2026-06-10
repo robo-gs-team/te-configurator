@@ -12,8 +12,11 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { useState } from "react";
+import { CollectionPicker } from "~/components/CollectionPicker";
 import prisma from "~/db.server";
+import { parseCollectionIdsField } from "~/lib/collection-id";
 import { ensureShop } from "~/lib/configurator.server";
+import type { CollectionSummary } from "~/lib/shopify-collections.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -28,21 +31,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const name = String(form.get("name") || "").trim();
   const description = String(form.get("description") || "").trim();
-  const productIdsRaw = String(form.get("productIds") || "").trim();
+  const collectionIds = parseCollectionIdsField(
+    String(form.get("collectionIds") || ""),
+  );
   const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
 
   if (!name) return json({ error: "Name is required" }, { status: 400 });
-
-  const productIds = productIdsRaw
-    ? productIdsRaw.split(",").map((id) => id.trim()).filter(Boolean)
-    : [];
 
   const configurator = await prisma.configurator.create({
     data: {
       shopId: shop.id,
       name,
       description: description || null,
-      productIds: JSON.stringify(productIds),
+      collectionIds: JSON.stringify(collectionIds),
       basePrice,
       steps: {
         create: [
@@ -90,7 +91,7 @@ export default function NewConfigurator() {
   const navigation = useNavigation();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [productIds, setProductIds] = useState("");
+  const [selectedCollections, setSelectedCollections] = useState<CollectionSummary[]>([]);
   const [basePrice, setBasePrice] = useState("0");
 
   return (
@@ -125,13 +126,9 @@ export default function NewConfigurator() {
                     autoComplete="off"
                     multiline={3}
                   />
-                  <TextField
-                    label="Shopify Product IDs"
-                    name="productIds"
-                    value={productIds}
-                    onChange={setProductIds}
-                    helpText="Comma-separated product IDs this configurator applies to"
-                    autoComplete="off"
+                  <CollectionPicker
+                    selected={selectedCollections}
+                    onChange={setSelectedCollections}
                   />
                   <TextField
                     label="Base price"

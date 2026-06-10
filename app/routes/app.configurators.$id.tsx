@@ -18,19 +18,22 @@ import {
 } from "@shopify/polaris";
 import { useState } from "react";
 import { AddonAddForm } from "~/components/AddonAddForm";
+import { CollectionPicker } from "~/components/CollectionPicker";
 import { OptionAddForm } from "~/components/OptionAddForm";
 import { RemoveItemButton } from "~/components/RemoveItemButton";
 import { StepAddForm } from "~/components/StepAddForm";
 import prisma from "~/db.server";
+import { parseCollectionIdsField } from "~/lib/collection-id";
 import {
   ensureShop,
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { parseJson } from "~/lib/configurator.types";
+import { getCollectionsByIds } from "~/lib/shopify-collections.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
   const configurator = await getConfiguratorById(params.id!);
 
@@ -38,7 +41,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Not found", { status: 404 });
   }
 
-  return json({ configurator });
+  const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
+  const collections = await getCollectionsByIds(admin, collectionIds);
+
+  return json({ configurator, collections });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -55,21 +61,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (intent === "update") {
     const name = String(form.get("name") || "").trim();
     const description = String(form.get("description") || "").trim();
-    const productIdsRaw = String(form.get("productIds") || "").trim();
+    const collectionIds = parseCollectionIdsField(
+      String(form.get("collectionIds") || ""),
+    );
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
     const isActive = form.get("isActive") === "on";
-
-    const productIds = productIdsRaw
-      .split(",")
-      .map((id) => id.trim())
-      .filter(Boolean);
 
     await prisma.configurator.update({
       where: { id: params.id },
       data: {
         name,
         description: description || null,
-        productIds: JSON.stringify(productIds),
+        collectionIds: JSON.stringify(collectionIds),
         basePrice,
         isActive,
       },
@@ -226,13 +229,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditConfigurator() {
-  const { configurator } = useLoaderData<typeof loader>();
+  const { configurator, collections } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
-  const productIds = parseJson<string[]>(configurator.productIds, []).join(", ");
 
   const [name, setName] = useState(configurator.name);
   const [description, setDescription] = useState(configurator.description ?? "");
-  const [products, setProducts] = useState(productIds);
+  const [selectedCollections, setSelectedCollections] = useState(collections);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
 
@@ -275,13 +277,9 @@ export default function EditConfigurator() {
                     multiline={2}
                     autoComplete="off"
                   />
-                  <TextField
-                    label="Product IDs"
-                    name="productIds"
-                    value={products}
-                    onChange={setProducts}
-                    helpText="Comma-separated Shopify product IDs"
-                    autoComplete="off"
+                  <CollectionPicker
+                    selected={selectedCollections}
+                    onChange={setSelectedCollections}
                   />
                   <TextField
                     label="Base price"

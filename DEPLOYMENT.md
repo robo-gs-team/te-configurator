@@ -27,7 +27,7 @@ Edit `.env`:
 ```env
 SHOPIFY_API_KEY=your_client_id
 SHOPIFY_API_SECRET=your_client_secret
-SCOPES=read_products,write_products,read_themes,write_themes
+SCOPES=read_products,write_products,read_themes,write_themes,read_collections
 SHOPIFY_APP_URL=https://your-tunnel-url.com
 SHOP=your-store.myshopify.com
 DATABASE_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
@@ -84,7 +84,7 @@ After first deploy/dev sync:
 
 1. Open the app in Shopify Admin
 2. **Configurators → Create**
-3. Enter product ID(s) from Shopify Admin product URL
+3. Select the collection(s) that contain your racket products
 4. Add options, add-ons, and conditional rules
 5. Save and test on the product page
 

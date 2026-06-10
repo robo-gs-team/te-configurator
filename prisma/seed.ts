@@ -33,6 +33,7 @@ async function main() {
         description: "Premium product configurator demo",
         basePrice: 299,
         productIds: JSON.stringify([]),
+        collectionIds: JSON.stringify([]),
         steps: {
           create: [
             {

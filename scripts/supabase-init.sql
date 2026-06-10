@@ -44,6 +44,7 @@ CREATE TABLE "Configurator" (
     "description" TEXT,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "productIds" TEXT NOT NULL DEFAULT '[]',
+    "collectionIds" TEXT NOT NULL DEFAULT '[]',
     "basePrice" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "currency" TEXT NOT NULL DEFAULT 'USD',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
