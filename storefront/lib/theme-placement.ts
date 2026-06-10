@@ -1,13 +1,13 @@
-const PRODUCT_INFO_SELECTORS = [
-  "#ProductInfo",
-  ".product__info",
-  ".product-info",
-  ".product-single__meta",
-  ".product-main-info",
-  "[data-product-info]",
-  ".product__info-wrapper",
-  ".product-details",
-  ".product-detail",
+const STRINGING_LABEL = "choose your stringing";
+
+const PRODUCT_BUY_BOX_SELECTORS = [
+  "product-form",
+  'form[action*="/cart/add"]',
+  ".product-form",
+  ".product-info__buy-box",
+  ".product__buy-buttons",
+  "[data-product-form]",
+  ".product-form__buttons",
 ];
 
 const INSERT_BEFORE_SELECTORS = [
@@ -21,8 +21,24 @@ const INSERT_BEFORE_SELECTORS = [
   "#ProductSubmitButton",
   ".shopify-payment-button",
   "shopify-accelerated-checkout",
-  'form[action*="/cart/add"]',
-  "product-form",
+];
+
+const THEME_STRINGING_FIELD_SELECTORS = [
+  "[class*='shopify-block']",
+  "[id*='shopify-block']",
+  "[data-block-type]",
+  ".product-form__input",
+  ".product-form__item",
+  ".product-info__block",
+  ".product__block",
+  ".fieldset",
+  "fieldset",
+  ".form-group",
+  ".field",
+  ".select-wrapper",
+  ".variant-wrapper",
+  ".custom-liquid",
+  ".product-form__quantity",
 ];
 
 function findProductFormAnchor(): Element | null {
@@ -34,37 +50,68 @@ function findProductFormAnchor(): Element | null {
   );
 }
 
-export function findProductInfoContainer(): HTMLElement | null {
-  for (const selector of PRODUCT_INFO_SELECTORS) {
+function findProductBuyBox(): HTMLElement | null {
+  for (const selector of PRODUCT_BUY_BOX_SELECTORS) {
     const el = document.querySelector(selector);
-    if (el instanceof HTMLElement) return el;
+    if (!(el instanceof HTMLElement)) continue;
+    if (el.closest(".proto-configurator-button-wrapper")) continue;
+    return el.parentElement instanceof HTMLElement ? el.parentElement : el;
   }
 
   const form = findProductFormAnchor();
-  if (form) {
-    const info = form.closest(
-      ".product__info, .product-info, #ProductInfo, .product-single__meta, .product-details",
-    );
-    if (info instanceof HTMLElement) return info;
+  if (form?.parentElement instanceof HTMLElement) {
+    return form.parentElement;
   }
 
-  const mainProduct = document.querySelector(
-    'main [class*="product"], section[class*="product"]',
+  return null;
+}
+
+function normalizeLabelText(el: Element): string {
+  return el.textContent?.trim().toLowerCase().replace(/\s+/g, " ") ?? "";
+}
+
+function isStringingLabel(el: Element): boolean {
+  const text = normalizeLabelText(el);
+  return text === STRINGING_LABEL || text.includes(STRINGING_LABEL);
+}
+
+/** Theme "Choose Your Stringing" block (Vision and similar themes). */
+export function findThemeStringingBlock(): HTMLElement | null {
+  const labels = document.querySelectorAll(
+    "label, .form__label, legend, p, span, h3, h4, .label, .product-form__label",
   );
-  if (mainProduct instanceof HTMLElement) {
-    const formInMain = mainProduct.querySelector(
-      'form[action*="/cart/add"], product-form, .product-form',
-    );
-    if (formInMain) {
-      const info = formInMain.closest(
-        ".product__info, .product-info, #ProductInfo, .product-single__meta",
-      );
-      if (info instanceof HTMLElement) return info;
-      return mainProduct;
+
+  for (const label of labels) {
+    if (!(label instanceof HTMLElement)) continue;
+    if (label.closest(".proto-configurator-button-wrapper")) continue;
+    if (!isStringingLabel(label)) continue;
+
+    for (const selector of THEME_STRINGING_FIELD_SELECTORS) {
+      const field = label.closest(selector);
+      if (
+        field instanceof HTMLElement &&
+        !field.closest(".proto-configurator-button-wrapper")
+      ) {
+        return field;
+      }
+    }
+
+    const parent = label.parentElement;
+    if (
+      parent instanceof HTMLElement &&
+      !parent.closest(".proto-configurator-button-wrapper")
+    ) {
+      return parent;
     }
   }
 
   return null;
+}
+
+function hideThemeElement(el: HTMLElement) {
+  el.style.display = "none";
+  el.setAttribute("aria-hidden", "true");
+  el.dataset.protoThemeStringingHidden = "true";
 }
 
 function findInsertPoint(container: HTMLElement): Element | null {
@@ -75,70 +122,73 @@ function findInsertPoint(container: HTMLElement): Element | null {
   return null;
 }
 
-function hideDuplicateThemeStringing(
-  productInfo: HTMLElement,
-  configuratorWrapper: HTMLElement,
-) {
-  const hasAppDropdown = configuratorWrapper.querySelector(
-    "[data-proto-stringing-select]",
-  );
-  if (!hasAppDropdown) return;
-
-  const labels = productInfo.querySelectorAll("label, .form__label, legend, p, span");
-  labels.forEach((label) => {
-    if (!(label instanceof HTMLElement)) return;
-    if (configuratorWrapper.contains(label)) return;
-
-    const text = label.textContent?.trim().toLowerCase() ?? "";
-    if (!text.includes("choose your stringing")) return;
-
-    const field =
-      label.closest(
-        ".product-form__input, .form-group, fieldset, .select-wrapper, .variant-wrapper, .product-form__item, .field",
-      ) ?? label.parentElement;
-
-    if (!field || configuratorWrapper.contains(field)) return;
-    if (field instanceof HTMLElement && field.dataset.protoThemeStringingHidden) return;
-
-    if (field instanceof HTMLElement) {
-      field.style.display = "none";
-      field.setAttribute("aria-hidden", "true");
-      field.dataset.protoThemeStringingHidden = "true";
-    }
-  });
+function isBeforeInDom(earlier: Element, later: Element): boolean {
+  return Boolean(earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING);
 }
 
-function moveWrapperIntoProductInfo(
+function isWrapperCorrectlyPlaced(
   wrapper: HTMLElement,
-  productInfo: HTMLElement,
-) {
-  if (productInfo.contains(wrapper)) {
-    hideDuplicateThemeStringing(productInfo, wrapper);
-    return;
+  themeBlock: HTMLElement | null,
+): boolean {
+  if (themeBlock) {
+    if (themeBlock.dataset.protoThemeStringingHidden !== "true") return false;
+    return isBeforeInDom(wrapper, themeBlock);
   }
 
-  const insertBefore = findInsertPoint(productInfo);
-  if (insertBefore?.parentElement) {
-    insertBefore.parentElement.insertBefore(wrapper, insertBefore);
-  } else {
-    productInfo.appendChild(wrapper);
-  }
+  const buyBox = findProductBuyBox();
+  if (!buyBox) return false;
 
-  wrapper.dataset.protoRelocated = "true";
-  hideDuplicateThemeStringing(productInfo, wrapper);
+  const insertBefore = findInsertPoint(buyBox);
+  if (!insertBefore) return false;
+
+  return isBeforeInDom(wrapper, insertBefore);
 }
 
-/** Move configurator UI from page-level app blocks into the product info column. */
-export function relocateConfiguratorToProductInfo() {
-  const productInfo = findProductInfoContainer();
-  if (!productInfo) return;
+function relocateToStringingSlot(wrapper: HTMLElement): boolean {
+  const themeBlock = findThemeStringingBlock();
+  if (!themeBlock?.parentElement) return false;
 
+  if (!isWrapperCorrectlyPlaced(wrapper, themeBlock)) {
+    themeBlock.parentElement.insertBefore(wrapper, themeBlock);
+    wrapper.dataset.protoRelocated = "true";
+  }
+
+  hideThemeElement(themeBlock);
+  return true;
+}
+
+function relocateToBuyBox(wrapper: HTMLElement): boolean {
+  const buyBox = findProductBuyBox();
+  if (!buyBox) return false;
+
+  const insertBefore = findInsertPoint(buyBox);
+  if (insertBefore?.parentElement) {
+    if (!isWrapperCorrectlyPlaced(wrapper, null)) {
+      insertBefore.parentElement.insertBefore(wrapper, insertBefore);
+      wrapper.dataset.protoRelocated = "true";
+    }
+    return true;
+  }
+
+  if (!buyBox.contains(wrapper)) {
+    buyBox.prepend(wrapper);
+    wrapper.dataset.protoRelocated = "true";
+  }
+
+  return true;
+}
+
+function moveWrapper(wrapper: HTMLElement) {
+  if (relocateToStringingSlot(wrapper)) return;
+  relocateToBuyBox(wrapper);
+}
+
+/** Move configurator UI into the buy box, replacing the theme stringing field. */
+export function relocateConfiguratorToProductInfo() {
   document
     .querySelectorAll(".proto-configurator-button-wrapper")
     .forEach((node) => {
-      if (node instanceof HTMLElement) {
-        moveWrapperIntoProductInfo(node, productInfo);
-      }
+      if (node instanceof HTMLElement) moveWrapper(node);
     });
 }
 
@@ -148,13 +198,18 @@ export function scheduleConfiguratorRelocation() {
 }
 
 export function getProductInfoInsertPoint(): HTMLElement | null {
-  const productInfo = findProductInfoContainer();
-  if (!productInfo) return null;
+  const themeBlock = findThemeStringingBlock();
+  if (themeBlock?.parentElement instanceof HTMLElement) {
+    return themeBlock.parentElement;
+  }
 
-  const insertBefore = findInsertPoint(productInfo);
+  const buyBox = findProductBuyBox();
+  if (!buyBox) return null;
+
+  const insertBefore = findInsertPoint(buyBox);
   if (insertBefore?.parentElement instanceof HTMLElement) {
     return insertBefore.parentElement;
   }
 
-  return productInfo;
+  return buyBox;
 }
