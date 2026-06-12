@@ -18,18 +18,18 @@ import {
 } from "@shopify/polaris";
 import { useState } from "react";
 import { AddonAddForm } from "~/components/AddonAddForm";
-import { CollectionPicker } from "~/components/CollectionPicker";
 import { OptionAddForm } from "~/components/OptionAddForm";
+import { ProductPicker } from "~/components/ProductPicker";
 import { RemoveItemButton } from "~/components/RemoveItemButton";
 import { StepAddForm } from "~/components/StepAddForm";
 import prisma from "~/db.server";
-import { parseCollectionIdsField } from "~/lib/collection-id";
 import {
   ensureShop,
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { parseJson } from "~/lib/configurator.types";
-import { getCollectionsByIds } from "~/lib/shopify-collections.server";
+import { parseProductIdsField } from "~/lib/product-id";
+import { getProductsByIds } from "~/lib/shopify-products.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -41,10 +41,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Not found", { status: 404 });
   }
 
-  const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
-  const collections = await getCollectionsByIds(admin, collectionIds);
+  const productIds = parseJson<string[]>(configurator.productIds, []);
+  const products = await getProductsByIds(admin, productIds);
 
-  return json({ configurator, collections });
+  return json({ configurator, products });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -61,9 +61,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (intent === "update") {
     const name = String(form.get("name") || "").trim();
     const description = String(form.get("description") || "").trim();
-    const collectionIds = parseCollectionIdsField(
-      String(form.get("collectionIds") || ""),
-    );
+    const productIds = parseProductIdsField(String(form.get("productIds") || ""));
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
     const isActive = form.get("isActive") === "on";
 
@@ -72,7 +70,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       data: {
         name,
         description: description || null,
-        collectionIds: JSON.stringify(collectionIds),
+        productIds: JSON.stringify(productIds),
+        collectionIds: "[]",
         basePrice,
         isActive,
       },
@@ -229,12 +228,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditConfigurator() {
-  const { configurator, collections } = useLoaderData<typeof loader>();
+  const { configurator, products } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
 
   const [name, setName] = useState(configurator.name);
   const [description, setDescription] = useState(configurator.description ?? "");
-  const [selectedCollections, setSelectedCollections] = useState(collections);
+  const [selectedProducts, setSelectedProducts] = useState(products);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
 
@@ -277,9 +276,9 @@ export default function EditConfigurator() {
                     multiline={2}
                     autoComplete="off"
                   />
-                  <CollectionPicker
-                    selected={selectedCollections}
-                    onChange={setSelectedCollections}
+                  <ProductPicker
+                    selected={selectedProducts}
+                    onChange={setSelectedProducts}
                   />
                   <TextField
                     label="Base price"

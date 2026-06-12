@@ -57,7 +57,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       return json({
         configurator: null,
         error:
-          "No configurator linked to this product. Assign a collection in the app admin and click Save changes.",
+          "No configurator linked to this product. Select products in the app admin and click Save changes.",
         productId,
         code: "not_linked",
       });

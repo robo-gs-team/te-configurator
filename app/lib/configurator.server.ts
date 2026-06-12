@@ -1,10 +1,7 @@
 import prisma from "~/db.server";
-import { normalizeCollectionId } from "~/lib/collection-id";
 import type { ConfiguratorWithRelations } from "~/lib/configurator.types";
 import { parseJson } from "~/lib/configurator.types";
 import { productIdsMatch } from "~/lib/product-id";
-import { getProductCollectionIds } from "~/lib/shopify-collections.server";
-import { unauthenticated } from "~/shopify.server";
 
 const configuratorInclude = {
   steps: {
@@ -64,49 +61,14 @@ export async function lookupConfiguratorForProduct(
     include: configuratorInclude,
   });
 
-  const directMatch = configurators.find((c) => {
+  const match = configurators.find((c) => {
     const ids = parseJson<string[]>(c.productIds, []);
     return productIdsMatch(ids, productId);
   });
 
-  if (directMatch) {
-    if (!directMatch.isActive) {
-      return { status: "inactive", configurator: directMatch };
-    }
-    return { status: "found", configurator: directMatch };
-  }
-
-  const collectionLinked = configurators.filter((c) => {
-    const ids = parseJson<string[]>(c.collectionIds, []);
-    return ids.length > 0;
-  });
-
-  if (collectionLinked.length === 0) {
-    return { status: "not_linked" };
-  }
-
-  try {
-    const { admin } = await unauthenticated.admin(shopDomain);
-    const productCollections = await getProductCollectionIds(
-      admin,
-      productId,
-      shopDomain,
-    );
-    const productCollectionSet = new Set(productCollections);
-
-    const match = collectionLinked.find((c) => {
-      const ids = parseJson<string[]>(c.collectionIds, []);
-      return ids.some((id) =>
-        productCollectionSet.has(normalizeCollectionId(String(id))),
-      );
-    });
-
-    if (!match) return { status: "not_linked" };
-    if (!match.isActive) return { status: "inactive", configurator: match };
-    return { status: "found", configurator: match };
-  } catch {
-    return { status: "not_linked" };
-  }
+  if (!match) return { status: "not_linked" };
+  if (!match.isActive) return { status: "inactive", configurator: match };
+  return { status: "found", configurator: match };
 }
 
 export async function getConfiguratorForProduct(

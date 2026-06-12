@@ -129,7 +129,7 @@ async function fetchConfigurator(
     return {
       configurator: null,
       error:
-        "No configurator linked to this product. Assign a collection in the app admin, enable Active, and click Save changes.",
+        "No configurator linked to this product. Select products in the app admin, enable Active, and click Save changes.",
     };
   } catch (err) {
     const aborted = err instanceof DOMException && err.name === "AbortError";
@@ -163,7 +163,7 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
     if (!configurator) {
       showConfigureError(
         trigger,
-        "No configurator is linked to this product. Assign a collection in the app admin, enable Active, and click Save changes.",
+        "No configurator is linked to this product. Select products in the app admin, enable Active, and click Save changes.",
       );
       return;
     }

@@ -142,7 +142,7 @@ export default function Dashboard() {
               </Text>
               <BlockStack gap="200">
                 <Text as="p" variant="bodySm">
-                  1. Create a configurator and assign your racket collections
+                  1. Create a configurator and select your racket products
                 </Text>
                 <Text as="p" variant="bodySm">
                   2. Theme Editor → App embeds → enable Proto Configurator

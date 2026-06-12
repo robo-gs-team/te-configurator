@@ -84,7 +84,7 @@ After first deploy/dev sync:
 
 1. Open the app in Shopify Admin
 2. **Configurators → Create**
-3. Select the collection(s) that contain your racket products
+3. Select the product(s) this configurator applies to
 4. Add options, add-ons, and conditional rules
 5. Save and test on the product page
 

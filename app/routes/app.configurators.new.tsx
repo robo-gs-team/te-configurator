@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
 import { json, redirect } from "@vercel/remix";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useActionData, useNavigation } from "@remix-run/react";
 import {
   BlockStack,
   Button,
@@ -12,11 +12,11 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { useState } from "react";
-import { CollectionPicker } from "~/components/CollectionPicker";
+import { ProductPicker } from "~/components/ProductPicker";
 import prisma from "~/db.server";
-import { parseCollectionIdsField } from "~/lib/collection-id";
 import { ensureShop } from "~/lib/configurator.server";
-import type { CollectionSummary } from "~/lib/shopify-collections.server";
+import { parseProductIdsField } from "~/lib/product-id";
+import type { ProductSummary } from "~/lib/shopify-products.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -31,9 +31,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const name = String(form.get("name") || "").trim();
   const description = String(form.get("description") || "").trim();
-  const collectionIds = parseCollectionIdsField(
-    String(form.get("collectionIds") || ""),
-  );
+  const productIds = parseProductIdsField(String(form.get("productIds") || ""));
   const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
 
   if (!name) return json({ error: "Name is required" }, { status: 400 });
@@ -43,7 +41,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       shopId: shop.id,
       name,
       description: description || null,
-      collectionIds: JSON.stringify(collectionIds),
+      productIds: JSON.stringify(productIds),
       basePrice,
       steps: {
         create: [
@@ -91,7 +89,7 @@ export default function NewConfigurator() {
   const navigation = useNavigation();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [selectedCollections, setSelectedCollections] = useState<CollectionSummary[]>([]);
+  const [selectedProducts, setSelectedProducts] = useState<ProductSummary[]>([]);
   const [basePrice, setBasePrice] = useState("0");
 
   return (
@@ -126,9 +124,9 @@ export default function NewConfigurator() {
                     autoComplete="off"
                     multiline={3}
                   />
-                  <CollectionPicker
-                    selected={selectedCollections}
-                    onChange={setSelectedCollections}
+                  <ProductPicker
+                    selected={selectedProducts}
+                    onChange={setSelectedProducts}
                   />
                   <TextField
                     label="Base price"
