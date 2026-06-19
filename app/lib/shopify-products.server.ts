@@ -81,6 +81,8 @@ export function resolveProductImageUrl(node: ProductImageNode): string | null {
     node.images?.nodes?.find((image) => image?.url)?.url ??
     null
   );
+}
+
 type ProductsWithImagesResponse = {
   data?: {
     nodes?: Array<
