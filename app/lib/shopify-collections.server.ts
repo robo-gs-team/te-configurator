@@ -13,6 +13,15 @@ export type CollectionSummary = {
   title: string;
 };
 
+export type CollectionProduct = {
+  id: string;
+  title: string;
+  productType: string;
+  imageUrl: string | null;
+  variantId: string;
+  price: number;
+};
+
 type ProductCollectionsResponse = {
   data?: {
     product?: {
@@ -146,4 +155,102 @@ export async function getCollectionsByIds(
       id: normalizeCollectionId(String(node.legacyResourceId)),
       title: node.title ?? "Collection",
     }));
+}
+
+type CollectionProductsResponse = {
+  data?: {
+    collection?: {
+      products?: {
+        nodes?: Array<{
+          legacyResourceId?: string;
+          title?: string;
+          productType?: string;
+          featuredImage?: { url?: string } | null;
+          variants?: {
+            nodes?: Array<{
+              legacyResourceId?: string;
+              price?: string;
+            }>;
+          };
+        }>;
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      };
+    };
+  };
+};
+
+export async function getProductsInCollections(
+  admin: ShopifyAdmin,
+  collectionIds: string[],
+): Promise<CollectionProduct[]> {
+  if (collectionIds.length === 0) return [];
+
+  const seen = new Map<string, CollectionProduct>();
+
+  for (const collectionId of collectionIds) {
+    let cursor: string | null = null;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const response = await admin.graphql(
+        `#graphql
+          query ProtoCollectionProducts($id: ID!, $cursor: String) {
+            collection(id: $id) {
+              products(first: 100, after: $cursor) {
+                nodes {
+                  legacyResourceId
+                  title
+                  productType
+                  featuredImage {
+                    url
+                  }
+                  variants(first: 1) {
+                    nodes {
+                      legacyResourceId
+                      price
+                    }
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+          }
+        `,
+        {
+          variables: {
+            id: toCollectionGid(collectionId),
+            cursor,
+          },
+        },
+      );
+
+      const body = (await response.json()) as CollectionProductsResponse;
+      const products = body.data?.collection?.products;
+
+      for (const node of products?.nodes ?? []) {
+        const id = normalizeProductId(String(node.legacyResourceId ?? ""));
+        const variant = node.variants?.nodes?.[0];
+        if (!id || !variant?.legacyResourceId) continue;
+
+        if (!seen.has(id)) {
+          seen.set(id, {
+            id,
+            title: node.title ?? "Product",
+            productType: node.productType ?? "String",
+            imageUrl: node.featuredImage?.url ?? null,
+            variantId: String(variant.legacyResourceId),
+            price: parseFloat(String(variant.price ?? "0")) || 0,
+          });
+        }
+      }
+
+      hasNextPage = products?.pageInfo?.hasNextPage ?? false;
+      cursor = products?.pageInfo?.endCursor ?? null;
+    }
+  }
+
+  return Array.from(seen.values());
 }

@@ -8,6 +8,9 @@ export type StringProduct = {
   gauges: string[];
   colors: string[];
   recommended?: boolean;
+  imageUrl?: string | null;
+  variantId?: string | null;
+  productId?: string | null;
 };
 
 export type BedSelection = {
@@ -164,6 +167,9 @@ export function resolveStringCatalog(
       gauges: meta.gauges?.length ? meta.gauges : ["16", "17"],
       colors: meta.colors?.length ? meta.colors : colors,
       recommended: option.isDefault || meta.recommended,
+      imageUrl: option.imageUrl,
+      variantId: option.variantId,
+      productId: option.productId,
     };
   });
 }

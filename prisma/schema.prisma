@@ -48,6 +48,8 @@ model Configurator {
   isActive    Boolean  @default(true)
   productIds     String   @default("[]")
   collectionIds  String   @default("[]")
+  laborVariantId String?
+  laborPrice     Float    @default(0)
   basePrice   Float    @default(0)
   currency    String   @default("USD")
   createdAt   DateTime @default(now())
@@ -77,12 +79,13 @@ model ConfiguratorStep {
 }
 
 model OptionGroup {
-  id          String  @id @default(cuid())
-  stepId      String
-  name        String
-  displayType String  @default("swatch")
-  sortOrder   Int     @default(0)
-  isRequired  Boolean @default(true)
+  id            String  @id @default(cuid())
+  stepId        String
+  name          String
+  displayType   String  @default("swatch")
+  collectionIds String  @default("[]")
+  sortOrder     Int     @default(0)
+  isRequired    Boolean @default(true)
 
   step    ConfiguratorStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
   options Option[]
@@ -99,6 +102,7 @@ model Option {
   previewLayer   String?
   priceAdjust    Float   @default(0)
   variantId      String?
+  productId      String?
   colorHex       String?
   sortOrder      Int     @default(0)
   isDefault      Boolean @default(false)

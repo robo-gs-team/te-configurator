@@ -18,8 +18,10 @@ import {
 } from "@shopify/polaris";
 import { useState } from "react";
 import { AddonAddForm } from "~/components/AddonAddForm";
+import { CollectionPicker } from "~/components/CollectionPicker";
+import { LaborProductPicker, type LaborProductSelection } from "~/components/LaborProductPicker";
 import { OptionAddForm } from "~/components/OptionAddForm";
-import { ProductPicker } from "~/components/ProductPicker";
+import { OptionGroupCollectionPicker } from "~/components/OptionGroupCollectionPicker";
 import { RemoveItemButton } from "~/components/RemoveItemButton";
 import { StepAddForm } from "~/components/StepAddForm";
 import prisma from "~/db.server";
@@ -28,8 +30,8 @@ import {
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { parseJson } from "~/lib/configurator.types";
-import { parseProductIdsField } from "~/lib/product-id";
-import { getProductsByIds } from "~/lib/shopify-products.server";
+import { parseCollectionIdsField } from "~/lib/collection-id";
+import { getCollectionsByIds } from "~/lib/shopify-collections.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -41,10 +43,26 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Not found", { status: 404 });
   }
 
-  const productIds = parseJson<string[]>(configurator.productIds, []);
-  const products = await getProductsByIds(admin, productIds);
+  const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
+  const collections = await getCollectionsByIds(admin, collectionIds);
 
-  return json({ configurator, products });
+  const groupCollections: Record<string, Awaited<ReturnType<typeof getCollectionsByIds>>> = {};
+  for (const step of configurator.steps) {
+    for (const group of step.optionGroups) {
+      const ids = parseJson<string[]>(group.collectionIds ?? "[]", []);
+      groupCollections[group.id] = await getCollectionsByIds(admin, ids);
+    }
+  }
+
+  const labor: LaborProductSelection | null = configurator.laborVariantId
+    ? {
+        variantId: configurator.laborVariantId,
+        title: "Stringing labor",
+        price: configurator.laborPrice,
+      }
+    : null;
+
+  return json({ configurator, collections, groupCollections, labor });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -61,7 +79,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (intent === "update") {
     const name = String(form.get("name") || "").trim();
     const description = String(form.get("description") || "").trim();
-    const productIds = parseProductIdsField(String(form.get("productIds") || ""));
+    const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
+    const laborVariantId = String(form.get("laborVariantId") || "").trim() || null;
+    const laborPrice = parseFloat(String(form.get("laborPrice") || "0")) || 0;
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
     const isActive = form.get("isActive") === "on";
 
@@ -70,13 +90,34 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       data: {
         name,
         description: description || null,
-        productIds: JSON.stringify(productIds),
-        collectionIds: "[]",
+        productIds: "[]",
+        collectionIds: JSON.stringify(collectionIds),
+        laborVariantId,
+        laborPrice,
         basePrice,
         isActive,
       },
     });
     return json({ success: true });
+  }
+
+  if (intent === "update_group_collections") {
+    const groupId = String(form.get("groupId") || "").trim();
+    const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
+
+    const group = await prisma.optionGroup.findFirst({
+      where: { id: groupId, step: { configuratorId: params.id } },
+    });
+    if (!group) {
+      return json({ error: "Option group not found", intent }, { status: 404 });
+    }
+
+    await prisma.optionGroup.update({
+      where: { id: groupId },
+      data: { collectionIds: JSON.stringify(collectionIds) },
+    });
+
+    return json({ success: true, intent });
   }
 
   if (intent === "add_rule") {
@@ -228,12 +269,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditConfigurator() {
-  const { configurator, products } = useLoaderData<typeof loader>();
+  const { configurator, collections, groupCollections, labor } =
+    useLoaderData<typeof loader>();
   const navigation = useNavigation();
 
   const [name, setName] = useState(configurator.name);
   const [description, setDescription] = useState(configurator.description ?? "");
-  const [selectedProducts, setSelectedProducts] = useState(products);
+  const [selectedCollections, setSelectedCollections] = useState(collections);
+  const [laborProduct, setLaborProduct] = useState<LaborProductSelection | null>(labor);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
 
@@ -276,10 +319,13 @@ export default function EditConfigurator() {
                     multiline={2}
                     autoComplete="off"
                   />
-                  <ProductPicker
-                    selected={selectedProducts}
-                    onChange={setSelectedProducts}
+                  <CollectionPicker
+                    label="Racquet collections"
+                    helpText="Select the collections whose products should use this configurator on the storefront."
+                    selected={selectedCollections}
+                    onChange={setSelectedCollections}
                   />
+                  <LaborProductPicker selected={laborProduct} onChange={setLaborProduct} />
                   <TextField
                     label="Base price"
                     name="basePrice"
@@ -339,7 +385,7 @@ export default function EditConfigurator() {
                         </Text>
                       ) : (
                         step.optionGroups.map((group) => (
-                          <BlockStack key={group.id} gap="100">
+                          <BlockStack key={group.id} gap="200">
                             <Text as="p" variant="bodySm" fontWeight="semibold">
                               {group.name} ({group.displayType})
                             </Text>
@@ -351,6 +397,14 @@ export default function EditConfigurator() {
                                 </Badge>
                               ))}
                             </InlineStack>
+                            {(step.stepType === "variant" || step.stepType === "options") &&
+                            /string|gauge|tension/i.test(group.name) ? (
+                              <OptionGroupCollectionPicker
+                                groupId={group.id}
+                                groupName={group.name}
+                                initialCollections={groupCollections[group.id] ?? []}
+                              />
+                            ) : null}
                           </BlockStack>
                         ))
                       )}

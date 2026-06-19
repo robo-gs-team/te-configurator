@@ -206,6 +206,8 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
           total += (mains?.price ?? 0) + (crosses?.price ?? 0);
         }
 
+        total += configurator.laborPrice ?? 0;
+
         return total;
       },
 

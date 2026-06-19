@@ -5,6 +5,14 @@ export type ProductSummary = {
   title: string;
 };
 
+export type ProductWithImage = {
+  id: string;
+  title: string;
+  imageUrl: string | null;
+  variantId: string | null;
+  price: number;
+};
+
 type ShopifyAdmin = {
   graphql: (
     query: string,
@@ -55,4 +63,70 @@ export async function getProductsByIds(
       id: normalizeProductId(String(node.legacyResourceId)),
       title: node.title ?? "Product",
     }));
+}
+
+type ProductsWithImagesResponse = {
+  data?: {
+    nodes?: Array<{
+      legacyResourceId?: string;
+      title?: string;
+      featuredImage?: { url?: string } | null;
+      variants?: {
+        nodes?: Array<{ legacyResourceId?: string; price?: string }>;
+      };
+    } | null>;
+  };
+};
+
+export async function getProductsWithImages(
+  admin: ShopifyAdmin,
+  productIds: string[],
+): Promise<Map<string, { imageUrl: string | null; variantId: string | null; price: number }>> {
+  if (productIds.length === 0) return new Map();
+
+  const response = await admin.graphql(
+    `#graphql
+      query ProtoProductsWithImages($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Product {
+            legacyResourceId
+            title
+            featuredImage {
+              url
+            }
+            variants(first: 1) {
+              nodes {
+                legacyResourceId
+                price
+              }
+            }
+          }
+        }
+      }
+    `,
+    {
+      variables: {
+        ids: productIds.map((id) => toProductGid(id)),
+      },
+    },
+  );
+
+  const body = (await response.json()) as ProductsWithImagesResponse;
+  const map = new Map<
+    string,
+    { imageUrl: string | null; variantId: string | null; price: number }
+  >();
+
+  for (const node of body.data?.nodes ?? []) {
+    if (!node?.legacyResourceId) continue;
+    const id = normalizeProductId(String(node.legacyResourceId));
+    const variant = node.variants?.nodes?.[0];
+    map.set(id, {
+      imageUrl: node.featuredImage?.url ?? null,
+      variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
+      price: parseFloat(String(variant?.price ?? "0")) || 0,
+    });
+  }
+
+  return map;
 }

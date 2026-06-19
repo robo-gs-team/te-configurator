@@ -22,6 +22,8 @@ export type StorefrontConfigurator = {
   description: string | null;
   basePrice: number;
   currency: string;
+  laborVariantId: string | null;
+  laborPrice: number;
   steps: StorefrontStep[];
   addons: StorefrontAddon[];
   rules: StorefrontRule[];
@@ -55,6 +57,7 @@ export type StorefrontOption = {
   previewLayer: string | null;
   priceAdjust: number;
   variantId: string | null;
+  productId: string | null;
   colorHex: string | null;
   sortOrder: number;
   isDefault: boolean;
@@ -130,6 +133,8 @@ export function serializeConfiguratorPayload(
     description: configurator.description,
     basePrice: configurator.basePrice,
     currency: configurator.currency,
+    laborVariantId: configurator.laborVariantId ?? null,
+    laborPrice: configurator.laborPrice ?? 0,
     steps: configurator.steps
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((step) => ({
@@ -157,6 +162,7 @@ export function serializeConfiguratorPayload(
                 previewLayer: option.previewLayer,
                 priceAdjust: option.priceAdjust,
                 variantId: option.variantId,
+                productId: option.productId ?? null,
                 colorHex: option.colorHex,
                 sortOrder: option.sortOrder,
                 isDefault: option.isDefault,

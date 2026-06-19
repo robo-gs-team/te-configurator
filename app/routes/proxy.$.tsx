@@ -11,8 +11,9 @@ import {
 } from "~/lib/configurator.server";
 import { serializeConfiguratorPayload } from "~/lib/configurator.types";
 import { sanitizeInput } from "~/lib/conditional-logic";
+import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { normalizeProductId } from "~/lib/product-id";
-import { authenticate } from "~/shopify.server";
+import { authenticate, unauthenticated } from "~/shopify.server";
 
 async function resolveShopDomain(request: Request): Promise<string | null> {
   const url = new URL(request.url);
@@ -39,7 +40,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   if (path.startsWith("product/")) {
     const productId = normalizeProductId(path.replace("product/", ""));
-    const lookup = await lookupConfiguratorForProduct(shopDomain, productId);
+
+    let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
+    try {
+      const context = await unauthenticated.admin(shopDomain);
+      admin = context.admin;
+    } catch {
+      // Collection lookup and product images require an installed app session.
+    }
+
+    const lookup = await lookupConfiguratorForProduct(shopDomain, productId, admin);
 
     if (lookup.status === "inactive") {
       return json({
@@ -57,13 +67,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       return json({
         configurator: null,
         error:
-          "No configurator linked to this product. Select products in the app admin and click Save changes.",
+          "No configurator linked to this product. Select a racquet collection in the app admin and click Save changes.",
         productId,
         code: "not_linked",
       });
     }
 
-    const configurator = lookup.configurator;
+    const configurator = admin
+      ? await enrichConfiguratorWithShopifyData(admin, lookup.configurator)
+      : lookup.configurator;
 
     const shop = await ensureShop(shopDomain);
     const theme = await getShopThemeSettings(shop.id);

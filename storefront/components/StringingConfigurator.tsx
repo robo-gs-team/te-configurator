@@ -32,6 +32,20 @@ const STRING_REEL = (
   </svg>
 );
 
+function StringImage({ product }: { product: StringProduct }) {
+  if (product.imageUrl) {
+    return (
+      <img
+        src={product.imageUrl}
+        alt={product.name}
+        className="w-9 h-9 object-cover rounded"
+        loading="lazy"
+      />
+    );
+  }
+  return STRING_REEL;
+}
+
 type Accent = "standard" | "mains" | "crosses";
 
 function tensionPercent(value: number) {
@@ -120,7 +134,9 @@ function StringCatalog({
               onClick={() => onSelect(product.id)}
               className={`proto-desk-string-row ${isSelected ? selectedClass : ""}`}
             >
-              <div className="proto-desk-str-img">{STRING_REEL}</div>
+              <div className="proto-desk-str-img">
+                <StringImage product={product} />
+              </div>
               <div className="proto-desk-str-info">
                 {product.recommended && !isSelected && (
                   <span className="proto-desk-str-badge proto-desk-str-badge--rec">Recommended</span>
@@ -317,10 +333,12 @@ function SelectedCard({
 function OrderSummary({
   basePrice,
   stringLines,
+  laborPrice,
   total,
 }: {
   basePrice: number;
   stringLines: { label: string; value: string }[];
+  laborPrice: number;
   total: number;
 }) {
   return (
@@ -337,7 +355,7 @@ function OrderSummary({
       ))}
       <div className="proto-desk-sum-row">
         <span>Labor</span>
-        <span>Incl.</span>
+        <span>{laborPrice > 0 ? `$${laborPrice.toFixed(0)}` : "Incl."}</span>
       </div>
       <div className="proto-desk-sum-total">
         <span>Total</span>
@@ -399,11 +417,13 @@ function AddToCartButton({
 function StandardDesktop({
   catalog,
   basePrice,
+  laborPrice,
   onAddToCart,
   isAddingToCart,
 }: {
   catalog: StringProduct[];
   basePrice: number;
+  laborPrice: number;
   onAddToCart: () => void;
   isAddingToCart: boolean;
 }) {
@@ -460,6 +480,7 @@ function StandardDesktop({
         <OrderSummary
           basePrice={basePrice}
           stringLines={[{ label: "String", value: formatStringPrice(product.price) }]}
+          laborPrice={laborPrice}
           total={total}
         />
         <AddToCartButton total={total} onAddToCart={onAddToCart} isAddingToCart={isAddingToCart} />
@@ -472,11 +493,13 @@ function StandardDesktop({
 function HybridDesktop({
   catalog,
   basePrice,
+  laborPrice,
   onAddToCart,
   isAddingToCart,
 }: {
   catalog: StringProduct[];
   basePrice: number;
+  laborPrice: number;
   onAddToCart: () => void;
   isAddingToCart: boolean;
 }) {
@@ -570,6 +593,7 @@ function HybridDesktop({
                 value: formatStringPrice(crossesProduct.price),
               },
             ]}
+            laborPrice={laborPrice}
             total={total}
           />
           <AddToCartButton total={total} onAddToCart={onAddToCart} isAddingToCart={isAddingToCart} />
@@ -602,6 +626,7 @@ export function StringingConfigurator({
   if (!configurator) return null;
 
   const basePrice = configurator.basePrice;
+  const laborPrice = configurator.laborPrice ?? 0;
 
   return (
     <div className="proto-desk-shell flex flex-col h-full">
@@ -637,6 +662,7 @@ export function StringingConfigurator({
           <StandardDesktop
             catalog={catalog}
             basePrice={basePrice}
+            laborPrice={laborPrice}
             onAddToCart={onAddToCart}
             isAddingToCart={isAddingToCart}
           />
@@ -644,6 +670,7 @@ export function StringingConfigurator({
           <HybridDesktop
             catalog={catalog}
             basePrice={basePrice}
+            laborPrice={laborPrice}
             onAddToCart={onAddToCart}
             isAddingToCart={isAddingToCart}
           />

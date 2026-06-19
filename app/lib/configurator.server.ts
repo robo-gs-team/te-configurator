@@ -2,6 +2,14 @@ import prisma from "~/db.server";
 import type { ConfiguratorWithRelations } from "~/lib/configurator.types";
 import { parseJson } from "~/lib/configurator.types";
 import { productIdsMatch } from "~/lib/product-id";
+import { productBelongsToCollections } from "~/lib/shopify-collections.server";
+
+type ShopifyAdmin = {
+  graphql: (
+    query: string,
+    options?: { variables?: Record<string, unknown> },
+  ) => Promise<Response>;
+};
 
 const configuratorInclude = {
   steps: {
@@ -52,6 +60,7 @@ export type ConfiguratorProductLookup =
 export async function lookupConfiguratorForProduct(
   shopDomain: string,
   productId: string,
+  admin?: ShopifyAdmin,
 ): Promise<ConfiguratorProductLookup> {
   const shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) return { status: "not_linked" };
@@ -61,14 +70,29 @@ export async function lookupConfiguratorForProduct(
     include: configuratorInclude,
   });
 
-  const match = configurators.find((c) => {
-    const ids = parseJson<string[]>(c.productIds, []);
-    return productIdsMatch(ids, productId);
-  });
+  for (const configurator of configurators) {
+    const productIds = parseJson<string[]>(configurator.productIds, []);
+    if (productIdsMatch(productIds, productId)) {
+      if (!configurator.isActive) return { status: "inactive", configurator };
+      return { status: "found", configurator };
+    }
 
-  if (!match) return { status: "not_linked" };
-  if (!match.isActive) return { status: "inactive", configurator: match };
-  return { status: "found", configurator: match };
+    const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
+    if (collectionIds.length > 0 && admin) {
+      const belongs = await productBelongsToCollections(
+        admin,
+        productId,
+        collectionIds,
+        shopDomain,
+      );
+      if (belongs) {
+        if (!configurator.isActive) return { status: "inactive", configurator };
+        return { status: "found", configurator };
+      }
+    }
+  }
+
+  return { status: "not_linked" };
 }
 
 export async function getConfiguratorForProduct(
