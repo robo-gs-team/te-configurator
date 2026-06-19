@@ -231,6 +231,7 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
       getVariantId: () => {
         const { configurator, selections } = get();
         if (!configurator) return null;
+        if (usesStringingUi(configurator)) return null;
         return getSelectedVariantId(configurator, selections);
       },
     }));

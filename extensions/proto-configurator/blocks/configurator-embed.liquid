@@ -21,16 +21,22 @@
       z-index: 99999;
     }
 
-    /* Fallback when JS marks body — Dawn / OS 2.0 themes */
-    body.proto-stringing-strung .product-form__quantity,
-    body.proto-stringing-strung quantity-input,
-    body.proto-stringing-strung .quantity-selector,
-    body.proto-stringing-strung .product-form__submit,
-    body.proto-stringing-strung button[name="add"],
+    /* Fallback when JS marks body — hide Buy now only (quantity stays visible) */
     body.proto-stringing-strung .shopify-payment-button,
     body.proto-stringing-strung shopify-accelerated-checkout,
     body.proto-stringing-strung .shopify-buy-it-now-button {
       display: none !important;
+    }
+
+    .proto-configurator-actions--inline {
+      margin-top: 0 !important;
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+    }
+
+    .proto-configurator-actions--inline .proto-configurator-trigger {
+      width: 100%;
     }
 
     .proto-configurator-button-wrapper {
@@ -47,6 +53,61 @@
     .product-info .proto-configurator-button-wrapper {
       margin-top: 8px;
       margin-bottom: 12px;
+    }
+
+    .proto-configurator-field {
+      margin-bottom: 12px;
+    }
+
+    .proto-configurator-label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: inherit;
+    }
+
+    .proto-configurator-select-wrap {
+      position: relative;
+    }
+
+    .proto-configurator-select-wrap::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      right: 16px;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid currentColor;
+      transform: translateY(-25%);
+      opacity: 0.65;
+    }
+
+    .proto-configurator-select {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 100%;
+      min-height: 48px;
+      padding: 12px 44px 12px 16px;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+      background: #fff;
+      color: inherit;
+      font: inherit;
+      line-height: 1.4;
+      cursor: pointer;
+    }
+
+    .proto-configurator-select:focus {
+      outline: 2px solid rgba(59, 130, 246, 0.45);
+      outline-offset: 1px;
+    }
+
+    .proto-configurator-actions[hidden] {
+      display: none !important;
     }
 
     .proto-configurator-actions {

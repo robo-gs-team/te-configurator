@@ -1,5 +1,6 @@
 import { normalizeCollectionId, toCollectionGid } from "~/lib/collection-id";
 import { normalizeProductId } from "~/lib/product-id";
+import { resolveProductImageUrl } from "~/lib/shopify-products.server";
 
 type ShopifyAdmin = {
   graphql: (
@@ -204,6 +205,18 @@ export async function getProductsInCollections(
                   featuredImage {
                     url
                   }
+                  featuredMedia {
+                    preview {
+                      image {
+                        url
+                      }
+                    }
+                  }
+                  images(first: 1) {
+                    nodes {
+                      url
+                    }
+                  }
                   variants(first: 1) {
                     nodes {
                       legacyResourceId
@@ -240,7 +253,7 @@ export async function getProductsInCollections(
             id,
             title: node.title ?? "Product",
             productType: node.productType ?? "String",
-            imageUrl: node.featuredImage?.url ?? null,
+            imageUrl: resolveProductImageUrl(node),
             variantId: String(variant.legacyResourceId),
             price: parseFloat(String(variant.price ?? "0")) || 0,
           });

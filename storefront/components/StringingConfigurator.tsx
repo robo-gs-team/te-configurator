@@ -617,6 +617,7 @@ export function StringingConfigurator({
 }: StringingConfiguratorProps) {
   const configurator = useConfiguratorStore((s) => s.configurator);
   const mode = useConfiguratorStore((s) => s.stringingMode);
+  const cartError = useConfiguratorStore((s) => s.cartError);
 
   const catalog = useMemo(
     () => resolveStringCatalog(configurator),
@@ -676,6 +677,12 @@ export function StringingConfigurator({
           />
         )}
       </div>
+
+      {cartError && (
+        <div className="mx-4 mb-4 px-4 py-2 rounded-lg bg-red-500/90 text-white text-sm">
+          {cartError}
+        </div>
+      )}
     </div>
   );
 }

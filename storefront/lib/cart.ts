@@ -4,11 +4,7 @@ import type {
   StorefrontConfigurator,
 } from "~/lib/configurator.types";
 import type { BedSelection } from "./string-catalog";
-import {
-  getStringById,
-  resolveStringCatalog,
-  usesStringingUi,
-} from "./string-catalog";
+import { usesStringingUi } from "./string-catalog";
 import { buildStringingProperties } from "./stringing-cart";
 import type { StringingMode } from "../store/configurator-store";
 
@@ -77,30 +73,8 @@ export async function addToShopifyCart(
   ];
 
   if (isStringing && stringing) {
-    const catalog = resolveStringCatalog(configurator);
-
-    if (stringing.mode === "standard") {
-      const stringProduct = getStringById(catalog, stringing.standardBed.stringId);
-      pushVariantLine(items, stringProduct?.variantId, 1, {
-        ...parentTag,
-        _line_type: "string",
-        String: stringProduct?.name ?? "",
-      });
-    } else {
-      const mains = getStringById(catalog, stringing.hybridBeds.mains.stringId);
-      const crosses = getStringById(catalog, stringing.hybridBeds.crosses.stringId);
-      pushVariantLine(items, mains?.variantId, 1, {
-        ...parentTag,
-        _line_type: "string_mains",
-        String: mains?.name ?? "",
-      });
-      pushVariantLine(items, crosses?.variantId, 1, {
-        ...parentTag,
-        _line_type: "string_crosses",
-        String: crosses?.name ?? "",
-      });
-    }
-
+    // String SKUs are catalog references — selections are stored on the racket line.
+    // Only the optional labor service is added as a separate cart line.
     if (configurator.laborVariantId) {
       pushVariantLine(items, configurator.laborVariantId, 1, {
         ...parentTag,
@@ -121,17 +95,19 @@ export async function addToShopifyCart(
   }
 
   try {
-    const res = await fetch("/cart/add.js", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    });
+    let res = await postCartItems(items);
+
+    if (!res.ok && isStringing && items.length > 1) {
+      res = await postCartItems([items[0]]);
+    }
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       return {
         success: false,
-        error: (err as { description?: string }).description || "Cart error",
+        error: (err as { description?: string; message?: string }).description
+          ?? (err as { message?: string }).message
+          ?? "Cart error",
       };
     }
 
@@ -149,12 +125,66 @@ export async function addToShopifyCart(
   }
 }
 
+async function postCartItems(
+  items: Array<{
+    id: number;
+    quantity: number;
+    properties?: Record<string, string>;
+  }>,
+) {
+  return fetch("/cart/add.js", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+}
+
 function getProductVariantFromPage(): string | null {
-  const form = document.querySelector('form[action*="/cart/add"]');
-  const input = form?.querySelector<HTMLInputElement>(
-    'input[name="id"], select[name="id"]',
+  const selectors = [
+    'form[action*="/cart/add"] input[name="id"]',
+    'form[action*="/cart/add"] select[name="id"]',
+    'product-form input[name="id"]',
+    'product-form select[name="id"]',
+    'input[name="id"][form*="product"]',
+    'select[name="id"][form*="product"]',
+  ];
+
+  for (const selector of selectors) {
+    const input = document.querySelector<HTMLInputElement | HTMLSelectElement>(
+      selector,
+    );
+    if (input?.value) return input.value;
+  }
+
+  const variantPicker = document.querySelector<HTMLElement>(
+    "[data-selected-variant-id]",
   );
-  return input?.value ?? null;
+  if (variantPicker?.dataset.selectedVariantId) {
+    return variantPicker.dataset.selectedVariantId;
+  }
+
+  const urlVariant = new URLSearchParams(window.location.search).get("variant");
+  if (urlVariant) return urlVariant;
+
+  const productJson = document.querySelector<HTMLScriptElement>(
+    'script[type="application/json"][data-product-json], script[type="application/json"][id*="ProductJson"]',
+  );
+  if (productJson?.textContent) {
+    try {
+      const data = JSON.parse(productJson.textContent) as {
+        selected_or_first_available_variant?: { id?: number | string };
+        variants?: Array<{ id?: number | string }>;
+      };
+      const selected = data.selected_or_first_available_variant?.id;
+      if (selected != null) return String(selected);
+      const first = data.variants?.[0]?.id;
+      if (first != null) return String(first);
+    } catch {
+      /* ignore malformed JSON */
+    }
+  }
+
+  return null;
 }
 
 export async function saveConfiguration(

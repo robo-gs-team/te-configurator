@@ -9,6 +9,7 @@ let isBuyBoxHidden = false;
 function isProtoElement(el: Element | null): boolean {
   if (!el) return false;
   if (el.closest(".proto-configurator-button-wrapper")) return true;
+  if (el.closest(".proto-configurator-actions")) return true;
   if (el.querySelector?.(".proto-configurator-button-wrapper")) return true;
   return false;
 }
@@ -20,52 +21,13 @@ function canHideElement(el: HTMLElement): boolean {
 
 function getProductForm(): Element | null {
   return (
-    document.querySelector('product-form form') ??
+    document.querySelector("product-form form") ??
     document.querySelector('form[action*="/cart/add"]')
   );
 }
 
-function getThemeQuantityInput(): HTMLInputElement | null {
-  return document.querySelector<HTMLInputElement>(
-    'form[action*="/cart/add"] input[name="quantity"], product-form input[name="quantity"]',
-  );
-}
-
-function findThemeBuyBoxElements(): HTMLElement[] {
-  const form = getProductForm();
+function findCheckoutElements(): HTMLElement[] {
   const found: HTMLElement[] = [];
-
-  const qtyInput = getThemeQuantityInput();
-  if (qtyInput) {
-    const qtyContainer =
-      qtyInput.closest("quantity-input") ??
-      qtyInput.closest(".quantity-selector") ??
-      qtyInput.closest(".product-form__quantity") ??
-      qtyInput.parentElement;
-
-    if (qtyContainer instanceof HTMLElement && canHideElement(qtyContainer)) {
-      found.push(qtyContainer);
-    }
-  }
-
-  const addToCartSelectors = [
-    'button[name="add"]',
-    ".product-form__submit",
-    "[data-add-to-cart]",
-    'button[type="submit"].button--add-to-cart',
-    "#ProductSubmitButton",
-  ];
-
-  if (form) {
-    for (const selector of addToCartSelectors) {
-      const button = form.querySelector(selector);
-      if (button instanceof HTMLElement && canHideElement(button)) {
-        found.push(button);
-        break;
-      }
-    }
-  }
-
   const buyNowSelectors = [
     ".shopify-payment-button",
     "shopify-accelerated-checkout",
@@ -83,15 +45,16 @@ function findThemeBuyBoxElements(): HTMLElement[] {
     });
   }
 
-  return [...new Set(found)];
+  return found;
 }
 
+/** Hide Buy now / accelerated checkout when Strung is selected (quantity stays visible). */
 export function setThemeBuyBoxHidden(hidden: boolean) {
   if (hidden === isBuyBoxHidden) return;
   isBuyBoxHidden = hidden;
 
   if (hidden) {
-    hiddenRecords = findThemeBuyBoxElements().map((el) => {
+    hiddenRecords = findCheckoutElements().map((el) => {
       const display = el.style.display;
       el.style.setProperty("display", "none", "important");
       el.setAttribute("aria-hidden", "true");

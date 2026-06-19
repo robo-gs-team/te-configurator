@@ -167,7 +167,7 @@ export function resolveStringCatalog(
       gauges: meta.gauges?.length ? meta.gauges : ["16", "17"],
       colors: meta.colors?.length ? meta.colors : colors,
       recommended: option.isDefault || meta.recommended,
-      imageUrl: option.imageUrl,
+      imageUrl: option.imageUrl ?? option.previewLayer ?? null,
       variantId: option.variantId,
       productId: option.productId,
     };

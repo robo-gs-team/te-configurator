@@ -19,13 +19,10 @@
 
 {% assign hide_configure_actions = false %}
 {% if enable_dropdown %}
-  {% assign hide_configure_actions = true %}
   {% for option in dropdown_options %}
     {% assign option_trimmed = option | strip %}
-    {% if option_trimmed != blank %}
-      {% if option_trimmed == trigger_option %}
-        {% assign hide_configure_actions = false %}
-      {% endif %}
+    {% if option_trimmed != blank and option_trimmed == trigger_option %}
+      {% assign hide_configure_actions = false %}
       {% break %}
     {% endif %}
   {% endfor %}
@@ -171,6 +168,21 @@
       display: none !important;
     }
 
+    .proto-configurator-actions[hidden] {
+      display: none !important;
+    }
+
+    .proto-configurator-actions--inline {
+      margin-top: 0 !important;
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+    }
+
+    .proto-configurator-actions--inline .proto-configurator-trigger {
+      width: 100%;
+    }
+
     .proto-configurator-trigger {
       width: 100%;
       display: inline-flex;
@@ -215,7 +227,7 @@
       "id": "enable_stringing_dropdown",
       "label": "Show stringing dropdown on product page",
       "default": true,
-      "info": "Placed in the product info column automatically (above quantity / add to cart). Configure appears only when Strung is selected."
+      "info": "Placed in the product info column automatically (above quantity / add to cart). Configure replaces Add to cart when Strung is selected."
     },
     {
       "type": "text",
@@ -240,7 +252,7 @@
     {
       "type": "checkbox",
       "id": "hide_theme_buybox",
-      "label": "Hide theme quantity, Add to cart, and Buy now when Strung is selected",
+      "label": "Hide theme Buy now when Strung is selected",
       "default": true
     },
     {

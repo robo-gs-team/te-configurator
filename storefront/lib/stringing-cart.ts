@@ -2,6 +2,7 @@ import type { StorefrontConfigurator } from "~/lib/configurator.types";
 import type { BedSelection, StringProduct } from "./string-catalog";
 import {
   bedSummary,
+  formatStringPrice,
   getStringById,
   resolveStringCatalog,
 } from "./string-catalog";
@@ -21,13 +22,23 @@ export function buildStringingProperties(
   };
 
   if (mode === "standard") {
+    const product = getStringById(catalog, standardBed.stringId);
     properties.Setup = bedSummary(catalog, standardBed);
+    properties["String upgrade"] = formatStringPrice(product?.price ?? 0);
     appendBedProperties(properties, catalog, standardBed, "");
   } else {
+    const mainsProduct = getStringById(catalog, hybridBeds.mains.stringId);
+    const crossesProduct = getStringById(catalog, hybridBeds.crosses.stringId);
     properties.Mains = bedSummary(catalog, hybridBeds.mains);
     properties.Crosses = bedSummary(catalog, hybridBeds.crosses);
+    properties["Mains upgrade"] = formatStringPrice(mainsProduct?.price ?? 0);
+    properties["Crosses upgrade"] = formatStringPrice(crossesProduct?.price ?? 0);
     appendBedProperties(properties, catalog, hybridBeds.mains, "Mains ");
     appendBedProperties(properties, catalog, hybridBeds.crosses, "Crosses ");
+  }
+
+  if (configurator.laborPrice > 0) {
+    properties.Labor = `$${configurator.laborPrice.toFixed(2)}`;
   }
 
   return properties;

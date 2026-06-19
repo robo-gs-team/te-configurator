@@ -6,7 +6,10 @@ import { clearConfigureError, showConfigureError } from "./lib/configure-feedbac
 import { collectImageUrls, preloadImages } from "./lib/image-preloader";
 import { normalizeProductId } from "./lib/product-id";
 import { refreshThemeBuyBoxHidden, setThemeBuyBoxHidden } from "./lib/theme-buybox";
+import { syncConfigureButtonSlot } from "./lib/configure-placement";
+import { createStringingGateWrapper } from "./lib/stringing-gate";
 import {
+  findThemeStringingBlock,
   getProductInfoInsertPoint,
   scheduleConfiguratorRelocation,
 } from "./lib/theme-placement";
@@ -240,10 +243,12 @@ function updateStringingGate(wrapper: HTMLElement) {
   if (!select || !actions) return;
 
   const trigger = wrapper.dataset.triggerValue ?? "Strung";
-  const showConfigure = select.value === trigger;
+  const showConfigure =
+    select.value.trim().toLowerCase() === trigger.trim().toLowerCase();
 
   actions.hidden = !showConfigure;
   actions.setAttribute("aria-hidden", showConfigure ? "false" : "true");
+  syncConfigureButtonSlot(wrapper, showConfigure);
 
   if (shouldHideThemeBuyBox(wrapper)) {
     if (showConfigure) {
@@ -252,6 +257,28 @@ function updateStringingGate(wrapper: HTMLElement) {
       setThemeBuyBoxHidden(false);
     }
   }
+}
+
+function bindThemeStringingSelect(wrapper: HTMLElement) {
+  const block = findThemeStringingBlock();
+  if (!block || block.closest(".proto-configurator-button-wrapper")) return;
+
+  const themeSelect = block.querySelector<HTMLSelectElement>("select");
+  if (!themeSelect || themeSelect.dataset.protoStringingBound) return;
+  themeSelect.dataset.protoStringingBound = "true";
+
+  const sync = () => {
+    const protoSelect = wrapper.querySelector<HTMLSelectElement>(
+      "[data-proto-stringing-select]",
+    );
+    if (protoSelect && protoSelect !== themeSelect) {
+      protoSelect.value = themeSelect.value;
+    }
+    updateStringingGate(wrapper);
+  };
+
+  themeSelect.addEventListener("change", sync);
+  sync();
 }
 
 function initStringingGates() {
@@ -270,6 +297,7 @@ function initStringingGates() {
 
     updateStringingGate(el);
     select.addEventListener("change", () => updateStringingGate(el));
+    bindThemeStringingSelect(el);
   });
 }
 
@@ -288,25 +316,8 @@ function injectProductPageButton() {
   const insertParent = getProductInfoInsertPoint();
   if (!insertParent) return;
 
-  const wrapper = document.createElement("div");
-  wrapper.className = "proto-configurator-button-wrapper";
+  const wrapper = createStringingGateWrapper(productId);
   wrapper.dataset.protoAutoInjected = "true";
-
-  const actions = document.createElement("div");
-  actions.className = "proto-configurator-actions";
-  actions.dataset.protoConfiguratorActions = "";
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "proto-configurator-trigger";
-  button.dataset.protoConfiguratorTrigger = "";
-  button.dataset.productId = productId;
-  button.textContent = "Configure";
-  button.style.cssText =
-    "width:100%;display:inline-flex;align-items:center;justify-content:center;border:none;padding:14px 20px;font-size:15px;font-weight:600;cursor:pointer;min-height:48px;background-color:#c8102e;color:#fff;border-radius:6px;";
-
-  actions.appendChild(button);
-  wrapper.appendChild(actions);
 
   const insertBefore = insertParent.querySelector(
     ".product-form__quantity, quantity-input, .quantity-selector, button[name='add'], .product-form__submit, form[action*='/cart/add'], product-form",

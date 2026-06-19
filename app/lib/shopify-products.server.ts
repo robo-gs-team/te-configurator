@@ -66,17 +66,34 @@ export async function getProductsByIds(
     }));
 }
 
+type ProductImageNode = {
+  featuredImage?: { url?: string } | null;
+  featuredMedia?: {
+    preview?: { image?: { url?: string } | null } | null;
+  } | null;
+  images?: { nodes?: Array<{ url?: string } | null> };
+};
+
+export function resolveProductImageUrl(node: ProductImageNode): string | null {
+  return (
+    node.featuredImage?.url ??
+    node.featuredMedia?.preview?.image?.url ??
+    node.images?.nodes?.find((image) => image?.url)?.url ??
+    null
+  );
 type ProductsWithImagesResponse = {
   data?: {
-    nodes?: Array<{
-      legacyResourceId?: string;
-      title?: string;
-      productType?: string;
-      featuredImage?: { url?: string } | null;
-      variants?: {
-        nodes?: Array<{ legacyResourceId?: string; price?: string }>;
-      };
-    } | null>;
+    nodes?: Array<
+      | ({
+          legacyResourceId?: string;
+          title?: string;
+          productType?: string;
+          variants?: {
+            nodes?: Array<{ legacyResourceId?: string; price?: string }>;
+          };
+        } & ProductImageNode)
+      | null
+    >;
   };
 };
 
@@ -96,6 +113,18 @@ export async function getProductsDetailedByIds(
             productType
             featuredImage {
               url
+            }
+            featuredMedia {
+              preview {
+                image {
+                  url
+                }
+              }
+            }
+            images(first: 1) {
+              nodes {
+                url
+              }
             }
             variants(first: 1) {
               nodes {
@@ -124,7 +153,7 @@ export async function getProductsDetailedByIds(
         id: normalizeProductId(String(node.legacyResourceId)),
         title: node.title ?? "Product",
         productType: node.productType ?? undefined,
-        imageUrl: node.featuredImage?.url ?? null,
+        imageUrl: resolveProductImageUrl(node),
         variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
         price: parseFloat(String(variant?.price ?? "0")) || 0,
       };
@@ -146,6 +175,18 @@ export async function getProductsWithImages(
             title
             featuredImage {
               url
+            }
+            featuredMedia {
+              preview {
+                image {
+                  url
+                }
+              }
+            }
+            images(first: 1) {
+              nodes {
+                url
+              }
             }
             variants(first: 1) {
               nodes {
@@ -175,7 +216,7 @@ export async function getProductsWithImages(
     const id = normalizeProductId(String(node.legacyResourceId));
     const variant = node.variants?.nodes?.[0];
     map.set(id, {
-      imageUrl: node.featuredImage?.url ?? null,
+      imageUrl: resolveProductImageUrl(node),
       variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
       price: parseFloat(String(variant?.price ?? "0")) || 0,
     });
