@@ -6,7 +6,7 @@ import { clearConfigureError, showConfigureError } from "./lib/configure-feedbac
 import { collectImageUrls, preloadImages } from "./lib/image-preloader";
 import { normalizeProductId } from "./lib/product-id";
 import { refreshThemeBuyBoxHidden, setThemeBuyBoxHidden } from "./lib/theme-buybox";
-import { syncConfigureButtonSlot } from "./lib/configure-placement";
+import { syncConfigureButtonSlot, restoreAddToCartButtons } from "./lib/configure-placement";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import {
   findThemeStringingBlock,
@@ -255,7 +255,10 @@ function updateStringingGate(wrapper: HTMLElement) {
       refreshThemeBuyBoxHidden(true);
     } else {
       setThemeBuyBoxHidden(false);
+      restoreAddToCartButtons();
     }
+  } else if (!showConfigure) {
+    restoreAddToCartButtons();
   }
 }
 

@@ -50,7 +50,12 @@ function findCheckoutElements(): HTMLElement[] {
 
 /** Hide Buy now / accelerated checkout when Strung is selected (quantity stays visible). */
 export function setThemeBuyBoxHidden(hidden: boolean) {
-  if (hidden === isBuyBoxHidden) return;
+  if (hidden === isBuyBoxHidden) {
+    if (!hidden) {
+      document.body.classList.remove("proto-stringing-strung");
+    }
+    return;
+  }
   isBuyBoxHidden = hidden;
 
   if (hidden) {
