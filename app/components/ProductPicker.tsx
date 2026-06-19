@@ -4,6 +4,10 @@ import { toProductGid } from "~/lib/product-id";
 import type { ProductSummary } from "~/lib/shopify-products.server";
 
 type Props = {
+  label?: string;
+  helpText?: string;
+  name?: string;
+  multiple?: boolean;
   selected: ProductSummary[];
   onChange: (products: ProductSummary[]) => void;
 };
@@ -13,13 +17,20 @@ type PickerProduct = {
   title?: string;
 };
 
-export function ProductPicker({ selected, onChange }: Props) {
+export function ProductPicker({
+  label = "Products",
+  helpText,
+  name = "productIds",
+  multiple = true,
+  selected,
+  onChange,
+}: Props) {
   const shopify = useAppBridge();
 
   async function openPicker() {
     const picker = await shopify.resourcePicker({
       type: "product",
-      multiple: true,
+      multiple,
       selectionIds: selected.map((product) => toProductGid(product.id)),
     });
 
@@ -39,9 +50,14 @@ export function ProductPicker({ selected, onChange }: Props) {
 
   return (
     <BlockStack gap="200">
-      <Text as="p" variant="bodySm" tone="subdued">
-        Select the products that should use this configurator on the storefront.
+      <Text as="p" variant="bodyMd" fontWeight="semibold">
+        {label}
       </Text>
+      {helpText ? (
+        <Text as="p" variant="bodySm" tone="subdued">
+          {helpText}
+        </Text>
+      ) : null}
       {selected.length > 0 ? (
         <InlineStack gap="200" wrap>
           {selected.map((product) => (
@@ -68,7 +84,7 @@ export function ProductPicker({ selected, onChange }: Props) {
       </InlineStack>
       <input
         type="hidden"
-        name="productIds"
+        name={name}
         value={JSON.stringify(selected.map((product) => product.id))}
       />
     </BlockStack>

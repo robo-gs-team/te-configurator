@@ -84,6 +84,7 @@ model OptionGroup {
   name          String
   displayType   String  @default("swatch")
   collectionIds String  @default("[]")
+  productIds    String  @default("[]")
   sortOrder     Int     @default(0)
   isRequired    Boolean @default(true)
 
@@ -139,6 +140,8 @@ model Addon {
   imageUrl       String?
   price          Float   @default(0)
   variantId      String?
+  productIds     String  @default("[]")
+  collectionIds  String  @default("[]")
   maxQuantity    Int     @default(1)
   isActive       Boolean @default(true)
   sortOrder      Int     @default(0)

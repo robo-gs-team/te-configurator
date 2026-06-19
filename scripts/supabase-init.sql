@@ -73,6 +73,7 @@ CREATE TABLE "OptionGroup" (
     "name" TEXT NOT NULL,
     "displayType" TEXT NOT NULL DEFAULT 'swatch',
     "collectionIds" TEXT NOT NULL DEFAULT '[]',
+    "productIds" TEXT NOT NULL DEFAULT '[]',
     "sortOrder" INTEGER NOT NULL DEFAULT 0,
     "isRequired" BOOLEAN NOT NULL DEFAULT true,
 
@@ -121,6 +122,8 @@ CREATE TABLE "Addon" (
     "imageUrl" TEXT,
     "price" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "variantId" TEXT,
+    "productIds" TEXT NOT NULL DEFAULT '[]',
+    "collectionIds" TEXT NOT NULL DEFAULT '[]',
     "maxQuantity" INTEGER NOT NULL DEFAULT 1,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "sortOrder" INTEGER NOT NULL DEFAULT 0,

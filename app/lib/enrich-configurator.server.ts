@@ -1,8 +1,11 @@
-import type { ConfiguratorWithRelations } from "~/lib/configurator.types";
+import type { Addon, ConfiguratorWithRelations } from "~/lib/configurator.types";
 import { parseJson } from "~/lib/configurator.types";
 import type { CollectionProduct } from "~/lib/shopify-collections.server";
 import { getProductsInCollections } from "~/lib/shopify-collections.server";
-import { getProductsWithImages } from "~/lib/shopify-products.server";
+import {
+  getProductsDetailedByIds,
+  getProductsWithImages,
+} from "~/lib/shopify-products.server";
 
 type ShopifyAdmin = {
   graphql: (
@@ -11,12 +14,20 @@ type ShopifyAdmin = {
   ) => Promise<Response>;
 };
 
-function collectionProductToOption(
-  product: CollectionProduct,
+function shopifyProductToOption(
+  product: CollectionProduct | {
+    id: string;
+    title: string;
+    productType?: string;
+    imageUrl: string | null;
+    variantId: string | null;
+    price: number;
+  },
   sortOrder: number,
+  idPrefix: string,
 ) {
   return {
-    id: `collection-${product.id}`,
+    id: `${idPrefix}-${product.id}`,
     optionGroupId: "",
     label: product.title,
     value: product.title.toLowerCase().replace(/\s+/g, "_"),
@@ -29,12 +40,89 @@ function collectionProductToOption(
     sortOrder,
     isDefault: sortOrder === 0,
     metadata: JSON.stringify({
-      type: product.productType,
+      type: "productType" in product ? product.productType : "String",
       gauges: ["16", "17"],
       colors: ["Black", "White", "Natural"],
-      fromCollection: true,
+      fromShopify: true,
     }),
   };
+}
+
+async function resolveAddonProducts(
+  admin: ShopifyAdmin,
+  addon: Addon,
+): Promise<
+  Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    imageUrl: string | null;
+    price: number;
+    variantId: string | null;
+    maxQuantity: number;
+    sortOrder: number;
+    metadata: Record<string, unknown>;
+  }>
+> {
+  const productIds = parseJson<string[]>(addon.productIds ?? "[]", []);
+  const collectionIds = parseJson<string[]>(addon.collectionIds ?? "[]", []);
+  const priceOverride = addon.price > 0 ? addon.price : null;
+
+  const fromProducts =
+    productIds.length > 0 ? await getProductsDetailedByIds(admin, productIds) : [];
+  const fromCollections =
+    collectionIds.length > 0
+      ? await getProductsInCollections(admin, collectionIds)
+      : [];
+
+  const seen = new Map<string, CollectionProduct | (typeof fromProducts)[0]>();
+  for (const product of [...fromProducts, ...fromCollections]) {
+    if (!seen.has(product.id)) seen.set(product.id, product);
+  }
+
+  if (seen.size > 0) {
+    return Array.from(seen.values()).map((product, index) => ({
+      id: `${addon.id}-product-${product.id}`,
+      name: addon.name.trim() || product.title,
+      description: addon.description,
+      imageUrl: product.imageUrl,
+      price: priceOverride ?? product.price,
+      variantId: product.variantId,
+      maxQuantity: addon.maxQuantity,
+      sortOrder: addon.sortOrder + index,
+      metadata: { parentAddonId: addon.id, productId: product.id },
+    }));
+  }
+
+  if (addon.variantId) {
+    return [
+      {
+        id: addon.id,
+        name: addon.name,
+        description: addon.description,
+        imageUrl: addon.imageUrl,
+        price: addon.price,
+        variantId: addon.variantId,
+        maxQuantity: addon.maxQuantity,
+        sortOrder: addon.sortOrder,
+        metadata: parseJson(addon.metadata, {}),
+      },
+    ];
+  }
+
+  return [
+    {
+      id: addon.id,
+      name: addon.name,
+      description: addon.description,
+      imageUrl: addon.imageUrl,
+      price: addon.price,
+      variantId: null,
+      maxQuantity: addon.maxQuantity,
+      sortOrder: addon.sortOrder,
+      metadata: parseJson(addon.metadata, {}),
+    },
+  ];
 }
 
 export async function enrichConfiguratorWithShopifyData(
@@ -50,7 +138,7 @@ export async function enrichConfiguratorWithShopifyData(
   const imageByProductId =
     manualProductIds.length > 0
       ? await getProductsWithImages(admin, manualProductIds)
-      : new Map<string, { imageUrl: string | null; variantId: string | null }>();
+      : new Map<string, { imageUrl: string | null; variantId: string | null; price: number }>();
 
   const enrichedSteps = await Promise.all(
     configurator.steps.map(async (step) => ({
@@ -58,38 +146,78 @@ export async function enrichConfiguratorWithShopifyData(
       optionGroups: await Promise.all(
         step.optionGroups.map(async (group) => {
           const collectionIds = parseJson<string[]>(group.collectionIds ?? "[]", []);
+          const groupProductIds = parseJson<string[]>(group.productIds ?? "[]", []);
+
           const collectionProducts =
             collectionIds.length > 0
               ? await getProductsInCollections(admin, collectionIds)
+              : [];
+          const directProducts =
+            groupProductIds.length > 0
+              ? await getProductsDetailedByIds(admin, groupProductIds)
               : [];
 
           const manualOptions = group.options.map((option) => {
             const productMeta = option.productId
               ? imageByProductId.get(option.productId)
               : undefined;
+            const resolvedPrice =
+              option.priceAdjust > 0
+                ? option.priceAdjust
+                : (productMeta?.price ?? option.priceAdjust);
             return {
               ...option,
-              imageUrl: option.imageUrl ?? productMeta?.imageUrl ?? null,
-              previewLayer: option.previewLayer ?? option.imageUrl ?? productMeta?.imageUrl ?? null,
+              imageUrl: productMeta?.imageUrl ?? option.imageUrl ?? null,
+              previewLayer:
+                productMeta?.imageUrl ?? option.previewLayer ?? option.imageUrl ?? null,
               variantId: option.variantId ?? productMeta?.variantId ?? null,
+              priceAdjust: resolvedPrice,
             };
           });
 
-          const collectionOptions = collectionProducts.map((product, index) =>
-            collectionProductToOption(product, manualOptions.length + index),
+          const seen = new Set(
+            manualOptions.map((o) => o.productId).filter(Boolean) as string[],
           );
+          const dynamicOptions = [...collectionProducts, ...directProducts]
+            .filter((product) => !seen.has(product.id))
+            .map((product, index) =>
+              shopifyProductToOption(product, manualOptions.length + index, "shopify"),
+            );
 
           return {
             ...group,
-            options: [...manualOptions, ...collectionOptions],
+            options: [...manualOptions, ...dynamicOptions],
           };
         }),
       ),
     })),
   );
 
+  const resolvedAddons = (
+    await Promise.all(
+      configurator.addons
+        .filter((a) => a.isActive)
+        .map((addon) => resolveAddonProducts(admin, addon)),
+    )
+  ).flat();
+
   return {
     ...configurator,
     steps: enrichedSteps,
+    addons: resolvedAddons.map((addon) => ({
+      id: addon.id,
+      configuratorId: configurator.id,
+      name: addon.name,
+      description: addon.description,
+      imageUrl: addon.imageUrl,
+      price: addon.price,
+      variantId: addon.variantId,
+      productIds: "[]",
+      collectionIds: "[]",
+      maxQuantity: addon.maxQuantity,
+      isActive: true,
+      sortOrder: addon.sortOrder,
+      metadata: JSON.stringify(addon.metadata),
+    })),
   };
 }

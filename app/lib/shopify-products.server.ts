@@ -11,6 +11,7 @@ export type ProductWithImage = {
   imageUrl: string | null;
   variantId: string | null;
   price: number;
+  productType?: string;
 };
 
 type ShopifyAdmin = {
@@ -70,6 +71,7 @@ type ProductsWithImagesResponse = {
     nodes?: Array<{
       legacyResourceId?: string;
       title?: string;
+      productType?: string;
       featuredImage?: { url?: string } | null;
       variants?: {
         nodes?: Array<{ legacyResourceId?: string; price?: string }>;
@@ -77,6 +79,57 @@ type ProductsWithImagesResponse = {
     } | null>;
   };
 };
+
+export async function getProductsDetailedByIds(
+  admin: ShopifyAdmin,
+  productIds: string[],
+): Promise<ProductWithImage[]> {
+  if (productIds.length === 0) return [];
+
+  const response = await admin.graphql(
+    `#graphql
+      query ProtoProductsDetailed($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Product {
+            legacyResourceId
+            title
+            productType
+            featuredImage {
+              url
+            }
+            variants(first: 1) {
+              nodes {
+                legacyResourceId
+                price
+              }
+            }
+          }
+        }
+      }
+    `,
+    {
+      variables: {
+        ids: productIds.map((id) => toProductGid(id)),
+      },
+    },
+  );
+
+  const body = (await response.json()) as ProductsWithImagesResponse;
+
+  return (body.data?.nodes ?? [])
+    .filter((node): node is NonNullable<typeof node> => Boolean(node?.legacyResourceId))
+    .map((node) => {
+      const variant = node.variants?.nodes?.[0];
+      return {
+        id: normalizeProductId(String(node.legacyResourceId)),
+        title: node.title ?? "Product",
+        productType: node.productType ?? undefined,
+        imageUrl: node.featuredImage?.url ?? null,
+        variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
+        price: parseFloat(String(variant?.price ?? "0")) || 0,
+      };
+    });
+}
 
 export async function getProductsWithImages(
   admin: ShopifyAdmin,

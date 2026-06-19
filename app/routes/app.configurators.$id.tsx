@@ -21,7 +21,8 @@ import { AddonAddForm } from "~/components/AddonAddForm";
 import { CollectionPicker } from "~/components/CollectionPicker";
 import { LaborProductPicker, type LaborProductSelection } from "~/components/LaborProductPicker";
 import { OptionAddForm } from "~/components/OptionAddForm";
-import { OptionGroupCollectionPicker } from "~/components/OptionGroupCollectionPicker";
+import { OptionGroupSourcePicker } from "~/components/OptionGroupSourcePicker";
+import { ProductPicker } from "~/components/ProductPicker";
 import { RemoveItemButton } from "~/components/RemoveItemButton";
 import { StepAddForm } from "~/components/StepAddForm";
 import prisma from "~/db.server";
@@ -31,7 +32,9 @@ import {
 } from "~/lib/configurator.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
+import { parseProductIdsField } from "~/lib/product-id";
 import { getCollectionsByIds } from "~/lib/shopify-collections.server";
+import { getProductsByIds } from "~/lib/shopify-products.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -45,12 +48,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
   const collections = await getCollectionsByIds(admin, collectionIds);
+  const productIds = parseJson<string[]>(configurator.productIds, []);
+  const products = await getProductsByIds(admin, productIds);
 
   const groupCollections: Record<string, Awaited<ReturnType<typeof getCollectionsByIds>>> = {};
+  const groupProducts: Record<string, Awaited<ReturnType<typeof getProductsByIds>>> = {};
   for (const step of configurator.steps) {
     for (const group of step.optionGroups) {
       const ids = parseJson<string[]>(group.collectionIds ?? "[]", []);
       groupCollections[group.id] = await getCollectionsByIds(admin, ids);
+      const pids = parseJson<string[]>(group.productIds ?? "[]", []);
+      groupProducts[group.id] = await getProductsByIds(admin, pids);
     }
   }
 
@@ -62,7 +70,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     : null;
 
-  return json({ configurator, collections, groupCollections, labor });
+  return json({ configurator, collections, products, groupCollections, groupProducts, labor });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -80,6 +88,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const name = String(form.get("name") || "").trim();
     const description = String(form.get("description") || "").trim();
     const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
+    const productIds = parseProductIdsField(String(form.get("productIds") || ""));
     const laborVariantId = String(form.get("laborVariantId") || "").trim() || null;
     const laborPrice = parseFloat(String(form.get("laborPrice") || "0")) || 0;
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
@@ -90,7 +99,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       data: {
         name,
         description: description || null,
-        productIds: "[]",
+        productIds: JSON.stringify(productIds),
         collectionIds: JSON.stringify(collectionIds),
         laborVariantId,
         laborPrice,
@@ -101,9 +110,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ success: true });
   }
 
-  if (intent === "update_group_collections") {
+  if (intent === "update_group_sources" || intent === "update_group_collections") {
     const groupId = String(form.get("groupId") || "").trim();
     const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
+    const productIds = parseProductIdsField(String(form.get("productIds") || ""));
 
     const group = await prisma.optionGroup.findFirst({
       where: { id: groupId, step: { configuratorId: params.id } },
@@ -114,7 +124,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     await prisma.optionGroup.update({
       where: { id: groupId },
-      data: { collectionIds: JSON.stringify(collectionIds) },
+      data: {
+        collectionIds: JSON.stringify(collectionIds),
+        productIds: JSON.stringify(productIds),
+      },
     });
 
     return json({ success: true, intent });
@@ -161,18 +174,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   if (intent === "add_addon") {
+    const addonSource = String(form.get("addonSource") || "product");
     const addonName = String(form.get("addonName") || "").trim();
-    if (!addonName) {
-      return json({ error: "Add-on name is required", intent }, { status: 400 });
+    const productIds = parseProductIdsField(String(form.get("productIds") || ""));
+    const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
+
+    if (addonSource === "product" && productIds.length === 0) {
+      return json({ error: "Select at least one product", intent }, { status: 400 });
+    }
+    if (addonSource === "collection" && collectionIds.length === 0) {
+      return json({ error: "Select at least one collection", intent }, { status: 400 });
     }
 
     await prisma.addon.create({
       data: {
         configuratorId: params.id!,
-        name: addonName,
+        name: addonName || "Add-on",
         price: parseFloat(String(form.get("addonPrice") || "0")) || 0,
         description: String(form.get("addonDescription") || "").trim() || null,
-        variantId: String(form.get("addonVariantId") || "").trim() || null,
+        productIds: JSON.stringify(addonSource === "product" ? productIds : []),
+        collectionIds: JSON.stringify(addonSource === "collection" ? collectionIds : []),
         sortOrder: existing.addons.length,
       },
     });
@@ -187,16 +208,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const optionValue =
       String(form.get("optionValue") || "").trim() ||
       optionLabel.toLowerCase().replace(/\s+/g, "_");
-    const priceAdjust = parseFloat(String(form.get("priceAdjust") || "0")) || 0;
     const colorHex = String(form.get("colorHex") || "").trim() || null;
-    const imageUrl = String(form.get("imageUrl") || "").trim() || null;
-    const variantId = String(form.get("variantId") || "").trim() || null;
+    const productId = String(form.get("productId") || "").trim() || null;
+    const priceAdjust = parseFloat(String(form.get("priceAdjust") || "0")) || 0;
 
     if (!stepId) {
       return json({ error: "Step is required", intent }, { status: 400 });
     }
-    if (!optionLabel) {
-      return json({ error: "Option label is required", intent }, { status: 400 });
+    if (!optionLabel && !productId) {
+      return json({ error: "Option label or product is required", intent }, { status: 400 });
     }
 
     const step = await prisma.configuratorStep.findFirst({
@@ -238,13 +258,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     await prisma.option.create({
       data: {
         optionGroupId: group.id,
-        label: optionLabel,
+        label: optionLabel || "Option",
         value: optionValue,
         priceAdjust,
         colorHex,
-        imageUrl,
-        previewLayer: imageUrl,
-        variantId,
+        imageUrl: null,
+        previewLayer: null,
+        variantId: null,
+        productId,
         sortOrder: optionCount,
         isDefault: optionCount === 0,
       },
@@ -269,13 +290,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditConfigurator() {
-  const { configurator, collections, groupCollections, labor } =
+  const { configurator, collections, products, groupCollections, groupProducts, labor } =
     useLoaderData<typeof loader>();
   const navigation = useNavigation();
 
   const [name, setName] = useState(configurator.name);
   const [description, setDescription] = useState(configurator.description ?? "");
   const [selectedCollections, setSelectedCollections] = useState(collections);
+  const [selectedProducts, setSelectedProducts] = useState(products);
   const [laborProduct, setLaborProduct] = useState<LaborProductSelection | null>(labor);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
@@ -321,9 +343,15 @@ export default function EditConfigurator() {
                   />
                   <CollectionPicker
                     label="Racquet collections"
-                    helpText="Select the collections whose products should use this configurator on the storefront."
+                    helpText="Products in these collections will use this configurator."
                     selected={selectedCollections}
                     onChange={setSelectedCollections}
+                  />
+                  <ProductPicker
+                    label="Individual racquet products"
+                    helpText="These specific products will also use this configurator."
+                    selected={selectedProducts}
+                    onChange={setSelectedProducts}
                   />
                   <LaborProductPicker selected={laborProduct} onChange={setLaborProduct} />
                   <TextField
@@ -399,10 +427,11 @@ export default function EditConfigurator() {
                             </InlineStack>
                             {(step.stepType === "variant" || step.stepType === "options") &&
                             /string|gauge|tension/i.test(group.name) ? (
-                              <OptionGroupCollectionPicker
+                              <OptionGroupSourcePicker
                                 groupId={group.id}
                                 groupName={group.name}
                                 initialCollections={groupCollections[group.id] ?? []}
+                                initialProducts={groupProducts[group.id] ?? []}
                               />
                             ) : null}
                           </BlockStack>
@@ -439,23 +468,40 @@ export default function EditConfigurator() {
                 Add-ons
               </Text>
               <Text as="p" variant="bodySm" tone="subdued">
-                Optional extras customers can add in the configurator popup (e.g. overgrip,
-                dampener, rush stringing). Each add-on adds its price to the total and can be
-                linked to a Shopify variant ID for checkout.
+                Optional extras customers can add in the configurator popup. Link a
+                Shopify product or collection — featured images and variant IDs are
+                resolved automatically.
               </Text>
               {configurator.addons.length === 0 ? (
                 <Text as="p" variant="bodySm" tone="subdued">
                   No add-ons yet. Skip this section if you only need string/options.
                 </Text>
               ) : (
-                configurator.addons.map((addon) => (
-                  <InlineStack key={addon.id} align="space-between">
-                    <Text as="span">{addon.name}</Text>
-                    <Text as="span" tone="subdued">
-                      +${addon.price.toFixed(2)}
-                    </Text>
-                  </InlineStack>
-                ))
+                configurator.addons.map((addon) => {
+                  const pids = parseJson<string[]>(addon.productIds ?? "[]", []);
+                  const cids = parseJson<string[]>(addon.collectionIds ?? "[]", []);
+                  const source =
+                    pids.length > 0
+                      ? `${pids.length} product(s)`
+                      : cids.length > 0
+                        ? `${cids.length} collection(s)`
+                        : addon.variantId
+                          ? "manual variant"
+                          : "unlinked";
+                  return (
+                    <InlineStack key={addon.id} align="space-between">
+                      <Text as="span">
+                        {addon.name}{" "}
+                        <Text as="span" tone="subdued">
+                          ({source})
+                        </Text>
+                      </Text>
+                      <Text as="span" tone="subdued">
+                        {addon.price > 0 ? `+$${addon.price.toFixed(2)}` : "Shopify price"}
+                      </Text>
+                    </InlineStack>
+                  );
+                })
               )}
               <AddonAddForm />
             </BlockStack>
