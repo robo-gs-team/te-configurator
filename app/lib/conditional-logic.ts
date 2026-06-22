@@ -148,6 +148,23 @@ export function getPreviewLayers(
   return layers;
 }
 
+export function getPreviewColors(
+  configurator: StorefrontConfigurator,
+  selections: SelectionState,
+): string[] {
+  const colors: string[] = [];
+
+  for (const step of configurator.steps) {
+    for (const group of step.optionGroups) {
+      const selectedId = selections[group.id];
+      const option = group.options.find((o) => o.id === selectedId);
+      if (option?.colorHex) colors.push(option.colorHex);
+    }
+  }
+
+  return colors;
+}
+
 export function getSelectedVariantId(
   configurator: StorefrontConfigurator,
   selections: SelectionState,

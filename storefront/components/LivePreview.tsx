@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getPreviewLayers } from "~/lib/conditional-logic";
+import { getPreviewColors, getPreviewLayers } from "~/lib/conditional-logic";
 import { useConfiguratorStore } from "../store/configurator-store";
 
 export function LivePreview() {
@@ -7,6 +7,10 @@ export function LivePreview() {
   const selections = useConfiguratorStore((s) => s.selections);
   const layers = useMemo(
     () => (configurator ? getPreviewLayers(configurator, selections) : []),
+    [configurator, selections],
+  );
+  const colors = useMemo(
+    () => (configurator ? getPreviewColors(configurator, selections) : []),
     [configurator, selections],
   );
   const layersKey = layers.join("|");
@@ -34,11 +38,11 @@ export function LivePreview() {
           background: `radial-gradient(circle at 30% 30%, ${accent}40, transparent 60%)`,
         }}
       />
-      {layers.length === 0 ? (
+      {layers.length === 0 && colors.length === 0 ? (
         <div className="absolute inset-0 flex items-center justify-center text-white/40 text-sm">
           Select options to preview
         </div>
-      ) : (
+      ) : layers.length > 0 ? (
         layers.map((url, i) => (
           <img
             key={`${url}-${i}`}
@@ -50,6 +54,16 @@ export function LivePreview() {
             loading="eager"
           />
         ))
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center gap-4 p-8">
+          {colors.map((hex, i) => (
+            <span
+              key={`${hex}-${i}`}
+              className="w-28 h-28 rounded-full border-4 border-white/20 shadow-2xl"
+              style={{ backgroundColor: hex }}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
