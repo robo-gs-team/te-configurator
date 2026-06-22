@@ -294,6 +294,14 @@ function initStringingGates() {
   document.querySelectorAll("[data-proto-stringing-gate]").forEach((wrapper) => {
     const el = wrapper as HTMLElement;
     if (el.dataset.stringingBound) {
+      const themeBlock = findThemeStringingBlock();
+      const themeSelect = themeBlock?.querySelector<HTMLSelectElement>("select");
+      const protoSelect = el.querySelector<HTMLSelectElement>(
+        "[data-proto-stringing-select]",
+      );
+      if (themeSelect && protoSelect && themeSelect !== protoSelect) {
+        protoSelect.value = themeSelect.value;
+      }
       updateStringingGate(el);
       return;
     }
@@ -369,8 +377,6 @@ function initShareRestore() {
 }
 
 async function initStorefrontUi() {
-  initConfigureClickDelegation();
-
   const productId = getPageProductId();
   if (!productId) {
     initButtons();
@@ -396,6 +402,8 @@ async function initStorefrontUi() {
 
 function boot() {
   mount();
+  initConfigureClickDelegation();
+  initStringingGates();
   void initStorefrontUi();
   initShareRestore();
 }
@@ -407,7 +415,12 @@ if (document.readyState === "loading") {
 }
 
 document.addEventListener("shopify:section:load", () => {
+  initStringingGates();
   void initStorefrontUi();
+});
+
+window.addEventListener("pageshow", () => {
+  initStringingGates();
 });
 
 window.ProtoConfigurator = {

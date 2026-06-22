@@ -39,6 +39,8 @@ export function createStringingGateWrapper(productId: string): HTMLElement {
   const actions = document.createElement("div");
   actions.className = "proto-configurator-actions";
   actions.dataset.protoConfiguratorActions = "";
+  actions.hidden = true;
+  actions.setAttribute("aria-hidden", "true");
 
   const button = document.createElement("button");
   button.type = "button";

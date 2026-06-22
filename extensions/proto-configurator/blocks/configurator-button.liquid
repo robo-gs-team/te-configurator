@@ -19,13 +19,7 @@
 
 {% assign hide_configure_actions = false %}
 {% if enable_dropdown %}
-  {% for option in dropdown_options %}
-    {% assign option_trimmed = option | strip %}
-    {% if option_trimmed != blank and option_trimmed == trigger_option %}
-      {% assign hide_configure_actions = false %}
-      {% break %}
-    {% endif %}
-  {% endfor %}
+  {% assign hide_configure_actions = true %}
 {% endif %}
 
 {% if show_button %}
@@ -89,6 +83,32 @@
       </button>
     </div>
   </div>
+
+  {% if enable_dropdown %}
+    <script>
+      (function () {
+        function syncStringingGate(wrapper) {
+          var select = wrapper.querySelector("[data-proto-stringing-select]");
+          var actions = wrapper.querySelector("[data-proto-configurator-actions]");
+          if (!select || !actions) return;
+          var trigger = (wrapper.dataset.triggerValue || "Strung").trim().toLowerCase();
+          var show = select.value.trim().toLowerCase() === trigger;
+          actions.hidden = !show;
+          actions.setAttribute("aria-hidden", show ? "false" : "true");
+        }
+
+        function syncAllStringingGates() {
+          document
+            .querySelectorAll("[data-proto-stringing-gate]")
+            .forEach(syncStringingGate);
+        }
+
+        syncAllStringingGates();
+        document.addEventListener("DOMContentLoaded", syncAllStringingGates);
+        window.addEventListener("pageshow", syncAllStringingGates);
+      })();
+    </script>
+  {% endif %}
 
   <style>
     .proto-configurator-button-wrapper {
