@@ -176,9 +176,7 @@ export function resolveStringCatalog(
 
 export function usesStringingUi(configurator: StorefrontConfigurator | null): boolean {
   if (!configurator) return false;
-  return configurator.steps.some((step) =>
-    step.optionGroups.some((g) => /string|gauge|tension/i.test(g.name)),
-  );
+  return Boolean(configurator.laborVariantId);
 }
 
 export function bedSummary(

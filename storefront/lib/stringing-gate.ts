@@ -3,9 +3,11 @@ export const STRINGING_TRIGGER_OPTION = "Strung";
 export const STRINGING_OPTIONS = ["Strung", "Unstrung"] as const;
 
 export function createStringingGateWrapper(productId: string): HTMLElement {
+  const gateId = `gate-${Math.random().toString(36).slice(2, 9)}`;
   const wrapper = document.createElement("div");
   wrapper.className = "proto-configurator-button-wrapper";
   wrapper.dataset.protoStringingGate = "";
+  wrapper.dataset.protoStringingGateId = gateId;
   wrapper.dataset.triggerValue = STRINGING_TRIGGER_OPTION;
   wrapper.dataset.hideThemeBuybox = "true";
 
@@ -39,6 +41,7 @@ export function createStringingGateWrapper(productId: string): HTMLElement {
   const actions = document.createElement("div");
   actions.className = "proto-configurator-actions";
   actions.dataset.protoConfiguratorActions = "";
+  actions.dataset.protoStringingGateId = gateId;
   actions.hidden = true;
   actions.setAttribute("aria-hidden", "true");
 

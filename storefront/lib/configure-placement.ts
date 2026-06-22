@@ -17,6 +17,19 @@ type ActionsAnchor = {
 
 const actionsAnchors = new WeakMap<HTMLElement, ActionsAnchor>();
 
+export function getConfiguratorActions(
+  wrapper: HTMLElement,
+): HTMLElement | null {
+  const gateId = wrapper.dataset.protoStringingGateId;
+  if (gateId) {
+    const linked = document.querySelector<HTMLElement>(
+      `[data-proto-configurator-actions][data-proto-stringing-gate-id="${gateId}"]`,
+    );
+    if (linked) return linked;
+  }
+  return wrapper.querySelector<HTMLElement>("[data-proto-configurator-actions]");
+}
+
 function queryAddToCartButtons(root: ParentNode = document): HTMLElement[] {
   const found = new Set<HTMLElement>();
 
@@ -71,9 +84,7 @@ export function syncConfigureButtonSlot(
   wrapper: HTMLElement,
   showConfigure: boolean,
 ) {
-  const actions = wrapper.querySelector<HTMLElement>(
-    "[data-proto-configurator-actions]",
-  );
+  const actions = getConfiguratorActions(wrapper);
   if (!actions) return;
 
   if (showConfigure) {

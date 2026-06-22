@@ -109,7 +109,12 @@ export function VariantStep() {
   return (
     <div className="space-y-8 pr-2">
       {configurator.steps
-        .filter((s) => s.stepType === "variant" || s.stepType === "options")
+        .filter(
+          (s) =>
+            s.optionGroups.length > 0 &&
+            s.stepType !== "preview" &&
+            s.stepType !== "summary",
+        )
         .map((step) => (
           <div key={step.id}>
             <h3 className="text-lg font-semibold text-white mb-1">{step.title}</h3>

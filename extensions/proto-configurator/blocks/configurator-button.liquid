@@ -27,6 +27,7 @@
     class="proto-configurator-button-wrapper"
     {% if enable_dropdown %}
       data-proto-stringing-gate
+      data-proto-stringing-gate-id="{{ block.id }}"
       data-trigger-value="{{ trigger_option | escape }}"
       data-hide-theme-buybox="{{ block.settings.hide_theme_buybox | default: true }}"
     {% endif %}
@@ -63,6 +64,9 @@
     <div
       class="proto-configurator-actions"
       data-proto-configurator-actions
+      {% if enable_dropdown %}
+        data-proto-stringing-gate-id="{{ block.id }}"
+      {% endif %}
       {% if hide_configure_actions %}
         hidden
         aria-hidden="true"
@@ -93,6 +97,7 @@
           if (!select || !actions) return;
           var trigger = (wrapper.dataset.triggerValue || "Strung").trim().toLowerCase();
           var show = select.value.trim().toLowerCase() === trigger;
+          document.documentElement.dataset.protoStringingState = show ? "strung" : "unstrung";
           actions.hidden = !show;
           actions.setAttribute("aria-hidden", show ? "false" : "true");
         }
@@ -106,6 +111,16 @@
         syncAllStringingGates();
         document.addEventListener("DOMContentLoaded", syncAllStringingGates);
         window.addEventListener("pageshow", syncAllStringingGates);
+        document.addEventListener("change", function (event) {
+          var target = event.target;
+          if (!(target instanceof HTMLSelectElement)) return;
+          if (
+            target.matches("[data-proto-stringing-select]") ||
+            target.closest("[class*='shopify-block']")
+          ) {
+            syncAllStringingGates();
+          }
+        });
       })();
     </script>
   {% endif %}
@@ -232,6 +247,13 @@
 
     html.proto-configurator-unlinked .proto-configurator-button-wrapper {
       display: none !important;
+    }
+
+    html[data-proto-stringing-state="unstrung"] [data-proto-configurator-actions],
+    html[data-proto-stringing-state="unstrung"] .proto-configurator-trigger {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
     }
   </style>
 {% endif %}

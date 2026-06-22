@@ -132,6 +132,13 @@
     html.proto-configurator-unlinked .proto-configurator-button-wrapper {
       display: none !important;
     }
+
+    html[data-proto-stringing-state="unstrung"] [data-proto-configurator-actions],
+    html[data-proto-stringing-state="unstrung"] .proto-configurator-trigger {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
   </style>
 {% endif %}
 

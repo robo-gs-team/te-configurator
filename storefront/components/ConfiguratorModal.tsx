@@ -207,11 +207,21 @@ export function ConfiguratorModal() {
                 className={`flex-1 min-h-0 ${isStringing ? "flex flex-col" : "overflow-y-auto p-6 proto-scrollbar space-y-8"}`}
               >
                 {isStringing ? (
-                  <StringingConfigurator
-                    onClose={close}
-                    onAddToCart={handleAddToCart}
-                    isAddingToCart={isAddingToCart}
-                  />
+                  <>
+                    <StringingConfigurator
+                      onClose={close}
+                      onAddToCart={handleAddToCart}
+                      isAddingToCart={isAddingToCart}
+                    />
+                    {hasAddons && (
+                      <div className="px-6 pb-6 border-t border-neutral-200">
+                        <h3 className="text-lg font-semibold mb-4 text-neutral-900">
+                          Add-ons
+                        </h3>
+                        <AddonsStep />
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <>
                     <VariantStep />

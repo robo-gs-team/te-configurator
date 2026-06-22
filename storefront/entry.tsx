@@ -5,9 +5,8 @@ import { useConfiguratorStore } from "./store/configurator-store";
 import { clearConfigureError, showConfigureError } from "./lib/configure-feedback";
 import { collectImageUrls, preloadImages } from "./lib/image-preloader";
 import { normalizeProductId } from "./lib/product-id";
-import { refreshThemeBuyBoxHidden, setThemeBuyBoxHidden } from "./lib/theme-buybox";
-import { syncConfigureButtonSlot, restoreAddToCartButtons } from "./lib/configure-placement";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
+import { initStringingPageGate } from "./lib/stringing-page-gate";
 import {
   getPageProductId,
   markProductLinked,
@@ -15,7 +14,6 @@ import {
   markProductUnlinked,
 } from "./lib/product-linkage";
 import {
-  findThemeStringingBlock,
   getProductInfoInsertPoint,
   scheduleConfiguratorRelocation,
 } from "./lib/theme-placement";
@@ -190,6 +188,9 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
 }
 
 function isConfigureTriggerVisible(trigger: HTMLElement): boolean {
+  if (document.documentElement.dataset.protoStringingState === "unstrung") {
+    return false;
+  }
   const actions = trigger.closest("[data-proto-configurator-actions]");
   if (actions?.hasAttribute("hidden")) return false;
   if (trigger.hasAttribute("hidden")) return false;
@@ -233,89 +234,6 @@ function initConfigureClickDelegation() {
     },
     true,
   );
-}
-
-function shouldHideThemeBuyBox(wrapper: HTMLElement): boolean {
-  return wrapper.dataset.hideThemeBuybox !== "false";
-}
-
-function updateStringingGate(wrapper: HTMLElement) {
-  const select = wrapper.querySelector<HTMLSelectElement>(
-    "[data-proto-stringing-select]",
-  );
-  const actions = wrapper.querySelector<HTMLElement>(
-    "[data-proto-configurator-actions]",
-  );
-  if (!select || !actions) return;
-
-  const trigger = wrapper.dataset.triggerValue ?? "Strung";
-  const showConfigure =
-    select.value.trim().toLowerCase() === trigger.trim().toLowerCase();
-
-  actions.hidden = !showConfigure;
-  actions.setAttribute("aria-hidden", showConfigure ? "false" : "true");
-  syncConfigureButtonSlot(wrapper, showConfigure);
-
-  if (shouldHideThemeBuyBox(wrapper)) {
-    if (showConfigure) {
-      refreshThemeBuyBoxHidden(true);
-    } else {
-      setThemeBuyBoxHidden(false);
-      restoreAddToCartButtons();
-    }
-  } else if (!showConfigure) {
-    restoreAddToCartButtons();
-  }
-}
-
-function bindThemeStringingSelect(wrapper: HTMLElement) {
-  const block = findThemeStringingBlock();
-  if (!block || block.closest(".proto-configurator-button-wrapper")) return;
-
-  const themeSelect = block.querySelector<HTMLSelectElement>("select");
-  if (!themeSelect || themeSelect.dataset.protoStringingBound) return;
-  themeSelect.dataset.protoStringingBound = "true";
-
-  const sync = () => {
-    const protoSelect = wrapper.querySelector<HTMLSelectElement>(
-      "[data-proto-stringing-select]",
-    );
-    if (protoSelect && protoSelect !== themeSelect) {
-      protoSelect.value = themeSelect.value;
-    }
-    updateStringingGate(wrapper);
-  };
-
-  themeSelect.addEventListener("change", sync);
-  sync();
-}
-
-function initStringingGates() {
-  document.querySelectorAll("[data-proto-stringing-gate]").forEach((wrapper) => {
-    const el = wrapper as HTMLElement;
-    if (el.dataset.stringingBound) {
-      const themeBlock = findThemeStringingBlock();
-      const themeSelect = themeBlock?.querySelector<HTMLSelectElement>("select");
-      const protoSelect = el.querySelector<HTMLSelectElement>(
-        "[data-proto-stringing-select]",
-      );
-      if (themeSelect && protoSelect && themeSelect !== protoSelect) {
-        protoSelect.value = themeSelect.value;
-      }
-      updateStringingGate(el);
-      return;
-    }
-    el.dataset.stringingBound = "true";
-
-    const select = el.querySelector<HTMLSelectElement>(
-      "[data-proto-stringing-select]",
-    );
-    if (!select) return;
-
-    updateStringingGate(el);
-    select.addEventListener("change", () => updateStringingGate(el));
-    bindThemeStringingSelect(el);
-  });
 }
 
 function initButtons() {
@@ -396,14 +314,14 @@ async function initStorefrontUi() {
     injectProductPageButton();
   }
   scheduleConfiguratorRelocation();
-  initStringingGates();
+  initStringingPageGate();
   initButtons();
 }
 
 function boot() {
   mount();
   initConfigureClickDelegation();
-  initStringingGates();
+  initStringingPageGate();
   void initStorefrontUi();
   initShareRestore();
 }
@@ -415,12 +333,8 @@ if (document.readyState === "loading") {
 }
 
 document.addEventListener("shopify:section:load", () => {
-  initStringingGates();
+  initStringingPageGate();
   void initStorefrontUi();
-});
-
-window.addEventListener("pageshow", () => {
-  initStringingGates();
 });
 
 window.ProtoConfigurator = {
