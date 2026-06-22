@@ -6,6 +6,9 @@
 
 {% if block.settings.enabled %}
   <script>
+    document.documentElement.classList.add('proto-configurator-pending');
+  </script>
+  <script>
     window.ProtoConfiguratorSettings = {
       appProxyUrl: {{ block.settings.app_proxy_url | default: '/apps/proto-configurator' | json }},
       productId: {{ product.id | default: '' | json }},
@@ -120,6 +123,14 @@
       z-index: 22;
       pointer-events: auto !important;
       cursor: pointer !important;
+    }
+
+    html.proto-configurator-pending .proto-configurator-button-wrapper {
+      visibility: hidden;
+    }
+
+    html.proto-configurator-unlinked .proto-configurator-button-wrapper {
+      display: none !important;
     }
   </style>
 {% endif %}

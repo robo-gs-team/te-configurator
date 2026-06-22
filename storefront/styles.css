@@ -7,6 +7,15 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* Hide configure UI until product linkage is confirmed (see storefront/entry.tsx). */
+html.proto-configurator-pending .proto-configurator-button-wrapper {
+  visibility: hidden;
+}
+
+html.proto-configurator-unlinked .proto-configurator-button-wrapper {
+  display: none !important;
+}
+
 .proto-glass {
   background: rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(16px);

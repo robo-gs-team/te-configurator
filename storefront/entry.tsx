@@ -9,6 +9,12 @@ import { refreshThemeBuyBoxHidden, setThemeBuyBoxHidden } from "./lib/theme-buyb
 import { syncConfigureButtonSlot, restoreAddToCartButtons } from "./lib/configure-placement";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import {
+  getPageProductId,
+  markProductLinked,
+  markProductLinkagePending,
+  markProductUnlinked,
+} from "./lib/product-linkage";
+import {
   findThemeStringingBlock,
   getProductInfoInsertPoint,
   scheduleConfiguratorRelocation,
@@ -362,9 +368,27 @@ function initShareRestore() {
     .catch(() => {});
 }
 
-function initStorefrontUi() {
+async function initStorefrontUi() {
   initConfigureClickDelegation();
-  injectProductPageButton();
+
+  const productId = getPageProductId();
+  if (!productId) {
+    initButtons();
+    return;
+  }
+
+  markProductLinkagePending();
+  const { configurator } = await fetchConfigurator(productId);
+  if (!configurator) {
+    markProductUnlinked();
+    return;
+  }
+
+  markProductLinked();
+
+  if (!document.querySelector(".proto-configurator-button-wrapper")) {
+    injectProductPageButton();
+  }
   scheduleConfiguratorRelocation();
   initStringingGates();
   initButtons();
@@ -372,7 +396,7 @@ function initStorefrontUi() {
 
 function boot() {
   mount();
-  initStorefrontUi();
+  void initStorefrontUi();
   initShareRestore();
 }
 
@@ -382,7 +406,9 @@ if (document.readyState === "loading") {
   boot();
 }
 
-document.addEventListener("shopify:section:load", initStorefrontUi);
+document.addEventListener("shopify:section:load", () => {
+  void initStorefrontUi();
+});
 
 window.ProtoConfigurator = {
   open: (productId, configurator) => {
