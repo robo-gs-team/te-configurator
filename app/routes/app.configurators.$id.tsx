@@ -35,6 +35,7 @@ import { parseCollectionIdsField } from "~/lib/collection-id";
 import { parseProductIdsField } from "~/lib/product-id";
 import { getCollectionsByIds } from "~/lib/shopify-collections.server";
 import { getProductsByIds } from "~/lib/shopify-products.server";
+import { invalidateProxyCache } from "~/lib/proxy-cache.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -107,6 +108,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         isActive,
       },
     });
+    // Bust the storefront proxy cache so shoppers see changes immediately
+    invalidateProxyCache(session.shop);
     return json({ success: true });
   }
 

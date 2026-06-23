@@ -13,7 +13,16 @@ import { serializeConfiguratorPayload } from "~/lib/configurator.types";
 import { sanitizeInput } from "~/lib/conditional-logic";
 import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { normalizeProductId } from "~/lib/product-id";
+import {
+  getCachedProxyResponse,
+  setCachedProxyResponse,
+} from "~/lib/proxy-cache.server";
 import { authenticate, unauthenticated } from "~/shopify.server";
+
+const PROXY_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
+} as const;
 
 async function resolveShopDomain(request: Request): Promise<string | null> {
   const url = new URL(request.url);
@@ -40,6 +49,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   if (path.startsWith("product/")) {
     const productId = normalizeProductId(path.replace("product/", ""));
+
+    // Serve from server-side cache when available — skips all DB + Shopify calls
+    const cached = getCachedProxyResponse(shopDomain, productId);
+    if (cached) {
+      return json(cached, { headers: { ...PROXY_HEADERS, "X-Cache": "HIT" } });
+    }
 
     let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
     try {
@@ -73,22 +88,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
     }
 
-    const configurator = admin
-      ? await enrichConfiguratorWithShopifyData(admin, lookup.configurator)
-      : lookup.configurator;
+    const [enrichedConfigurator, shop] = await Promise.all([
+      admin
+        ? enrichConfiguratorWithShopifyData(admin, lookup.configurator)
+        : Promise.resolve(lookup.configurator),
+      ensureShop(shopDomain),
+    ]);
 
-    const shop = await ensureShop(shopDomain);
     const theme = await getShopThemeSettings(shop.id);
 
-    return json(
-      { configurator: serializeConfiguratorPayload(configurator, theme) },
-      {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
-        },
-      },
-    );
+    const responseData = { configurator: serializeConfiguratorPayload(enrichedConfigurator, theme) };
+    setCachedProxyResponse(shopDomain, productId, responseData);
+
+    return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "MISS" } });
   }
 
   if (path.startsWith("share/")) {
