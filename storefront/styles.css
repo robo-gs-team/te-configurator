@@ -28,6 +28,12 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   border: 1px solid rgba(0, 0, 0, 0.08);
 }
 
+/* Prevent overscroll from bleeding through to the background page */
+.proto-scrollbar {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .proto-scrollbar::-webkit-scrollbar {
   width: 6px;
 }

@@ -40,6 +40,10 @@ declare global {
 
 let reactRoot: Root | null = null;
 
+// Cache configurator data per productId so the Configure button click is instant
+// (avoids a second API round-trip after initStorefrontUi already fetched it).
+const configuratorCache = new Map<string, StorefrontConfigurator>();
+
 function App() {
   return (
     <ConfiguratorErrorBoundary>
@@ -158,6 +162,15 @@ function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
 
 async function openConfigurator(productId: string, trigger: HTMLElement) {
   clearConfigureError(trigger);
+
+  // Use cached data if available — avoids a second API round-trip
+  const cached = configuratorCache.get(productId);
+  if (cached) {
+    useConfiguratorStore.getState().open(productId, cached);
+    void preloadImages(collectImageUrls(cached)).catch(() => {});
+    return;
+  }
+
   setTriggerLoading(trigger, true);
 
   try {
@@ -175,6 +188,7 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
       return;
     }
 
+    configuratorCache.set(productId, configurator);
     useConfiguratorStore.getState().open(productId, configurator);
     void preloadImages(collectImageUrls(configurator)).catch(() => {});
   } catch (err) {
@@ -308,6 +322,8 @@ async function initStorefrontUi() {
     return;
   }
 
+  // Cache so the Configure button click is instant — no second round-trip
+  configuratorCache.set(productId, configurator);
   markProductLinked();
 
   if (!document.querySelector(".proto-configurator-button-wrapper")) {

@@ -48,16 +48,31 @@ export function ConfiguratorModal() {
 
   useEffect(() => {
     if (isOpen) {
+      // Use position:fixed technique so iOS Safari doesn't scroll the background
+      const scrollY = window.scrollY;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = "100%";
       document.body.style.overflow = "hidden";
       trackEvent(appProxyUrl, "modal_open", {
         configuratorId: configurator?.id,
         productId,
       });
     } else {
+      const top = document.body.style.top;
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
       document.body.style.overflow = "";
+      if (top) window.scrollTo(0, -parseInt(top, 10));
     }
     return () => {
+      const top = document.body.style.top;
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
       document.body.style.overflow = "";
+      if (top) window.scrollTo(0, -parseInt(top, 10));
     };
   }, [isOpen, appProxyUrl, configurator?.id, productId]);
 
