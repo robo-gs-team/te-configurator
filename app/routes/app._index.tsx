@@ -16,25 +16,28 @@ import {
 import {
   ensureShop,
   getAnalyticsSummary,
-  getShopThemeSettings,
   listConfigurators,
 } from "~/lib/configurator.server";
+import {
+  detectThemeButtonStatus,
+  themeEditorEmbedUrl,
+} from "~/lib/theme-detection.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
-  const [configurators, theme, analytics] = await Promise.all([
+  const [configurators, analytics, buttonStatus] = await Promise.all([
     listConfigurators(shop.id),
-    getShopThemeSettings(shop.id),
     getAnalyticsSummary(shop.id, 30),
+    detectThemeButtonStatus(admin),
   ]);
 
-  return json({ shop: session.shop, configurators, theme, analytics });
+  return json({ shop: session.shop, configurators, analytics, buttonStatus });
 };
 
 export default function Dashboard() {
-  const { configurators, theme, analytics } = useLoaderData<typeof loader>();
+  const { shop, configurators, analytics, buttonStatus } = useLoaderData<typeof loader>();
 
   return (
     <Page
@@ -83,9 +86,31 @@ export default function Dashboard() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   Button status
                 </Text>
-                <Badge tone={theme.buttonEnabled ? "success" : "critical"}>
-                  {theme.buttonEnabled ? "Enabled" : "Disabled"}
+                <Badge
+                  tone={
+                    buttonStatus.detail === "active"
+                      ? "success"
+                      : buttonStatus.detail === "embed_missing"
+                        ? "critical"
+                        : "warning"
+                  }
+                >
+                  {buttonStatus.detail === "active"
+                    ? `Live · ${buttonStatus.themeName}`
+                    : buttonStatus.detail === "embed_missing"
+                      ? "App embed not installed"
+                      : "Unknown"}
                 </Badge>
+                {buttonStatus.detail !== "active" && buttonStatus.themeId && (
+                  <Button
+                    variant="plain"
+                    url={themeEditorEmbedUrl(shop, buttonStatus.themeId)}
+                    target="_blank"
+                    size="slim"
+                  >
+                    Enable in Theme Editor →
+                  </Button>
+                )}
               </BlockStack>
             </Card>
           </InlineGrid>
@@ -112,7 +137,7 @@ export default function Dashboard() {
                   </BlockStack>
                 </Box>
               ) : (
-                configurators.slice(0, 5).map((c) => (
+                (configurators as Array<{ id: string; name: string; steps: unknown[]; addons: unknown[]; isActive: boolean }>).slice(0, 5).map((c) => (
                   <InlineStack key={c.id} align="space-between" blockAlign="center">
                     <BlockStack gap="100">
                       <Link to={`/app/configurators/${c.id}`}>
