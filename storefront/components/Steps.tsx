@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { evaluateRules, getVisibleAddons } from "~/lib/conditional-logic";
 import type { StorefrontOptionGroup } from "~/lib/configurator.types";
 import { useConfiguratorStore } from "../store/configurator-store";
@@ -17,12 +16,10 @@ function SwatchOption({
   accent: string;
 }) {
   return (
-    <motion.button
+    <button
       type="button"
       onClick={onSelect}
-      whileHover={{ scale: 1.04 }}
-      whileTap={{ scale: 0.97 }}
-      className={`relative flex flex-col items-center gap-2 p-3 rounded-xl transition-all ${
+      className={`proto-swatch-press relative flex flex-col items-center gap-2 p-3 rounded-xl transition-all ${
         selected ? "proto-glass" : "bg-white/5 hover:bg-white/10"
       }`}
       style={selected ? { border: `2px solid ${accent}` } : undefined}
@@ -50,7 +47,7 @@ function SwatchOption({
           {option.priceAdjust > 0 ? "+" : ""}${option.priceAdjust.toFixed(0)}
         </span>
       )}
-    </motion.button>
+    </button>
   );
 }
 
@@ -66,11 +63,10 @@ function CardOption({
   accent: string;
 }) {
   return (
-    <motion.button
+    <button
       type="button"
       onClick={onSelect}
-      whileHover={{ y: -2 }}
-      className={`w-full text-left p-4 rounded-2xl transition-all ${
+      className={`proto-lift w-full text-left p-4 rounded-2xl transition-all ${
         selected ? "proto-glass" : "bg-white/5 hover:bg-white/10"
       }`}
       style={selected ? { borderColor: accent, borderWidth: 2 } : undefined}
@@ -92,7 +88,7 @@ function CardOption({
           )}
         </div>
       </div>
-    </motion.button>
+    </button>
   );
 }
 
@@ -187,10 +183,9 @@ export function AddonsStep() {
         const qty = addonSelections[addon.id] ?? 0;
         const selected = qty > 0;
         return (
-          <motion.div
+          <div
             key={addon.id}
-            whileHover={{ y: -2 }}
-            className={`p-4 rounded-2xl cursor-pointer transition-all ${
+            className={`proto-lift p-4 rounded-2xl cursor-pointer transition-all ${
               selected ? "proto-glass" : "bg-white/5 hover:bg-white/10"
             }`}
             style={selected ? { borderColor: accent, borderWidth: 2 } : undefined}
@@ -238,7 +233,7 @@ export function AddonsStep() {
                 )}
               </div>
             </div>
-          </motion.div>
+          </div>
         );
       })}
     </div>

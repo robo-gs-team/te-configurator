@@ -22,6 +22,71 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+/* --- Modal entry animations (replaces Framer Motion) --- */
+@keyframes proto-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes proto-panel-in {
+  from { opacity: 0; transform: translateY(40px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.proto-anim-fade {
+  animation: proto-fade-in 0.25s ease both;
+}
+
+.proto-anim-panel {
+  animation: proto-panel-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Interactive press/hover (replaces Framer whileHover / whileTap) */
+.proto-press {
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.proto-press:hover {
+  transform: scale(1.02);
+}
+.proto-press:active {
+  transform: scale(0.98);
+}
+
+.proto-swatch-press {
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.proto-swatch-press:hover {
+  transform: scale(1.04);
+}
+.proto-swatch-press:active {
+  transform: scale(0.97);
+}
+
+.proto-lift {
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.proto-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* Animated progress fill */
+.proto-progress-fill {
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proto-anim-fade,
+  .proto-anim-panel {
+    animation-duration: 0.01ms;
+  }
+  .proto-press,
+  .proto-swatch-press,
+  .proto-lift,
+  .proto-progress-fill {
+    transition: none;
+  }
+}
+
 .proto-glass-light {
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(16px);
