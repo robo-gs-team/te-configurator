@@ -5,7 +5,7 @@
     "postinstall": "prisma generate",
     "vercel-build": "node scripts/vercel-build.mjs",
     "build": "npm run build:storefront && remix vite:build",
-    "build:storefront": "vite build --config vite.storefront.config.ts && node scripts/copy-storefront-assets.mjs",
+    "build:storefront": "vite build --config vite.storefront.config.ts && vite build --config vite.storefront-modal.config.ts && node scripts/copy-storefront-assets.mjs",
     "dev": "node scripts/free-dev-port.mjs && npm run build:storefront && shopify app dev",
     "dev:localhost": "node scripts/free-dev-port.mjs && npm run build:storefront && shopify app dev --use-localhost",
     "dev:storefront": "vite build --config vite.storefront.config.ts --watch",

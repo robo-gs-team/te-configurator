@@ -16,6 +16,8 @@ declare global {
     ProtoConfiguratorSettings?: {
       appProxyUrl: string;
       productId: string;
+      shopDomain?: string;
+      modalUrl?: string;
     };
   }
 }

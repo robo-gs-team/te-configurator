@@ -1,9 +1,4 @@
-import { createRoot, type Root } from "react-dom/client";
-import { ConfiguratorErrorBoundary } from "./components/ConfiguratorErrorBoundary";
-import { ConfiguratorModal } from "./components/ConfiguratorModal";
-import { useConfiguratorStore } from "./store/configurator-store";
 import { clearConfigureError, showConfigureError } from "./lib/configure-feedback";
-import { collectImageUrls, preloadImages } from "./lib/image-preloader";
 import { normalizeProductId } from "./lib/product-id";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import { initStringingPageGate } from "./lib/stringing-page-gate";
@@ -19,6 +14,7 @@ import {
 } from "./lib/theme-placement";
 import type { StorefrontConfigurator } from "~/lib/configurator.types";
 import { getDefaultSelections } from "~/lib/conditional-logic";
+import type { ProtoConfiguratorModalApi } from "./modal-entry";
 import "./styles.css";
 
 declare global {
@@ -27,10 +23,12 @@ declare global {
       open: (productId: string, configurator: StorefrontConfigurator) => void;
       close: () => void;
     };
+    ProtoConfiguratorModal?: ProtoConfiguratorModalApi;
     ProtoConfiguratorSettings?: {
       appProxyUrl: string;
       productId: string;
       shopDomain?: string;
+      modalUrl?: string;
     };
     Shopify?: {
       shop?: string;
@@ -41,49 +39,67 @@ declare global {
 /**
  * entry.tsx
  *
- * The storefront bundle's entry point. Loaded (deferred) by the App Embed on every page where
- * the embed is enabled. Responsibilities:
- *   - mount the React modal root on <body>
+ * The storefront bundle's tiny entry point. Loaded (deferred) by the App Embed on every page
+ * where the embed is enabled. Deliberately carries NO React — that lives in the separate
+ * proto-configurator-modal.js bundle, loaded lazily on first interaction. Responsibilities:
  *   - decide whether this product has a configurator (linkage check) and reveal/inject the
  *     Configure button accordingly
  *   - wire up the Strung/Unstrung gate and the global Configure-click handler
- *   - open the modal on click (using cached data so it's instant)
- *   - restore a shared configuration from a `?proto_config=` URL
+ *   - on the first Configure click, lazy-load the modal bundle, then open it (with cached data)
+ *   - restore a shared configuration from a `?proto_config=` URL (also lazy-loads the modal)
  *
  * It exposes a small `window.ProtoConfigurator` API ({ open, close }) for external callers.
  */
-
-/** The single React root hosting the modal; created once on first mount. */
-let reactRoot: Root | null = null;
 
 // Cache configurator data per productId so the Configure button click is instant
 // (avoids a second API round-trip after initStorefrontUi already fetched it).
 const configuratorCache = new Map<string, StorefrontConfigurator>();
 
-/** Root React tree: the modal wrapped in an error boundary. */
-function App() {
-  return (
-    <ConfiguratorErrorBoundary>
-      <ConfiguratorModal />
-    </ConfiguratorErrorBoundary>
-  );
+// In-flight promise for the lazy modal bundle so concurrent triggers share one load.
+let modalLoadPromise: Promise<ProtoConfiguratorModalApi> | null = null;
+
+/** Resolve the modal bundle URL from embed settings (set by the App Embed liquid). */
+function getModalUrl(): string {
+  return window.ProtoConfiguratorSettings?.modalUrl ?? "";
 }
 
-/** Ensure the `#proto-configurator-root` element exists on <body> and render the App into it. */
-function mount() {
-  let rootEl = document.getElementById("proto-configurator-root");
-  if (!rootEl) {
-    rootEl = document.createElement("div");
-    rootEl.id = "proto-configurator-root";
-    rootEl.className = "proto-configurator-root";
-    rootEl.style.cssText = "position:relative;z-index:2147483646;";
-    document.body.appendChild(rootEl);
+/**
+ * Lazy-load the heavy modal bundle (React + store + modal UI) on first interaction.
+ * Injects a <script> for proto-configurator-modal.js, which assigns window.ProtoConfiguratorModal.
+ * Subsequent calls resolve instantly from the cached promise / already-present global.
+ */
+function loadModal(): Promise<ProtoConfiguratorModalApi> {
+  if (window.ProtoConfiguratorModal) {
+    return Promise.resolve(window.ProtoConfiguratorModal);
   }
+  if (modalLoadPromise) return modalLoadPromise;
 
-  if (!reactRoot) {
-    reactRoot = createRoot(rootEl);
-  }
-  reactRoot.render(<App />);
+  modalLoadPromise = new Promise<ProtoConfiguratorModalApi>((resolve, reject) => {
+    const url = getModalUrl();
+    if (!url) {
+      reject(new Error("Configurator modal URL is not configured."));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.onload = () => {
+      if (window.ProtoConfiguratorModal) {
+        resolve(window.ProtoConfiguratorModal);
+      } else {
+        reject(new Error("Configurator modal failed to initialize."));
+      }
+    };
+    script.onerror = () => reject(new Error("Configurator modal failed to load."));
+    document.head.appendChild(script);
+  });
+
+  // Let a failed load be retried on the next click.
+  modalLoadPromise.catch(() => {
+    modalLoadPromise = null;
+  });
+
+  return modalLoadPromise;
 }
 
 /** Resolve the shop domain from embed settings, falling back to window.Shopify.shop. */
@@ -193,35 +209,31 @@ function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
  */
 async function openConfigurator(productId: string, trigger: HTMLElement) {
   clearConfigureError(trigger);
-
-  // Use cached data if available — avoids a second API round-trip
-  const cached = configuratorCache.get(productId);
-  if (cached) {
-    useConfiguratorStore.getState().open(productId, cached);
-    void preloadImages(collectImageUrls(cached)).catch(() => {});
-    return;
-  }
-
   setTriggerLoading(trigger, true);
 
   try {
-    const { configurator, error } = await fetchConfigurator(productId);
-    if (error) {
-      showConfigureError(trigger, error);
-      return;
-    }
-
+    // Resolve the configurator data (cached from the on-load linkage check when possible)
+    // and lazy-load the modal bundle in parallel — both must be ready before we open.
+    let configurator = configuratorCache.get(productId);
     if (!configurator) {
-      showConfigureError(
-        trigger,
-        "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
-      );
-      return;
+      const result = await fetchConfigurator(productId);
+      if (result.error) {
+        showConfigureError(trigger, result.error);
+        return;
+      }
+      if (!result.configurator) {
+        showConfigureError(
+          trigger,
+          "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
+        );
+        return;
+      }
+      configurator = result.configurator;
+      configuratorCache.set(productId, configurator);
     }
 
-    configuratorCache.set(productId, configurator);
-    useConfiguratorStore.getState().open(productId, configurator);
-    void preloadImages(collectImageUrls(configurator)).catch(() => {});
+    const modal = await loadModal();
+    modal.open(productId, configurator);
   } catch (err) {
     showConfigureError(
       trigger,
@@ -346,19 +358,22 @@ function initShareRestore() {
 
   fetch(`${proxyUrl}/share/${shareId}${query}`)
     .then((r) => r.json())
-    .then((data: {
+    .then(async (data: {
       configurator?: StorefrontConfigurator;
       productId?: string;
       selections?: Record<string, string>;
       addons?: Record<string, number>;
     }) => {
       if (!data.configurator || !data.productId) return;
-      useConfiguratorStore.getState().open(data.productId, data.configurator);
-      if (data.selections && data.addons) {
-        useConfiguratorStore
-          .getState()
-          .restoreFromShare(data.selections, data.addons);
-      }
+      // A share link is an explicit request to view a configuration, so loading the
+      // modal bundle here is expected (not a lazy-load regression).
+      const modal = await loadModal();
+      modal.restoreShare(
+        data.productId,
+        data.configurator,
+        data.selections,
+        data.addons,
+      );
     })
     .catch(() => {});
 }
@@ -395,9 +410,12 @@ async function initStorefrontUi() {
   initButtons();
 }
 
-/** One-time startup: mount the modal root, wire click delegation + gate, run linkage, restore share. */
+/**
+ * One-time startup: wire click delegation + gate, run the linkage check, restore any share.
+ * The React modal is NOT mounted here — it loads lazily on the first Configure click
+ * (or immediately when a share link is present), keeping page-load JS tiny.
+ */
 function boot() {
-  mount();
   initConfigureClickDelegation();
   initStringingPageGate();
   void initStorefrontUi();
@@ -417,11 +435,12 @@ document.addEventListener("shopify:section:load", () => {
 
 window.ProtoConfigurator = {
   open: (productId, configurator) => {
-    preloadImages(collectImageUrls(configurator)).then(() => {
-      useConfiguratorStore.getState().open(productId, configurator);
-    });
+    configuratorCache.set(productId, configurator);
+    void loadModal().then((modal) => modal.open(productId, configurator));
   },
-  close: () => useConfiguratorStore.getState().close(),
+  close: () => {
+    window.ProtoConfiguratorModal?.close();
+  },
 };
 
 export { getDefaultSelections };
