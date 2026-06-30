@@ -53,6 +53,8 @@ model Configurator {
   laborPrice     Float    @default(0)
   basePrice   Float    @default(0)
   currency    String   @default("USD")
+  enrichedSnapshot  String?
+  snapshotUpdatedAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -30,6 +30,7 @@ import {
   ensureShop,
   getConfiguratorById,
 } from "~/lib/configurator.server";
+import { buildAndStoreSnapshot } from "~/lib/snapshot.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
 import { parseProductIdsField } from "~/lib/product-id";
@@ -81,7 +82,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
   const form = await request.formData();
   const intent = String(form.get("intent"));
@@ -116,7 +117,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         isActive,
       } as Parameters<typeof prisma.configurator.update>[0]["data"],
     });
-    // Bust the storefront proxy cache so shoppers see changes immediately
+
+    // B1: rebuild the enriched snapshot immediately so shoppers see changes without waiting for cron
+    const updated = await getConfiguratorById(params.id!);
+    if (updated) {
+      await buildAndStoreSnapshot(admin, updated, shop.id);
+    }
+
+    // Bust the storefront proxy cache so the new snapshot is picked up immediately
     invalidateProxyCache(session.shop);
     return json({ success: true });
   }

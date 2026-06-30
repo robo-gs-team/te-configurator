@@ -88,6 +88,18 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
     }
 
+    // B1: serve from DB snapshot — zero Admin API enrichment calls on the hot path
+    const snap = (lookup.configurator as typeof lookup.configurator & {
+      enrichedSnapshot?: string | null;
+    }).enrichedSnapshot;
+
+    if (snap) {
+      const responseData = JSON.parse(snap) as Record<string, unknown>;
+      setCachedProxyResponse(shopDomain, productId, responseData);
+      return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "SNAPSHOT" } });
+    }
+
+    // Snapshot not yet built — fall back to live enrichment
     const [enrichedConfigurator, shop] = await Promise.all([
       admin
         ? enrichConfiguratorWithShopifyData(admin, lookup.configurator)
