@@ -137,8 +137,7 @@ async function fetchConfigurator(
     if (!contentType.includes("application/json")) {
       return {
         configurator: null,
-        error:
-          "Configurator API did not respond. Keep npm run dev running, then refresh this page.",
+        error: "Unable to load configurator. Please refresh the page and try again.",
       };
     }
 
@@ -166,16 +165,15 @@ async function fetchConfigurator(
 
     return {
       configurator: null,
-      error:
-        "No configurator linked to this product. Select products in the app admin, enable Active, and click Save changes.",
+      error: "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
     };
   } catch (err) {
     const aborted = err instanceof DOMException && err.name === "AbortError";
     return {
       configurator: null,
       error: aborted
-        ? "Configurator request timed out. Check that npm run dev is running."
-        : "Could not reach the configurator. Keep npm run dev running, then refresh this page.",
+        ? "Configurator request timed out. Please refresh the page and try again."
+        : "Unable to reach the configurator. Please refresh the page and try again.",
     };
   }
 }
@@ -216,7 +214,7 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
     if (!configurator) {
       showConfigureError(
         trigger,
-        "No configurator is linked to this product. Select products in the app admin, enable Active, and click Save changes.",
+        "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
       );
       return;
     }

@@ -134,11 +134,7 @@ export async function addToShopifyCart(
   }
 
   try {
-    let res = await postCartItems(items);
-
-    if (!res.ok && isStringing && items.length > 1) {
-      res = await postCartItems([items[0]]);
-    }
+    const res = await postCartItems(items);
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
