@@ -46,8 +46,9 @@ model Configurator {
   name        String
   description String?
   isActive    Boolean  @default(true)
-  productIds     String   @default("[]")
-  collectionIds  String   @default("[]")
+  productIds          String   @default("[]")
+  collectionIds       String   @default("[]")
+  stringCollectionIds String   @default("[]")
   laborVariantId String?
   laborPrice     Float    @default(0)
   basePrice   Float    @default(0)
