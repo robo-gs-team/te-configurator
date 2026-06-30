@@ -125,10 +125,12 @@ Plus research-backed UX: stepped flow (racquet → string → tension → summar
 
 ## Phased roadmap
 
-**Phase 0 — Stabilize v1 (done / in progress).** Scroll lock + double-fetch already fixed and pushed on this branch. Optionally: fix the silent cart fallback and the dev-facing error strings now, since they're live revenue/credibility leaks.
+**Phase 0 — Stabilize v1 (✅ done).** Scroll lock, double-fetch cache, server cache, parallel Admin calls, silent cart data-loss fix, dev error strings, PrismaClient singleton, explicit String + Racquet collection pickers, fake catalog fallback removed.
 
-**Phase 1 — Data layer pivot (highest leverage).**
-Define `$app` metaobjects via TOML. Move enrichment from the proxy to the admin save action + product/collection webhooks. Render catalog JSON into the product page via Liquid. Proxy read path becomes obsolete. *This alone removes the cold-start/slowness problem.*
+**Phase 1 — Data layer pivot (highest leverage, next up).**
+Move enrichment from the proxy to the admin save action. On every "Save changes" click, resolve all Shopify product data and write a ready-to-serve JSON snapshot to Postgres. The proxy `/product/:id` becomes a single DB read. A **daily Vercel cron** (3 am) re-syncs all snapshots automatically — no webhooks needed. *This alone removes the cold-start/slowness problem for shoppers.*
+
+The snapshot-first approach is intentional: it ships the speed fix in days and keeps the Polaris/Prisma admin unchanged. C1 (metaobjects + Liquid) can later swap out the DB snapshot for CDN-cached Liquid rendering without changing merchant-facing behaviour.
 
 **Phase 2 — Storefront rebuild.**
 New app block (single step, autofill, no button-hiding). Tiny gate script + import-on-interaction modal. Drop Framer Motion. Sticky CTA, real mobile layout, real catalog only, nested cart lines, shopper-safe errors. Fix tension range to be data-driven.
@@ -153,9 +155,10 @@ Phases 1 and 2 deliver the speed and the conversion wins. 3 and 4 are hardening 
 
 ---
 
-## Decisions for you
+## Decisions
 
-1. **Config store:** Metaobjects + Liquid (fastest, cleaner, more migration) **vs** Postgres write-time snapshot + cached JSON proxy (keeps Polaris editor, less migration). *Recommendation: Metaobjects.*
-2. **Scope:** full v2 rebuild on a fresh branch **vs** evolve this branch phase-by-phase. *Recommendation: evolve — Phase 1 then 2 are independently shippable and de-risk the rebuild.*
-3. **Hybrid stringing:** keep it (with simplified UI) **vs** cut it for v2.0 and add back later. Affects modal and data-model complexity.
-4. **React Router migration:** now (clean slate) **vs** after Phases 1–2 (don't block conversion wins on a framework move). *Recommendation: after.*
+1. ✅ **Config store:** **decided — Postgres write-time snapshot first.** Keeps Polaris/Prisma admin, ships the speed fix fastest. Metaobjects + Liquid (C1) is the later upgrade path — same merchant behaviour, no re-migration needed.
+2. ✅ **Staleness strategy:** **decided — daily Vercel cron, no webhooks.** Save-on-change gives immediate refresh; 3 am daily cron covers background Shopify edits. Webhook infrastructure (signature verification, retry logic, delivery tracking) is not justified for a shop where string prices/images change infrequently.
+3. ✅ **Scope:** **decided — evolve this branch phase-by-phase.** Phase 0 is done. Phase 1 (B1 snapshot) is next, then Phase 2 (storefront modal rebuild).
+4. **Hybrid stringing:** keep it (with simplified UI) **vs** cut it for v2.0 and add back later. Affects modal and data-model complexity. *Open.*
+5. **React Router migration (C4):** now (clean slate) **vs** after Phases 1–2. *Recommendation: after — don't block conversion wins on a framework move.*
