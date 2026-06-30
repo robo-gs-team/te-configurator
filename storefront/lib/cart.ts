@@ -1,3 +1,16 @@
+/**
+ * cart.ts
+ *
+ * The Add-to-Cart layer: turns the shopper's configuration into Shopify cart line items and
+ * POSTs them to the standard /cart/add.js endpoint. Also hosts the share-save and analytics
+ * fetch helpers (both hit the App Proxy).
+ *
+ * The configuration travels to Shopify as LINE-ITEM PROPERTIES (not metafields) — see
+ * stringing-cart.ts#buildStringingProperties for the exact keys. The cart can contain up to
+ * three kinds of line: the racquet (with all string specs), an optional labor/service line,
+ * and any add-on lines.
+ */
+
 import { buildLineItemProperties } from "~/lib/conditional-logic";
 import type {
   SelectionState,
@@ -8,11 +21,20 @@ import { usesStringingUi } from "./string-catalog";
 import { buildStringingProperties } from "./stringing-cart";
 import type { StringingMode } from "../store/configurator-store";
 
+/** Result of an add-to-cart attempt. `error` is a shopper-facing message when success is false. */
 export type CartAddResult = {
   success: boolean;
   error?: string;
 };
 
+/**
+ * Append a cart line for a variant, if the variant id is present. No-op when variantId is
+ * null/undefined (e.g. an unconfigured labor variant), so callers don't need to null-check.
+ * @param items The line-item array being built (mutated in place).
+ * @param variantId Shopify variant id as a string, or null/undefined to skip.
+ * @param quantity Quantity for this line.
+ * @param properties Line-item properties to attach.
+ */
 function pushVariantLine(
   items: Array<{
     id: number;
@@ -31,6 +53,23 @@ function pushVariantLine(
   });
 }
 
+/**
+ * Build and submit the cart for a completed configuration.
+ *
+ * Assembles up to three kinds of line: (1) the racquet variant carrying all configuration as
+ * line-item properties — stringing specs for the stringing UI, or generic selection properties
+ * otherwise; (2) the optional labor/service line (stringing only), tagged `_line_type: labor`
+ * + `_parent_configurator`; (3) one line per selected add-on, tagged `_parent_configurator`.
+ * Posts all lines in one /cart/add.js request, then fires cart events and opens the drawer.
+ *
+ * GOTCHA (known v1 bug): on a failed multi-line POST for stringing it retries with ONLY the
+ * racquet line and still returns success — silently dropping the labor line. v2 should surface
+ * a real error instead (see HOW_IT_WORKS_ON_SITE.md / V2_PLAN.md).
+ *
+ * @param variantId Racquet variant id; falls back to reading it from the page if null.
+ * @param stringing Present only when the stringing UI is in use; carries mode + bed selections.
+ * @returns success, or success:false with a shopper-facing error.
+ */
 export async function addToShopifyCart(
   configurator: StorefrontConfigurator,
   selections: SelectionState,
@@ -125,6 +164,7 @@ export async function addToShopifyCart(
   }
 }
 
+/** POST a set of line items to Shopify's Ajax cart endpoint. @returns the raw fetch Response. */
 async function postCartItems(
   items: Array<{
     id: number;
@@ -139,6 +179,13 @@ async function postCartItems(
   });
 }
 
+/**
+ * Best-effort discovery of the currently selected racquet variant id from the page, used when
+ * the caller didn't pass one. Tries, in order: the product form's `id` input/select, a
+ * `[data-selected-variant-id]` element, the `?variant=` URL param, then the embedded product
+ * JSON (selected or first variant).
+ * @returns The variant id as a string, or null if none could be determined.
+ */
 function getProductVariantFromPage(): string | null {
   const selectors = [
     'form[action*="/cart/add"] input[name="id"]',
@@ -187,6 +234,10 @@ function getProductVariantFromPage(): string | null {
   return null;
 }
 
+/**
+ * Persist the current configuration via the App Proxy (`POST /save`) so it can be shared.
+ * @returns The share URL on success, or null on failure (network or non-OK response).
+ */
 export async function saveConfiguration(
   appProxyUrl: string,
   data: {
@@ -211,6 +262,10 @@ export async function saveConfiguration(
   }
 }
 
+/**
+ * Fire-and-forget analytics event to the App Proxy (`POST /analytics`). Never throws and never
+ * blocks the UI — failures are swallowed. In v1 only `modal_open` and `add_to_cart` are sent.
+ */
 export async function trackEvent(
   appProxyUrl: string,
   eventType: string,

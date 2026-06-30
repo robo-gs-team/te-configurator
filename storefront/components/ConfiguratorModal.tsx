@@ -21,6 +21,18 @@ declare global {
   }
 }
 
+/**
+ * ConfiguratorModal — the full-screen pop-up the shopper sees after clicking Configure.
+ *
+ * Renders as a React portal on <body> (top of the stacking order) with a blurred backdrop.
+ * It reads all state from the Zustand store and renders one of two bodies:
+ *   - StringingConfigurator (the tennis stringing flow) when the configurator uses the
+ *     stringing UI (i.e. it has a labor variant), or
+ *   - the generic VariantStep + AddonsStep flow otherwise.
+ *
+ * Returns null when closed (or before a configurator is loaded), so it costs nothing until
+ * opened. Hosts the add-to-cart and share handlers, and the background scroll-lock effect.
+ */
 export function ConfiguratorModal() {
   const isOpen = useConfiguratorStore((s) => s.isOpen);
   const close = useConfiguratorStore((s) => s.close);
@@ -46,6 +58,9 @@ export function ConfiguratorModal() {
   const appProxyUrl =
     window.ProtoConfiguratorSettings?.appProxyUrl ?? "/apps/proto-configurator";
 
+  // Scroll-lock the background page while the modal is open, and emit modal_open once.
+  // Uses the position:fixed + saved-scrollY technique (plain overflow:hidden fails on iOS
+  // Safari); the saved position is restored on close/unmount.
   useEffect(() => {
     if (isOpen) {
       // Use position:fixed technique so iOS Safari doesn't scroll the background
@@ -76,6 +91,9 @@ export function ConfiguratorModal() {
     };
   }, [isOpen, appProxyUrl, configurator?.id, productId]);
 
+  // Build + submit the cart from current store state. On success: track add_to_cart and close
+  // the modal. On failure: surface the error in the store (shown in the modal). Passes the
+  // stringing bed selections only when the stringing UI is active.
   const handleAddToCart = useCallback(async () => {
     if (!configurator || !productId) return;
     setAddingToCart(true);
@@ -120,6 +138,8 @@ export function ConfiguratorModal() {
     appProxyUrl,
   ]);
 
+  // Save the current configuration via the proxy, copy the returned share URL to the
+  // clipboard, and track a share event. (Reachable only from the generic flow's footer.)
   const handleShare = useCallback(async () => {
     if (!configurator || !productId) return;
     const url = await saveConfiguration(appProxyUrl, {

@@ -38,12 +38,29 @@ declare global {
   }
 }
 
+/**
+ * entry.tsx
+ *
+ * The storefront bundle's entry point. Loaded (deferred) by the App Embed on every page where
+ * the embed is enabled. Responsibilities:
+ *   - mount the React modal root on <body>
+ *   - decide whether this product has a configurator (linkage check) and reveal/inject the
+ *     Configure button accordingly
+ *   - wire up the Strung/Unstrung gate and the global Configure-click handler
+ *   - open the modal on click (using cached data so it's instant)
+ *   - restore a shared configuration from a `?proto_config=` URL
+ *
+ * It exposes a small `window.ProtoConfigurator` API ({ open, close }) for external callers.
+ */
+
+/** The single React root hosting the modal; created once on first mount. */
 let reactRoot: Root | null = null;
 
 // Cache configurator data per productId so the Configure button click is instant
 // (avoids a second API round-trip after initStorefrontUi already fetched it).
 const configuratorCache = new Map<string, StorefrontConfigurator>();
 
+/** Root React tree: the modal wrapped in an error boundary. */
 function App() {
   return (
     <ConfiguratorErrorBoundary>
@@ -52,6 +69,7 @@ function App() {
   );
 }
 
+/** Ensure the `#proto-configurator-root` element exists on <body> and render the App into it. */
 function mount() {
   let rootEl = document.getElementById("proto-configurator-root");
   if (!rootEl) {
@@ -68,6 +86,7 @@ function mount() {
   reactRoot.render(<App />);
 }
 
+/** Resolve the shop domain from embed settings, falling back to window.Shopify.shop. */
 function getShopDomain(): string {
   return (
     window.ProtoConfiguratorSettings?.shopDomain ??
@@ -76,10 +95,18 @@ function getShopDomain(): string {
   );
 }
 
+/** Resolve the App Proxy base URL from embed settings (default `/apps/proto-configurator`). */
 function getProxyUrl(): string {
   return window.ProtoConfiguratorSettings?.appProxyUrl ?? "/apps/proto-configurator";
 }
 
+/**
+ * Fetch the configurator for a product from the App Proxy (`GET /product/:id`).
+ *
+ * Aborts after 15s, requires a JSON response, and maps every failure mode to a shopper-facing
+ * `error` string. A null configurator with no error means "no configurator linked".
+ * @returns `{ configurator }` on success, or `{ configurator: null, error }` otherwise.
+ */
 async function fetchConfigurator(
   productId: string,
 ): Promise<{ configurator: StorefrontConfigurator | null; error?: string }> {
@@ -153,6 +180,7 @@ async function fetchConfigurator(
   }
 }
 
+/** Toggle the Configure button's loading state (disabled + busy + wait cursor) during fetch. */
 function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
   trigger.toggleAttribute("disabled", loading);
   trigger.setAttribute("aria-busy", loading ? "true" : "false");
@@ -160,6 +188,11 @@ function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
   trigger.style.cursor = loading ? "wait" : "pointer";
 }
 
+/**
+ * Open the modal for a product. Uses the per-product cache for an instant open when available;
+ * otherwise shows a loading state on the button, fetches, caches, and opens. Surfaces any error
+ * inline on the button. Also preloads option images so the modal renders without pop-in.
+ */
 async function openConfigurator(productId: string, trigger: HTMLElement) {
   clearConfigureError(trigger);
 
@@ -201,6 +234,11 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
   }
 }
 
+/**
+ * Guard for click handling: is this Configure trigger actually meant to be interactive right
+ * now? False when the global state is "unstrung", the actions are hidden, or CSS has hidden the
+ * button — prevents acting on a click that landed on a visually-hidden button.
+ */
 function isConfigureTriggerVisible(trigger: HTMLElement): boolean {
   if (document.documentElement.dataset.protoStringingState === "unstrung") {
     return false;
@@ -212,6 +250,10 @@ function isConfigureTriggerVisible(trigger: HTMLElement): boolean {
   return style.display !== "none" && style.visibility !== "hidden" && style.pointerEvents !== "none";
 }
 
+/**
+ * Handle a Configure click: bail if not visible, otherwise prevent the default/native action,
+ * resolve the product id (from the button or embed settings), and open the configurator.
+ */
 function handleConfigureClick(trigger: HTMLElement, event: Event) {
   if (!isConfigureTriggerVisible(trigger)) return;
 
@@ -231,6 +273,11 @@ function handleConfigureClick(trigger: HTMLElement, event: Event) {
   void openConfigurator(productId, trigger);
 }
 
+/**
+ * Install a single capture-phase click listener on <html> that delegates to handleConfigureClick
+ * for any `[data-proto-configurator-trigger]`. Delegation (rather than per-button listeners)
+ * keeps it working even after the button is relocated in the DOM. Bound at most once.
+ */
 function initConfigureClickDelegation() {
   if (document.documentElement.dataset.protoClickDelegated) return;
   document.documentElement.dataset.protoClickDelegated = "true";
@@ -250,13 +297,18 @@ function initConfigureClickDelegation() {
   );
 }
 
+/** Mark all existing trigger buttons as bound (a simple presence flag; clicks use delegation). */
 function initButtons() {
   document.querySelectorAll("[data-proto-configurator-trigger]").forEach((el) => {
     (el as HTMLElement).dataset.protoBound = "true";
   });
 }
 
-/** Fallback when the app embed is on but the theme block was not added. */
+/**
+ * Fallback when the app embed is on but the theme block was not added: build a gate wrapper in
+ * JS (createStringingGateWrapper) and insert it into the product info / buy box. No-op if a
+ * wrapper already exists or no product id / insert point is found.
+ */
 function injectProductPageButton() {
   const productId = window.ProtoConfiguratorSettings?.productId;
   if (!productId) return;
@@ -280,6 +332,11 @@ function injectProductPageButton() {
   initButtons();
 }
 
+/**
+ * If the URL carries `?proto_config={shareId}`, fetch that saved configuration from the proxy
+ * (`GET /share/:id`) and open the modal with its selections restored. Silently does nothing if
+ * the param is absent or the fetch fails.
+ */
 function initShareRestore() {
   const params = new URLSearchParams(window.location.search);
   const shareId = params.get("proto_config");
@@ -308,6 +365,12 @@ function initShareRestore() {
     .catch(() => {});
 }
 
+/**
+ * The on-load linkage routine: find the page's product id, mark linkage pending, and fetch the
+ * configurator. If none is linked, mark unlinked (hides the button). If one is linked, cache it,
+ * mark linked, inject the fallback button if needed, schedule placement, and init the gate.
+ * This is what decides whether the Configure button appears on this product page.
+ */
 async function initStorefrontUi() {
   const productId = getPageProductId();
   if (!productId) {
@@ -334,6 +397,7 @@ async function initStorefrontUi() {
   initButtons();
 }
 
+/** One-time startup: mount the modal root, wire click delegation + gate, run linkage, restore share. */
 function boot() {
   mount();
   initConfigureClickDelegation();
