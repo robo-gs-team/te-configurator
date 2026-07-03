@@ -38,15 +38,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
   const stringCollectionIds = parseCollectionIdsField(String(form.get("stringCollectionIds") || ""));
   const productIds = parseProductIdsField(String(form.get("productIds") || ""));
+  const stringProductIds = parseProductIdsField(String(form.get("stringProductIds") || ""));
   const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
 
   if (!name) return json({ error: "Name is required" }, { status: 400 });
 
   // No pre-seeded steps/option groups: a racquet collection + string collection + labor
   // product is enough for a working stringing configurator on its own (the string catalog
-  // is auto-resolved from stringCollectionIds — see enrich-configurator.server.ts). Merchants
-  // only need "Steps & options" for extra customization beyond standard stringing.
-  const configurator = await (prisma.configurator.create as Function)({
+  // is auto-resolved from stringCollectionIds/stringProductIds — see
+  // enrich-configurator.server.ts). Merchants only need "Steps & options" for extra
+  // customization beyond standard stringing.
+  const configurator = await prisma.configurator.create({
     data: {
       shopId: shop.id,
       name,
@@ -54,6 +56,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       productIds: JSON.stringify(productIds),
       collectionIds: JSON.stringify(collectionIds),
       stringCollectionIds: JSON.stringify(stringCollectionIds),
+      stringProductIds: JSON.stringify(stringProductIds),
       basePrice,
     },
   });
@@ -69,6 +72,7 @@ export default function NewConfigurator() {
   const [selectedCollections, setSelectedCollections] = useState<CollectionSummary[]>([]);
   const [selectedStringCollections, setSelectedStringCollections] = useState<CollectionSummary[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<ProductSummary[]>([]);
+  const [selectedStringProducts, setSelectedStringProducts] = useState<ProductSummary[]>([]);
   const [basePrice, setBasePrice] = useState("0");
 
   return (
@@ -133,6 +137,13 @@ export default function NewConfigurator() {
                     name="stringCollectionIds"
                     selected={selectedStringCollections}
                     onChange={setSelectedStringCollections}
+                  />
+                  <ProductPicker
+                    label="Individual string products"
+                    helpText="These specific products also appear as string options, in addition to any string collections above."
+                    name="stringProductIds"
+                    selected={selectedStringProducts}
+                    onChange={setSelectedStringProducts}
                   />
                   <TextField
                     label="Base price"

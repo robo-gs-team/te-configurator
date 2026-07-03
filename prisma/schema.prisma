@@ -49,6 +49,7 @@ model Configurator {
   productIds          String   @default("[]")
   collectionIds       String   @default("[]")
   stringCollectionIds String   @default("[]")
+  stringProductIds    String   @default("[]")
   laborVariantId String?
   laborPrice     Float    @default(0)
   basePrice   Float    @default(0)

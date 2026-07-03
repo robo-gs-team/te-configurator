@@ -135,21 +135,38 @@ export async function enrichConfiguratorWithShopifyData(
     .map((opt) => opt.productId)
     .filter((id): id is string => Boolean(id));
 
-  // Fetch top-level string collection products in parallel with the image resolution
+  // Fetch top-level string collection + individual string products in parallel with the
+  // image resolution
   const stringCollectionIds = parseJson<string[]>(
     (configurator as ConfiguratorWithRelations & { stringCollectionIds?: string })
       .stringCollectionIds ?? "[]",
     [],
   );
+  const stringProductIds = parseJson<string[]>(
+    (configurator as ConfiguratorWithRelations & { stringProductIds?: string })
+      .stringProductIds ?? "[]",
+    [],
+  );
 
-  const [imageByProductId, topLevelStringProducts] = await Promise.all([
+  const [imageByProductId, stringCollectionProducts, stringIndividualProducts] = await Promise.all([
     manualProductIds.length > 0
       ? getProductsWithImages(admin, manualProductIds)
       : Promise.resolve(new Map<string, { imageUrl: string | null; variantId: string | null; price: number }>()),
     stringCollectionIds.length > 0
       ? getProductsInCollections(admin, stringCollectionIds)
       : Promise.resolve([]),
+    stringProductIds.length > 0
+      ? getProductsDetailedByIds(admin, stringProductIds)
+      : Promise.resolve([]),
   ]);
+
+  // Dedup — a merchant could add the same product both via a collection and individually.
+  const topLevelStringProducts = [
+    ...stringCollectionProducts,
+    ...stringIndividualProducts.filter(
+      (p) => !stringCollectionProducts.some((cp) => cp.id === p.id),
+    ),
+  ];
 
   const enrichedSteps = await Promise.all(
     configurator.steps.map(async (step) => ({

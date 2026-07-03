@@ -53,10 +53,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     (configurator as typeof configurator & { stringCollectionIds?: string }).stringCollectionIds ?? "[]",
     [],
   );
-  const [collections, stringCollections, products] = await Promise.all([
+  const stringProductIds = parseJson<string[]>(
+    (configurator as typeof configurator & { stringProductIds?: string }).stringProductIds ?? "[]",
+    [],
+  );
+  const [collections, stringCollections, products, stringProducts] = await Promise.all([
     getCollectionsByIds(admin, collectionIds),
     getCollectionsByIds(admin, stringCollectionIds),
     getProductsByIds(admin, parseJson<string[]>(configurator.productIds, [])),
+    getProductsByIds(admin, stringProductIds),
     // Idempotent — checks existence first, only creates on first-ever call for this shop.
     // Registers the per-racquet tension metafield definitions so they show up in Shopify's
     // native "Metafields" section on every product page.
@@ -82,7 +87,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     : null;
 
-  return json({ configurator, collections, stringCollections, products, groupCollections, groupProducts, labor });
+  return json({
+    configurator,
+    collections,
+    stringCollections,
+    products,
+    stringProducts,
+    groupCollections,
+    groupProducts,
+    labor,
+  });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -102,6 +116,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
     const stringCollectionIds = parseCollectionIdsField(String(form.get("stringCollectionIds") || ""));
     const productIds = parseProductIdsField(String(form.get("productIds") || ""));
+    const stringProductIds = parseProductIdsField(String(form.get("stringProductIds") || ""));
     const laborVariantId = String(form.get("laborVariantId") || "").trim() || null;
     const laborPrice = parseFloat(String(form.get("laborPrice") || "0")) || 0;
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
@@ -115,11 +130,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         productIds: JSON.stringify(productIds),
         collectionIds: JSON.stringify(collectionIds),
         stringCollectionIds: JSON.stringify(stringCollectionIds),
+        stringProductIds: JSON.stringify(stringProductIds),
         laborVariantId,
         laborPrice,
         basePrice,
         isActive,
-      } as Parameters<typeof prisma.configurator.update>[0]["data"],
+      },
     });
 
     // One save covers everything on the page: general settings above, plus every option
@@ -293,8 +309,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditConfigurator() {
-  const { configurator, collections, stringCollections, products, groupCollections, groupProducts, labor } =
-    useLoaderData<typeof loader>();
+  const {
+    configurator,
+    collections,
+    stringCollections,
+    products,
+    stringProducts,
+    groupCollections,
+    groupProducts,
+    labor,
+  } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
 
   const [name, setName] = useState(configurator.name);
@@ -302,6 +326,7 @@ export default function EditConfigurator() {
   const [selectedCollections, setSelectedCollections] = useState(collections);
   const [selectedStringCollections, setSelectedStringCollections] = useState(stringCollections);
   const [selectedProducts, setSelectedProducts] = useState(products);
+  const [selectedStringProducts, setSelectedStringProducts] = useState(stringProducts);
   const [laborProduct, setLaborProduct] = useState<LaborProductSelection | null>(labor);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
@@ -359,12 +384,20 @@ export default function EditConfigurator() {
                     onChange={setSelectedProducts}
                   />
                   <Banner tone="info" title="Set stringing tension per racquet">
-                    <p>
-                      Each racquet has its own recommended tension. Open any racquet product in
-                      Shopify admin → <strong>Metafields</strong> → <strong>Stringing</strong>, and
-                      fill in Min / Max / Recommended (lbs). Racquets left blank use a default
-                      range of 46–55 lbs.
-                    </p>
+                    <BlockStack gap="150">
+                      <p>
+                        Each racquet has its own recommended tension. Open any racquet product in
+                        Shopify admin → <strong>Metafields</strong>, and fill in the three
+                        &quot;Stringing tension&quot; fields (Min / Max / Recommended, lbs).
+                        Racquets left blank use a default range of 46–55 lbs.
+                      </p>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Technical field names, if you need to match them exactly:{" "}
+                        <code>te_stringing.tension_min</code>,{" "}
+                        <code>te_stringing.tension_max</code>,{" "}
+                        <code>te_stringing.tension_recommended</code>.
+                      </Text>
+                    </BlockStack>
                   </Banner>
                   <CollectionPicker
                     label="String collections"
@@ -372,6 +405,13 @@ export default function EditConfigurator() {
                     name="stringCollectionIds"
                     selected={selectedStringCollections}
                     onChange={setSelectedStringCollections}
+                  />
+                  <ProductPicker
+                    label="Individual string products"
+                    helpText="These specific products also appear as string options, in addition to any string collections above."
+                    name="stringProductIds"
+                    selected={selectedStringProducts}
+                    onChange={setSelectedStringProducts}
                   />
                   <LaborProductPicker selected={laborProduct} onChange={setLaborProduct} />
                   <TextField
@@ -399,6 +439,15 @@ export default function EditConfigurator() {
               <Text as="h2" variant="headingMd">
                 Steps & options
               </Text>
+              <Banner tone="info">
+                <p>
+                  Most stringing configurators don't need this section — racquets and strings
+                  are already fully configured above. Only add a step here if you need string
+                  options beyond the collections/products above; other step or option types
+                  won't appear to shoppers, since stringing configurators use a dedicated
+                  interface.
+                </p>
+              </Banner>
               {configurator.steps.length === 0 ? (
                 <Text as="p" tone="subdued">
                   No steps yet. Add a step below, then add options to it.
