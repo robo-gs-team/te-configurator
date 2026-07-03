@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
-import { json, redirect } from "@vercel/remix";
-import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
+import { json } from "@vercel/remix";
+import { Link, useLoaderData } from "@remix-run/react";
 import {
   Badge,
   BlockStack,
@@ -11,6 +11,7 @@ import {
   Page,
   Text,
 } from "@shopify/polaris";
+import { RemoveItemButton } from "~/components/RemoveItemButton";
 import prisma from "~/db.server";
 import { ensureShop, listConfigurators } from "~/lib/configurator.server";
 import { authenticate } from "~/shopify.server";
@@ -31,7 +32,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "delete") {
     const id = String(form.get("id"));
     await prisma.configurator.deleteMany({ where: { id, shopId: shop.id } });
-    return redirect("/app/configurators");
+    // No redirect: the fetcher-based delete button revalidates this route's loader
+    // in place, so the list updates instantly without a full page navigation.
+    return json({ success: true });
   }
 
   return json({ ok: true });
@@ -39,7 +42,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function ConfiguratorsList() {
   const { configurators } = useLoaderData<typeof loader>();
-  const navigation = useNavigation();
 
   return (
     <Page
@@ -80,17 +82,7 @@ export default function ConfiguratorsList() {
                         {c.isActive ? "Active" : "Inactive"}
                       </Badge>
                       <Button url={`/app/configurators/${c.id}`}>Edit</Button>
-                      <Form method="post">
-                        <input type="hidden" name="intent" value="delete" />
-                        <input type="hidden" name="id" value={c.id} />
-                        <Button
-                          submit
-                          tone="critical"
-                          loading={navigation.state !== "idle"}
-                        >
-                          Delete
-                        </Button>
-                      </Form>
+                      <RemoveItemButton intent="delete" id={c.id} label="Delete" />
                     </InlineStack>
                   </InlineStack>
                 </Card>
