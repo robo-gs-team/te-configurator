@@ -25,6 +25,7 @@ import {
 } from "~/lib/theme-detection.server";
 import { themeEditorEmbedUrl } from "~/lib/theme-embed";
 import { refreshShopSnapshots } from "~/lib/snapshot.server";
+import { getBuildInfo } from "~/lib/build-info.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -37,7 +38,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     getShopThemeSettings(shop.id),
   ]);
 
-  return json({ shop: session.shop, configurators, analytics, buttonStatus, theme });
+  return json({
+    shop: session.shop,
+    configurators,
+    analytics,
+    buttonStatus,
+    theme,
+    buildInfo: getBuildInfo(),
+  });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -63,7 +71,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Dashboard() {
-  const { shop, configurators, analytics, buttonStatus, theme } = useLoaderData<typeof loader>();
+  const { shop, configurators, analytics, buttonStatus, theme, buildInfo } =
+    useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isToggling =
     navigation.state !== "idle" &&
@@ -235,6 +244,23 @@ export default function Dashboard() {
               <Button url="/app/settings">Theme settings</Button>
             </BlockStack>
           </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Box paddingBlockStart="200">
+            <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+              Build{" "}
+              {buildInfo.commitUrl ? (
+                <a href={buildInfo.commitUrl} target="_blank" rel="noopener noreferrer">
+                  {buildInfo.shortSha}
+                </a>
+              ) : (
+                buildInfo.shortSha
+              )}
+              {" · server started "}
+              {buildInfo.serverStartedAt.replace("T", " ").slice(0, 16)} UTC
+            </Text>
+          </Box>
         </Layout.Section>
       </Layout>
     </Page>
