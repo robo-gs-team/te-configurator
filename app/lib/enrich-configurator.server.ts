@@ -194,11 +194,18 @@ export async function enrichConfiguratorWithShopifyData(
             };
           });
 
+          // Dedup against manual options AND across the merged sources — a product can be in
+          // both the group's own collection and the top-level string collection, and would
+          // otherwise appear twice. Add each id to `seen` as we accept it.
           const seen = new Set(
             manualOptions.map((o) => o.productId).filter(Boolean) as string[],
           );
           const dynamicOptions = [...collectionProducts, ...directProducts, ...extraStringProducts]
-            .filter((product) => !seen.has(product.id))
+            .filter((product) => {
+              if (seen.has(product.id)) return false;
+              seen.add(product.id);
+              return true;
+            })
             .map((product, index) =>
               shopifyProductToOption(product, manualOptions.length + index, "shopify"),
             );

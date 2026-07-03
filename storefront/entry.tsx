@@ -436,7 +436,12 @@ document.addEventListener("shopify:section:load", () => {
 window.ProtoConfigurator = {
   open: (productId, configurator) => {
     configuratorCache.set(productId, configurator);
-    void loadModal().then((modal) => modal.open(productId, configurator));
+    loadModal()
+      .then((modal) => modal.open(productId, configurator))
+      .catch((err) => {
+        // e.g. modalUrl not configured on an older embed — don't leave an unhandled rejection.
+        console.error("ProtoConfigurator.open failed to load the modal:", err);
+      });
   },
   close: () => {
     window.ProtoConfiguratorModal?.close();

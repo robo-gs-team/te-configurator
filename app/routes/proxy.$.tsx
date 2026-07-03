@@ -125,17 +125,45 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const saved = await getSavedConfiguration(shareId);
     if (!saved) return json({ error: "Not found" }, { status: 404 });
 
-    const shop = await ensureShop(shopDomain);
     const configurator = await getConfiguratorForProduct(
       shopDomain,
       saved.productId,
     );
     if (!configurator) return json({ error: "Not found" }, { status: 404 });
 
-    const theme = await getShopThemeSettings(shop.id);
+    // Serve the same enriched data the product page does: prefer the stored snapshot,
+    // fall back to live enrichment. Serializing the raw configurator would leave the
+    // string catalog (and images/variant IDs) empty in the restored modal.
+    let serializedConfigurator: unknown;
+    const snap = (configurator as typeof configurator & {
+      enrichedSnapshot?: string | null;
+    }).enrichedSnapshot;
+
+    if (snap) {
+      try {
+        serializedConfigurator = (JSON.parse(snap) as { configurator: unknown }).configurator;
+      } catch {
+        // Corrupt snapshot — fall through to live enrichment.
+      }
+    }
+
+    if (!serializedConfigurator) {
+      let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
+      try {
+        admin = (await unauthenticated.admin(shopDomain)).admin;
+      } catch {
+        // Live enrichment needs an installed session; without it we serve the raw config.
+      }
+      const shop = await ensureShop(shopDomain);
+      const theme = await getShopThemeSettings(shop.id);
+      const enriched = admin
+        ? await enrichConfiguratorWithShopifyData(admin, configurator)
+        : configurator;
+      serializedConfigurator = serializeConfiguratorPayload(enriched, theme);
+    }
 
     return json({
-      configurator: serializeConfiguratorPayload(configurator, theme),
+      configurator: serializedConfigurator,
       productId: saved.productId,
       selections: JSON.parse(saved.selections),
       addons: JSON.parse(saved.addons),

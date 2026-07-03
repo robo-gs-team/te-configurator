@@ -24,19 +24,47 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
+  // Group by shop so we authenticate once per shop instead of once per configurator.
+  const byShop = new Map<string, { domain: string; ids: string[] }>();
+  for (const row of rows) {
+    const entry = byShop.get(row.shopId) ?? { domain: row.shop.domain, ids: [] };
+    entry.ids.push(row.id);
+    byShop.set(row.shopId, entry);
+  }
+
   let succeeded = 0;
   let failed = 0;
+  const CONCURRENCY = 5;
 
-  for (const row of rows) {
+  for (const [shopId, { domain, ids }] of byShop) {
+    let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"];
     try {
-      const { admin } = await unauthenticated.admin(row.shop.domain);
-      const full = await getConfiguratorById(row.id);
-      if (!full) continue;
-      await buildAndStoreSnapshot(admin, full, row.shopId);
-      succeeded++;
+      admin = (await unauthenticated.admin(domain)).admin;
     } catch (err) {
-      console.error(`Snapshot sync failed for configurator ${row.id}:`, err);
-      failed++;
+      // Whole shop unreachable (uninstalled/expired session) — skip its configurators.
+      console.error(`Snapshot sync: auth failed for shop ${domain}:`, err);
+      failed += ids.length;
+      continue;
+    }
+
+    // Rebuild this shop's snapshots in bounded-concurrency batches to stay under the
+    // function timeout while not hammering the Admin API all at once.
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const batch = ids.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(
+        batch.map(async (id) => {
+          const full = await getConfiguratorById(id);
+          if (!full) return;
+          await buildAndStoreSnapshot(admin, full, shopId);
+        }),
+      );
+      for (const r of results) {
+        if (r.status === "fulfilled") succeeded++;
+        else {
+          failed++;
+          console.error("Snapshot sync failed for a configurator:", r.reason);
+        }
+      }
     }
   }
 
