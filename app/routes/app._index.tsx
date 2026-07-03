@@ -26,16 +26,18 @@ import {
 import { themeEditorEmbedUrl } from "~/lib/theme-embed";
 import { refreshShopSnapshots } from "~/lib/snapshot.server";
 import { getBuildInfo } from "~/lib/build-info.server";
+import { getDeploymentStatus } from "~/lib/vercel-status.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
-  const [configurators, analytics, buttonStatus, theme] = await Promise.all([
+  const [configurators, analytics, buttonStatus, theme, deployStatus] = await Promise.all([
     listConfigurators(shop.id),
     getAnalyticsSummary(shop.id, 30),
     detectThemeButtonStatus(admin, session.shop),
     getShopThemeSettings(shop.id),
+    getDeploymentStatus(),
   ]);
 
   return json({
@@ -45,6 +47,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     buttonStatus,
     theme,
     buildInfo: getBuildInfo(),
+    deployStatus,
   });
 };
 
@@ -71,7 +74,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Dashboard() {
-  const { shop, configurators, analytics, buttonStatus, theme, buildInfo } =
+  const { shop, configurators, analytics, buttonStatus, theme, buildInfo, deployStatus } =
     useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isToggling =
@@ -248,18 +251,41 @@ export default function Dashboard() {
 
         <Layout.Section>
           <Box paddingBlockStart="200">
-            <Text as="p" variant="bodySm" tone="subdued" alignment="center">
-              Build{" "}
-              {buildInfo.commitUrl ? (
-                <a href={buildInfo.commitUrl} target="_blank" rel="noopener noreferrer">
-                  {buildInfo.shortSha}
-                </a>
-              ) : (
-                buildInfo.shortSha
+            <BlockStack gap="150" inlineAlign="center">
+              {deployStatus.configured && deployStatus.state !== "unknown" && (
+                <Badge
+                  tone={
+                    deployStatus.state === "up_to_date"
+                      ? "success"
+                      : deployStatus.state === "failed"
+                        ? "critical"
+                        : deployStatus.state === "newer_ready"
+                          ? "attention"
+                          : "info"
+                  }
+                >
+                  {deployStatus.state === "up_to_date"
+                    ? "Running the latest build"
+                    : deployStatus.state === "newer_building"
+                      ? `New build deploying${deployStatus.latestShortSha ? ` (${deployStatus.latestShortSha})` : ""}…`
+                      : deployStatus.state === "newer_ready"
+                        ? "New build ready — refresh to load it"
+                        : "Latest build failed"}
+                </Badge>
               )}
-              {" · server started "}
-              {buildInfo.serverStartedAt.replace("T", " ").slice(0, 16)} UTC
-            </Text>
+              <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+                Build{" "}
+                {buildInfo.commitUrl ? (
+                  <a href={buildInfo.commitUrl} target="_blank" rel="noopener noreferrer">
+                    {buildInfo.shortSha}
+                  </a>
+                ) : (
+                  buildInfo.shortSha
+                )}
+                {" · server started "}
+                {buildInfo.serverStartedAt.replace("T", " ").slice(0, 16)} UTC
+              </Text>
+            </BlockStack>
           </Box>
         </Layout.Section>
       </Layout>
