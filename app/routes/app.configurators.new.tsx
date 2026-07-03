@@ -12,10 +12,13 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { useState } from "react";
+import { CollectionPicker } from "~/components/CollectionPicker";
 import { ProductPicker } from "~/components/ProductPicker";
 import prisma from "~/db.server";
 import { ensureShop } from "~/lib/configurator.server";
+import { parseCollectionIdsField } from "~/lib/collection-id";
 import { parseProductIdsField } from "~/lib/product-id";
+import type { CollectionSummary } from "~/lib/shopify-collections.server";
 import type { ProductSummary } from "~/lib/shopify-products.server";
 import { authenticate } from "~/shopify.server";
 
@@ -31,17 +34,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const name = String(form.get("name") || "").trim();
   const description = String(form.get("description") || "").trim();
+  const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
+  const stringCollectionIds = parseCollectionIdsField(String(form.get("stringCollectionIds") || ""));
   const productIds = parseProductIdsField(String(form.get("productIds") || ""));
   const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
 
   if (!name) return json({ error: "Name is required" }, { status: 400 });
 
-  const configurator = await prisma.configurator.create({
+  const configurator = await (prisma.configurator.create as Function)({
     data: {
       shopId: shop.id,
       name,
       description: description || null,
       productIds: JSON.stringify(productIds),
+      collectionIds: JSON.stringify(collectionIds),
+      stringCollectionIds: JSON.stringify(stringCollectionIds),
       basePrice,
       steps: {
         create: [
@@ -89,6 +96,8 @@ export default function NewConfigurator() {
   const navigation = useNavigation();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [selectedCollections, setSelectedCollections] = useState<CollectionSummary[]>([]);
+  const [selectedStringCollections, setSelectedStringCollections] = useState<CollectionSummary[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<ProductSummary[]>([]);
   const [basePrice, setBasePrice] = useState("0");
 
@@ -124,9 +133,24 @@ export default function NewConfigurator() {
                     autoComplete="off"
                     multiline={3}
                   />
+                  <CollectionPicker
+                    label="Racquet collections"
+                    helpText="Products in these collections will show the Configure button."
+                    selected={selectedCollections}
+                    onChange={setSelectedCollections}
+                  />
                   <ProductPicker
+                    label="Individual racquet products"
+                    helpText="These specific products will also show the Configure button."
                     selected={selectedProducts}
                     onChange={setSelectedProducts}
+                  />
+                  <CollectionPicker
+                    label="String collections"
+                    helpText="Products in these collections appear as string options in the configurator."
+                    name="stringCollectionIds"
+                    selected={selectedStringCollections}
+                    onChange={setSelectedStringCollections}
                   />
                   <TextField
                     label="Base price"

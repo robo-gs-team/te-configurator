@@ -1,15 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 
 declare global {
-  var prismaGlobal: PrismaClient;
+  var prismaGlobal: PrismaClient | undefined;
 }
 
-if (process.env.NODE_ENV !== "production") {
-  if (!global.prismaGlobal) {
-    global.prismaGlobal = new PrismaClient();
-  }
-}
-
-const prisma = global.prismaGlobal ?? new PrismaClient();
+// Reuse the same client across hot-reloads in dev AND across warm invocations in production.
+// Without this, every serverless cold-start (and every HMR cycle in dev) creates a new pool.
+const prisma = global.prismaGlobal ?? (global.prismaGlobal = new PrismaClient());
 
 export default prisma;

@@ -12,7 +12,8 @@
     window.ProtoConfiguratorSettings = {
       appProxyUrl: {{ block.settings.app_proxy_url | default: '/apps/proto-configurator' | json }},
       productId: {{ product.id | default: '' | json }},
-      shopDomain: {{ shop.permanent_domain | default: shop.domain | json }}
+      shopDomain: {{ shop.permanent_domain | default: shop.domain | json }},
+      modalUrl: {{ 'proto-configurator-modal.js' | asset_url | json }}
     };
   </script>
   <script src="{{ 'proto-configurator.js' | asset_url }}" defer></script>

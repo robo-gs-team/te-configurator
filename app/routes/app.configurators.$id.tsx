@@ -30,6 +30,7 @@ import {
   ensureShop,
   getConfiguratorById,
 } from "~/lib/configurator.server";
+import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
 import { parseProductIdsField } from "~/lib/product-id";
@@ -47,9 +48,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
-  const collections = await getCollectionsByIds(admin, collectionIds);
-  const productIds = parseJson<string[]>(configurator.productIds, []);
-  const products = await getProductsByIds(admin, productIds);
+  const stringCollectionIds = parseJson<string[]>(
+    (configurator as typeof configurator & { stringCollectionIds?: string }).stringCollectionIds ?? "[]",
+    [],
+  );
+  const [collections, stringCollections, products] = await Promise.all([
+    getCollectionsByIds(admin, collectionIds),
+    getCollectionsByIds(admin, stringCollectionIds),
+    getProductsByIds(admin, parseJson<string[]>(configurator.productIds, [])),
+  ]);
 
   const groupCollections: Record<string, Awaited<ReturnType<typeof getCollectionsByIds>>> = {};
   const groupProducts: Record<string, Awaited<ReturnType<typeof getProductsByIds>>> = {};
@@ -70,11 +77,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     : null;
 
-  return json({ configurator, collections, products, groupCollections, groupProducts, labor });
+  return json({ configurator, collections, stringCollections, products, groupCollections, groupProducts, labor });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
   const form = await request.formData();
   const intent = String(form.get("intent"));
@@ -88,6 +95,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const name = String(form.get("name") || "").trim();
     const description = String(form.get("description") || "").trim();
     const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
+    const stringCollectionIds = parseCollectionIdsField(String(form.get("stringCollectionIds") || ""));
     const productIds = parseProductIdsField(String(form.get("productIds") || ""));
     const laborVariantId = String(form.get("laborVariantId") || "").trim() || null;
     const laborPrice = parseFloat(String(form.get("laborPrice") || "0")) || 0;
@@ -101,12 +109,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         description: description || null,
         productIds: JSON.stringify(productIds),
         collectionIds: JSON.stringify(collectionIds),
+        stringCollectionIds: JSON.stringify(stringCollectionIds),
         laborVariantId,
         laborPrice,
         basePrice,
         isActive,
-      },
+      } as Parameters<typeof prisma.configurator.update>[0]["data"],
     });
+
+    // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true });
   }
 
@@ -130,6 +142,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -148,6 +161,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         actionTarget: String(form.get("actionTarget") || "") || null,
       },
     });
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return redirect(`/app/configurators/${params.id}`);
   }
 
@@ -170,6 +184,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -198,6 +213,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -271,6 +287,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -283,6 +300,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ error: "Step not found", intent }, { status: 404 });
     }
     await prisma.configuratorStep.delete({ where: { id: stepId } });
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -290,13 +308,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditConfigurator() {
-  const { configurator, collections, products, groupCollections, groupProducts, labor } =
+  const { configurator, collections, stringCollections, products, groupCollections, groupProducts, labor } =
     useLoaderData<typeof loader>();
   const navigation = useNavigation();
 
   const [name, setName] = useState(configurator.name);
   const [description, setDescription] = useState(configurator.description ?? "");
   const [selectedCollections, setSelectedCollections] = useState(collections);
+  const [selectedStringCollections, setSelectedStringCollections] = useState(stringCollections);
   const [selectedProducts, setSelectedProducts] = useState(products);
   const [laborProduct, setLaborProduct] = useState<LaborProductSelection | null>(labor);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
@@ -343,15 +362,22 @@ export default function EditConfigurator() {
                   />
                   <CollectionPicker
                     label="Racquet collections"
-                    helpText="Products in these collections will use this configurator."
+                    helpText="Products in these collections will show the Configure button."
                     selected={selectedCollections}
                     onChange={setSelectedCollections}
                   />
                   <ProductPicker
                     label="Individual racquet products"
-                    helpText="These specific products will also use this configurator."
+                    helpText="These specific products will also show the Configure button."
                     selected={selectedProducts}
                     onChange={setSelectedProducts}
+                  />
+                  <CollectionPicker
+                    label="String collections"
+                    helpText="Products in these collections appear as string options in the configurator."
+                    name="stringCollectionIds"
+                    selected={selectedStringCollections}
+                    onChange={setSelectedStringCollections}
                   />
                   <LaborProductPicker selected={laborProduct} onChange={setLaborProduct} />
                   <TextField
@@ -425,8 +451,7 @@ export default function EditConfigurator() {
                                 </Badge>
                               ))}
                             </InlineStack>
-                            {(step.stepType === "variant" || step.stepType === "options") &&
-                            /string|gauge|tension/i.test(group.name) ? (
+                            {(step.stepType === "variant" || step.stepType === "options") ? (
                               <OptionGroupSourcePicker
                                 groupId={group.id}
                                 groupName={group.name}

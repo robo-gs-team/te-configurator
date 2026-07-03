@@ -161,9 +161,6 @@ function StringCatalog({
           );
         })}
       </div>
-      <button type="button" className="proto-desk-more-link">
-        +22 more strings →
-      </button>
     </>
   );
 }
@@ -625,6 +622,15 @@ export function StringingConfigurator({
   );
 
   if (!configurator) return null;
+
+  if (catalog.length === 0) {
+    return (
+      <div className="proto-desk-shell flex flex-col h-full items-center justify-center gap-2 p-8 text-center">
+        <p className="text-neutral-800 font-semibold text-sm">No strings available right now.</p>
+        <p className="text-neutral-500 text-xs">Please contact us to arrange your stringing.</p>
+      </div>
+    );
+  }
 
   const basePrice = configurator.basePrice;
   const laborPrice = configurator.laborPrice ?? 0;

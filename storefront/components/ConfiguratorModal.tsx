@@ -1,4 +1,3 @@
-import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { LivePreview } from "./LivePreview";
@@ -17,10 +16,24 @@ declare global {
     ProtoConfiguratorSettings?: {
       appProxyUrl: string;
       productId: string;
+      shopDomain?: string;
+      modalUrl?: string;
     };
   }
 }
 
+/**
+ * ConfiguratorModal — the full-screen pop-up the shopper sees after clicking Configure.
+ *
+ * Renders as a React portal on <body> (top of the stacking order) with a blurred backdrop.
+ * It reads all state from the Zustand store and renders one of two bodies:
+ *   - StringingConfigurator (the tennis stringing flow) when the configurator uses the
+ *     stringing UI (i.e. it has a labor variant), or
+ *   - the generic VariantStep + AddonsStep flow otherwise.
+ *
+ * Returns null when closed (or before a configurator is loaded), so it costs nothing until
+ * opened. Hosts the add-to-cart and share handlers, and the background scroll-lock effect.
+ */
 export function ConfiguratorModal() {
   const isOpen = useConfiguratorStore((s) => s.isOpen);
   const close = useConfiguratorStore((s) => s.close);
@@ -46,21 +59,42 @@ export function ConfiguratorModal() {
   const appProxyUrl =
     window.ProtoConfiguratorSettings?.appProxyUrl ?? "/apps/proto-configurator";
 
+  // Scroll-lock the background page while the modal is open, and emit modal_open once.
+  // Uses the position:fixed + saved-scrollY technique (plain overflow:hidden fails on iOS
+  // Safari); the saved position is restored on close/unmount.
   useEffect(() => {
     if (isOpen) {
+      // Use position:fixed technique so iOS Safari doesn't scroll the background
+      const scrollY = window.scrollY;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = "100%";
       document.body.style.overflow = "hidden";
       trackEvent(appProxyUrl, "modal_open", {
         configuratorId: configurator?.id,
         productId,
       });
     } else {
+      const top = document.body.style.top;
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
       document.body.style.overflow = "";
+      if (top) window.scrollTo(0, -parseInt(top, 10));
     }
     return () => {
+      const top = document.body.style.top;
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
       document.body.style.overflow = "";
+      if (top) window.scrollTo(0, -parseInt(top, 10));
     };
   }, [isOpen, appProxyUrl, configurator?.id, productId]);
 
+  // Build + submit the cart from current store state. On success: track add_to_cart and close
+  // the modal. On failure: surface the error in the store (shown in the modal). Passes the
+  // stringing bed selections only when the stringing UI is active.
   const handleAddToCart = useCallback(async () => {
     if (!configurator || !productId) return;
     setAddingToCart(true);
@@ -105,6 +139,8 @@ export function ConfiguratorModal() {
     appProxyUrl,
   ]);
 
+  // Save the current configuration via the proxy, copy the returned share URL to the
+  // clipboard, and track a share event. (Reachable only from the generic flow's footer.)
   const handleShare = useCallback(async () => {
     if (!configurator || !productId) return;
     const url = await saveConfiguration(appProxyUrl, {
@@ -136,38 +172,25 @@ export function ConfiguratorModal() {
   }
 
   const modal = (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key="configurator-modal"
-          className="fixed inset-0 flex items-center justify-center"
+      <div
+          className="fixed inset-0 flex items-center justify-center proto-anim-fade"
           style={{ zIndex: 2147483647 }}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.25 }}
         >
-          <motion.div
-            className="absolute inset-0"
+          <div
+            className="absolute inset-0 proto-anim-fade"
             style={{
               backgroundColor: isDark ? "rgba(0,0,0,0.75)" : "rgba(0,0,0,0.5)",
               backdropFilter: `blur(${theme?.overlayBlur ?? 12}px)`,
             }}
             onClick={close}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
           />
 
-          <motion.div
-            className={`relative w-full overflow-hidden flex flex-col ${
+          <div
+            className={`relative w-full overflow-hidden flex flex-col proto-anim-panel ${
               isStringing
                 ? "h-full md:h-auto md:max-h-[92vh] md:max-w-[960px] md:mx-4 md:rounded-[10px] bg-white shadow-2xl"
                 : `h-full md:h-[92vh] md:max-w-6xl md:mx-4 md:rounded-3xl ${isDark ? "bg-neutral-950" : "bg-neutral-50"}`
             }`}
-            initial={{ opacity: 0, y: 40, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.98 }}
-            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
             role="dialog"
             aria-modal="true"
             aria-label={configurator.name}
@@ -261,17 +284,15 @@ export function ConfiguratorModal() {
                 >
                   ${getPrice().total.toFixed(2)}
                 </span>
-                <motion.button
+                <button
                   type="button"
                   onClick={handleAddToCart}
                   disabled={isAddingToCart}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="px-8 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-60 shrink-0"
+                  className="proto-press px-8 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-60 shrink-0"
                   style={{ backgroundColor: accent }}
                 >
                   {isAddingToCart ? "Adding..." : "Add to Cart"}
-                </motion.button>
+                </button>
               </div>
             </footer>
             )}
@@ -281,9 +302,8 @@ export function ConfiguratorModal() {
                 {cartError}
               </div>
             )}
-          </motion.div>
-        </motion.div>
-    </AnimatePresence>
+          </div>
+        </div>
   );
 
   return createPortal(modal, document.body);

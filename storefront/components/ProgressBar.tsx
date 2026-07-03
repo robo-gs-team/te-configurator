@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { STEPS, useConfiguratorStore } from "../store/configurator-store";
 
 const STEP_LABELS: Record<string, string> = {
@@ -19,17 +18,15 @@ export function ProgressBar() {
       <div className="flex items-center gap-2 mb-2">
         {STEPS.map((step, i) => (
           <div key={step} className="flex items-center flex-1">
-            <motion.div
-              className="h-1 flex-1 rounded-full overflow-hidden bg-white/10"
-            >
-              <motion.div
-                className="h-full rounded-full"
-                style={{ backgroundColor: accent }}
-                initial={{ width: "0%" }}
-                animate={{ width: i <= stepIndex ? "100%" : "0%" }}
-                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            <div className="h-1 flex-1 rounded-full overflow-hidden bg-white/10">
+              <div
+                className="h-full rounded-full proto-progress-fill"
+                style={{
+                  backgroundColor: accent,
+                  width: i <= stepIndex ? "100%" : "0%",
+                }}
               />
-            </motion.div>
+            </div>
           </div>
         ))}
       </div>

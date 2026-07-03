@@ -180,88 +180,96 @@ type CollectionProductsResponse = {
   };
 };
 
+async function fetchCollectionProducts(
+  admin: ShopifyAdmin,
+  collectionId: string,
+): Promise<CollectionProduct[]> {
+  const results: CollectionProduct[] = [];
+  let cursor: string | null = null;
+  let hasNextPage = true;
+
+  while (hasNextPage) {
+    const response = await admin.graphql(
+      `#graphql
+        query ProtoCollectionProducts($id: ID!, $cursor: String) {
+          collection(id: $id) {
+            products(first: 100, after: $cursor) {
+              nodes {
+                legacyResourceId
+                title
+                productType
+                featuredImage {
+                  url
+                }
+                featuredMedia {
+                  preview {
+                    image {
+                      url
+                    }
+                  }
+                }
+                images(first: 1) {
+                  nodes {
+                    url
+                  }
+                }
+                variants(first: 1) {
+                  nodes {
+                    legacyResourceId
+                    price
+                  }
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      `,
+      { variables: { id: toCollectionGid(collectionId), cursor } },
+    );
+
+    const body = (await response.json()) as CollectionProductsResponse;
+    const products = body.data?.collection?.products;
+
+    for (const node of products?.nodes ?? []) {
+      const id = normalizeProductId(String(node.legacyResourceId ?? ""));
+      const variant = node.variants?.nodes?.[0];
+      if (!id || !variant?.legacyResourceId) continue;
+      results.push({
+        id,
+        title: node.title ?? "Product",
+        productType: node.productType ?? "String",
+        imageUrl: resolveProductImageUrl(node),
+        variantId: String(variant.legacyResourceId),
+        price: parseFloat(String(variant.price ?? "0")) || 0,
+      });
+    }
+
+    hasNextPage = products?.pageInfo?.hasNextPage ?? false;
+    cursor = products?.pageInfo?.endCursor ?? null;
+  }
+
+  return results;
+}
+
 export async function getProductsInCollections(
   admin: ShopifyAdmin,
   collectionIds: string[],
 ): Promise<CollectionProduct[]> {
   if (collectionIds.length === 0) return [];
 
+  // Fetch all collections in parallel instead of sequentially
+  const allResults = await Promise.all(
+    collectionIds.map((id) => fetchCollectionProducts(admin, id)),
+  );
+
   const seen = new Map<string, CollectionProduct>();
-
-  for (const collectionId of collectionIds) {
-    let cursor: string | null = null;
-    let hasNextPage = true;
-
-    while (hasNextPage) {
-      const response = await admin.graphql(
-        `#graphql
-          query ProtoCollectionProducts($id: ID!, $cursor: String) {
-            collection(id: $id) {
-              products(first: 100, after: $cursor) {
-                nodes {
-                  legacyResourceId
-                  title
-                  productType
-                  featuredImage {
-                    url
-                  }
-                  featuredMedia {
-                    preview {
-                      image {
-                        url
-                      }
-                    }
-                  }
-                  images(first: 1) {
-                    nodes {
-                      url
-                    }
-                  }
-                  variants(first: 1) {
-                    nodes {
-                      legacyResourceId
-                      price
-                    }
-                  }
-                }
-                pageInfo {
-                  hasNextPage
-                  endCursor
-                }
-              }
-            }
-          }
-        `,
-        {
-          variables: {
-            id: toCollectionGid(collectionId),
-            cursor,
-          },
-        },
-      );
-
-      const body = (await response.json()) as CollectionProductsResponse;
-      const products = body.data?.collection?.products;
-
-      for (const node of products?.nodes ?? []) {
-        const id = normalizeProductId(String(node.legacyResourceId ?? ""));
-        const variant = node.variants?.nodes?.[0];
-        if (!id || !variant?.legacyResourceId) continue;
-
-        if (!seen.has(id)) {
-          seen.set(id, {
-            id,
-            title: node.title ?? "Product",
-            productType: node.productType ?? "String",
-            imageUrl: resolveProductImageUrl(node),
-            variantId: String(variant.legacyResourceId),
-            price: parseFloat(String(variant.price ?? "0")) || 0,
-          });
-        }
-      }
-
-      hasNextPage = products?.pageInfo?.hasNextPage ?? false;
-      cursor = products?.pageInfo?.endCursor ?? null;
+  for (const products of allResults) {
+    for (const product of products) {
+      if (!seen.has(product.id)) seen.set(product.id, product);
     }
   }
 

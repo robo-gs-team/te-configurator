@@ -106,6 +106,9 @@ export function defaultBed(catalog: StringProduct[], preferredId?: string): BedS
     catalog.find((s) => s.id === preferredId) ??
     catalog.find((s) => s.recommended) ??
     catalog[0];
+  if (!product) {
+    return { stringId: "", gauge: "16", color: "Natural", tension: TENSION_REC_STANDARD };
+  }
   return {
     stringId: product.id,
     gauge: product.gauges[0],
@@ -115,15 +118,16 @@ export function defaultBed(catalog: StringProduct[], preferredId?: string): BedS
 }
 
 export function defaultHybridBeds(catalog: StringProduct[]) {
+  const first = catalog[0];
   return {
     mains: {
-      stringId: catalog.find((s) => s.name === "Babolat RPM Blast")?.id ?? catalog[1]?.id ?? catalog[0].id,
+      stringId: catalog.find((s) => s.name === "Babolat RPM Blast")?.id ?? catalog[1]?.id ?? first?.id ?? "",
       gauge: "16",
       color: "Black",
       tension: TENSION_REC_MAINS,
     },
     crosses: {
-      stringId: catalog.find((s) => s.name === "Wilson NXT 16")?.id ?? catalog[4]?.id ?? catalog[0].id,
+      stringId: catalog.find((s) => s.name === "Wilson NXT 16")?.id ?? catalog[4]?.id ?? first?.id ?? "",
       gauge: "16",
       color: "Natural",
       tension: TENSION_REC_CROSSES,
@@ -134,14 +138,14 @@ export function defaultHybridBeds(catalog: StringProduct[]) {
 export function resolveStringCatalog(
   configurator: StorefrontConfigurator | null,
 ): StringProduct[] {
-  if (!configurator) return DEFAULT_STRING_CATALOG;
+  if (!configurator) return [];
 
   const stringGroup = configurator.steps
     .flatMap((s) => s.optionGroups)
     .find((g) => /string/i.test(g.name));
 
   if (!stringGroup || stringGroup.options.length === 0) {
-    return DEFAULT_STRING_CATALOG;
+    return [];
   }
 
   const colorGroup = configurator.steps
@@ -150,7 +154,7 @@ export function resolveStringCatalog(
 
   const colors =
     colorGroup?.options.map((o) => o.label) ??
-    DEFAULT_STRING_CATALOG[0].colors;
+    ["Black", "White", "Natural"];
 
   return stringGroup.options.map((option) => {
     const meta = option.metadata as {

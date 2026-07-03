@@ -13,7 +13,16 @@ import { serializeConfiguratorPayload } from "~/lib/configurator.types";
 import { sanitizeInput } from "~/lib/conditional-logic";
 import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { normalizeProductId } from "~/lib/product-id";
+import {
+  getCachedProxyResponse,
+  setCachedProxyResponse,
+} from "~/lib/proxy-cache.server";
 import { authenticate, unauthenticated } from "~/shopify.server";
+
+const PROXY_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
+} as const;
 
 async function resolveShopDomain(request: Request): Promise<string | null> {
   const url = new URL(request.url);
@@ -40,6 +49,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   if (path.startsWith("product/")) {
     const productId = normalizeProductId(path.replace("product/", ""));
+
+    // Serve from server-side cache when available — skips all DB + Shopify calls
+    const cached = getCachedProxyResponse(shopDomain, productId);
+    if (cached) {
+      return json(cached, { headers: { ...PROXY_HEADERS, "X-Cache": "HIT" } });
+    }
 
     let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
     try {
@@ -73,22 +88,36 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
     }
 
-    const configurator = admin
-      ? await enrichConfiguratorWithShopifyData(admin, lookup.configurator)
-      : lookup.configurator;
+    // B1: serve from DB snapshot — zero Admin API enrichment calls on the hot path
+    const snap = (lookup.configurator as typeof lookup.configurator & {
+      enrichedSnapshot?: string | null;
+    }).enrichedSnapshot;
 
-    const shop = await ensureShop(shopDomain);
+    if (snap) {
+      try {
+        const responseData = JSON.parse(snap) as Record<string, unknown>;
+        setCachedProxyResponse(shopDomain, productId, responseData);
+        return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "SNAPSHOT" } });
+      } catch (err) {
+        // Corrupt/truncated snapshot — don't 500 the page; fall through to live enrichment.
+        console.error(`Corrupt enrichedSnapshot for product ${productId}:`, err);
+      }
+    }
+
+    // Snapshot not yet built (or corrupt) — fall back to live enrichment
+    const [enrichedConfigurator, shop] = await Promise.all([
+      admin
+        ? enrichConfiguratorWithShopifyData(admin, lookup.configurator)
+        : Promise.resolve(lookup.configurator),
+      ensureShop(shopDomain),
+    ]);
+
     const theme = await getShopThemeSettings(shop.id);
 
-    return json(
-      { configurator: serializeConfiguratorPayload(configurator, theme) },
-      {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=60",
-        },
-      },
-    );
+    const responseData = { configurator: serializeConfiguratorPayload(enrichedConfigurator, theme) };
+    setCachedProxyResponse(shopDomain, productId, responseData);
+
+    return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "MISS" } });
   }
 
   if (path.startsWith("share/")) {
@@ -96,17 +125,45 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const saved = await getSavedConfiguration(shareId);
     if (!saved) return json({ error: "Not found" }, { status: 404 });
 
-    const shop = await ensureShop(shopDomain);
     const configurator = await getConfiguratorForProduct(
       shopDomain,
       saved.productId,
     );
     if (!configurator) return json({ error: "Not found" }, { status: 404 });
 
-    const theme = await getShopThemeSettings(shop.id);
+    // Serve the same enriched data the product page does: prefer the stored snapshot,
+    // fall back to live enrichment. Serializing the raw configurator would leave the
+    // string catalog (and images/variant IDs) empty in the restored modal.
+    let serializedConfigurator: unknown;
+    const snap = (configurator as typeof configurator & {
+      enrichedSnapshot?: string | null;
+    }).enrichedSnapshot;
+
+    if (snap) {
+      try {
+        serializedConfigurator = (JSON.parse(snap) as { configurator: unknown }).configurator;
+      } catch {
+        // Corrupt snapshot — fall through to live enrichment.
+      }
+    }
+
+    if (!serializedConfigurator) {
+      let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
+      try {
+        admin = (await unauthenticated.admin(shopDomain)).admin;
+      } catch {
+        // Live enrichment needs an installed session; without it we serve the raw config.
+      }
+      const shop = await ensureShop(shopDomain);
+      const theme = await getShopThemeSettings(shop.id);
+      const enriched = admin
+        ? await enrichConfiguratorWithShopifyData(admin, configurator)
+        : configurator;
+      serializedConfigurator = serializeConfiguratorPayload(enriched, theme);
+    }
 
     return json({
-      configurator: serializeConfiguratorPayload(configurator, theme),
+      configurator: serializedConfigurator,
       productId: saved.productId,
       selections: JSON.parse(saved.selections),
       addons: JSON.parse(saved.addons),

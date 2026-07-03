@@ -135,10 +135,21 @@ export async function enrichConfiguratorWithShopifyData(
     .map((opt) => opt.productId)
     .filter((id): id is string => Boolean(id));
 
-  const imageByProductId =
+  // Fetch top-level string collection products in parallel with the image resolution
+  const stringCollectionIds = parseJson<string[]>(
+    (configurator as ConfiguratorWithRelations & { stringCollectionIds?: string })
+      .stringCollectionIds ?? "[]",
+    [],
+  );
+
+  const [imageByProductId, topLevelStringProducts] = await Promise.all([
     manualProductIds.length > 0
-      ? await getProductsWithImages(admin, manualProductIds)
-      : new Map<string, { imageUrl: string | null; variantId: string | null; price: number }>();
+      ? getProductsWithImages(admin, manualProductIds)
+      : Promise.resolve(new Map<string, { imageUrl: string | null; variantId: string | null; price: number }>()),
+    stringCollectionIds.length > 0
+      ? getProductsInCollections(admin, stringCollectionIds)
+      : Promise.resolve([]),
+  ]);
 
   const enrichedSteps = await Promise.all(
     configurator.steps.map(async (step) => ({
@@ -155,6 +166,14 @@ export async function enrichConfiguratorWithShopifyData(
           const directProducts =
             groupProductIds.length > 0
               ? await getProductsDetailedByIds(admin, groupProductIds)
+              : [];
+
+          // If this is the string group and a top-level string collection was configured,
+          // merge those products in (deduped by product id).
+          const isStringGroup = /string/i.test(group.name);
+          const extraStringProducts =
+            isStringGroup && topLevelStringProducts.length > 0
+              ? topLevelStringProducts
               : [];
 
           const manualOptions = group.options.map((option) => {
@@ -175,11 +194,18 @@ export async function enrichConfiguratorWithShopifyData(
             };
           });
 
+          // Dedup against manual options AND across the merged sources — a product can be in
+          // both the group's own collection and the top-level string collection, and would
+          // otherwise appear twice. Add each id to `seen` as we accept it.
           const seen = new Set(
             manualOptions.map((o) => o.productId).filter(Boolean) as string[],
           );
-          const dynamicOptions = [...collectionProducts, ...directProducts]
-            .filter((product) => !seen.has(product.id))
+          const dynamicOptions = [...collectionProducts, ...directProducts, ...extraStringProducts]
+            .filter((product) => {
+              if (seen.has(product.id)) return false;
+              seen.add(product.id);
+              return true;
+            })
             .map((product, index) =>
               shopifyProductToOption(product, manualOptions.length + index, "shopify"),
             );
@@ -193,6 +219,43 @@ export async function enrichConfiguratorWithShopifyData(
     })),
   );
 
+  // If no string group exists in the steps but a top-level string collection is configured,
+  // inject a synthetic step+group so resolveStringCatalog can find the strings.
+  const hasStringGroup = enrichedSteps
+    .flatMap((s) => s.optionGroups)
+    .some((g) => /string/i.test(g.name));
+
+  const stepsWithStrings =
+    topLevelStringProducts.length > 0 && !hasStringGroup
+      ? [
+          ...enrichedSteps,
+          {
+            id: "_string_step",
+            configuratorId: configurator.id,
+            title: "String Selection",
+            description: null,
+            stepType: "variant",
+            sortOrder: enrichedSteps.length,
+            isRequired: true,
+            optionGroups: [
+              {
+                id: "_string_group",
+                stepId: "_string_step",
+                name: "Strings",
+                displayType: "swatch",
+                sortOrder: 0,
+                isRequired: true,
+                collectionIds: "[]",
+                productIds: "[]",
+                options: topLevelStringProducts.map((product, index) =>
+                  shopifyProductToOption(product, index, "shopify"),
+                ),
+              },
+            ],
+          },
+        ]
+      : enrichedSteps;
+
   const resolvedAddons = (
     await Promise.all(
       configurator.addons
@@ -203,7 +266,7 @@ export async function enrichConfiguratorWithShopifyData(
 
   return {
     ...configurator,
-    steps: enrichedSteps,
+    steps: stepsWithStrings,
     addons: resolvedAddons.map((addon) => ({
       id: addon.id,
       configuratorId: configurator.id,

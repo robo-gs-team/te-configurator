@@ -1,8 +1,9 @@
 import prisma from "~/db.server";
 import type { ConfiguratorWithRelations } from "~/lib/configurator.types";
 import { parseJson } from "~/lib/configurator.types";
+import { normalizeCollectionId } from "~/lib/collection-id";
 import { productIdsMatch } from "~/lib/product-id";
-import { productBelongsToCollections } from "~/lib/shopify-collections.server";
+import { getProductCollectionIds } from "~/lib/shopify-collections.server";
 
 type ShopifyAdmin = {
   graphql: (
@@ -70,22 +71,30 @@ export async function lookupConfiguratorForProduct(
     include: configuratorInclude,
   });
 
+  // First pass: check explicit product IDs — no network call needed
   for (const configurator of configurators) {
     const productIds = parseJson<string[]>(configurator.productIds, []);
     if (productIdsMatch(productIds, productId)) {
       if (!configurator.isActive) return { status: "inactive", configurator };
       return { status: "found", configurator };
     }
+  }
 
-    const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
-    if (collectionIds.length > 0 && admin) {
-      const belongs = await productBelongsToCollections(
-        admin,
-        productId,
-        collectionIds,
-        shopDomain,
-      );
-      if (belongs) {
+  // Second pass: check collection membership.
+  // Fetch the product's collections ONCE then compare in-memory against all configurators,
+  // instead of making one Shopify API call per configurator.
+  const collectionConfigurators = (configurators as ConfiguratorWithRelations[]).filter(
+    (c) => parseJson<string[]>(c.collectionIds, []).length > 0,
+  );
+
+  if (collectionConfigurators.length > 0 && admin) {
+    const productCollectionIds = await getProductCollectionIds(admin, productId, shopDomain);
+    const productCollSet = new Set(productCollectionIds.map(normalizeCollectionId));
+
+    for (const configurator of collectionConfigurators) {
+      const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
+      const matches = collectionIds.some((id) => productCollSet.has(normalizeCollectionId(id)));
+      if (matches) {
         if (!configurator.isActive) return { status: "inactive", configurator };
         return { status: "found", configurator };
       }
