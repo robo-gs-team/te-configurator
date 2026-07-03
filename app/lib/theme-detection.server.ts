@@ -14,6 +14,13 @@ export type ThemeButtonStatus = {
   detail: "active" | "embed_missing" | "unknown";
 };
 
+// Two live Shopify Admin API round-trips (themes list + theme file) on every dashboard
+// view was the main cause of slow admin navigation. The embed toggle changes rarely, so a
+// short cache trades a little staleness for near-instant repeat page loads — same tradeoff
+// already used for the storefront proxy cache.
+const statusCache = new Map<string, { data: ThemeButtonStatus; expires: number }>();
+const STATUS_TTL_MS = 60 * 1000; // 1 minute
+
 type SettingsBlock = { type?: unknown; disabled?: unknown };
 
 /** True if a block's key or type string references our app embed. */
@@ -65,7 +72,19 @@ function detectEmbedState(content: string): "active" | "embed_missing" {
 
 export async function detectThemeButtonStatus(
   admin: ShopifyAdmin,
+  shopDomain: string,
 ): Promise<ThemeButtonStatus> {
+  const cached = statusCache.get(shopDomain);
+  if (cached && cached.expires > Date.now()) {
+    return cached.data;
+  }
+
+  const result = await fetchThemeButtonStatus(admin);
+  statusCache.set(shopDomain, { data: result, expires: Date.now() + STATUS_TTL_MS });
+  return result;
+}
+
+async function fetchThemeButtonStatus(admin: ShopifyAdmin): Promise<ThemeButtonStatus> {
   try {
     const themesRes = await admin.graphql(`
       #graphql

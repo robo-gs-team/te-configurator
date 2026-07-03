@@ -34,7 +34,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const [configurators, analytics, buttonStatus, theme] = await Promise.all([
     listConfigurators(shop.id),
     getAnalyticsSummary(shop.id, 30),
-    detectThemeButtonStatus(admin),
+    detectThemeButtonStatus(admin, session.shop),
     getShopThemeSettings(shop.id),
   ]);
 
