@@ -94,12 +94,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }).enrichedSnapshot;
 
     if (snap) {
-      const responseData = JSON.parse(snap) as Record<string, unknown>;
-      setCachedProxyResponse(shopDomain, productId, responseData);
-      return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "SNAPSHOT" } });
+      try {
+        const responseData = JSON.parse(snap) as Record<string, unknown>;
+        setCachedProxyResponse(shopDomain, productId, responseData);
+        return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "SNAPSHOT" } });
+      } catch (err) {
+        // Corrupt/truncated snapshot — don't 500 the page; fall through to live enrichment.
+        console.error(`Corrupt enrichedSnapshot for product ${productId}:`, err);
+      }
     }
 
-    // Snapshot not yet built — fall back to live enrichment
+    // Snapshot not yet built (or corrupt) — fall back to live enrichment
     const [enrichedConfigurator, shop] = await Promise.all([
       admin
         ? enrichConfiguratorWithShopifyData(admin, lookup.configurator)

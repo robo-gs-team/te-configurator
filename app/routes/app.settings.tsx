@@ -14,6 +14,7 @@ import {
 import { useState } from "react";
 import prisma from "~/db.server";
 import { ensureShop, getShopThemeSettings } from "~/lib/configurator.server";
+import { refreshShopSnapshots } from "~/lib/snapshot.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -24,7 +25,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
   const form = await request.formData();
 
@@ -56,6 +57,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       fontFamily: String(form.get("fontFamily") || "system-ui"),
     },
   });
+
+  // Theme values are baked into each configurator's snapshot, so rebuild them all
+  // (best-effort) — otherwise styling changes wouldn't reach the storefront until the cron.
+  await refreshShopSnapshots(admin, shop.id, session.shop);
 
   return json({ success: true });
 };

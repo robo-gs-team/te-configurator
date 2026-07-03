@@ -30,13 +30,12 @@ import {
   ensureShop,
   getConfiguratorById,
 } from "~/lib/configurator.server";
-import { buildAndStoreSnapshot } from "~/lib/snapshot.server";
+import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
 import { parseProductIdsField } from "~/lib/product-id";
 import { getCollectionsByIds } from "~/lib/shopify-collections.server";
 import { getProductsByIds } from "~/lib/shopify-products.server";
-import { invalidateProxyCache } from "~/lib/proxy-cache.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -118,14 +117,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       } as Parameters<typeof prisma.configurator.update>[0]["data"],
     });
 
-    // B1: rebuild the enriched snapshot immediately so shoppers see changes without waiting for cron
-    const updated = await getConfiguratorById(params.id!);
-    if (updated) {
-      await buildAndStoreSnapshot(admin, updated, shop.id);
-    }
-
-    // Bust the storefront proxy cache so the new snapshot is picked up immediately
-    invalidateProxyCache(session.shop);
+    // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true });
   }
 
@@ -149,6 +142,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -167,6 +161,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         actionTarget: String(form.get("actionTarget") || "") || null,
       },
     });
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return redirect(`/app/configurators/${params.id}`);
   }
 
@@ -189,6 +184,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -217,6 +213,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -290,6 +287,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
@@ -302,6 +300,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ error: "Step not found", intent }, { status: 404 });
     }
     await prisma.configuratorStep.delete({ where: { id: stepId } });
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, intent });
   }
 
