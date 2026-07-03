@@ -22,8 +22,8 @@ import {
 } from "~/lib/configurator.server";
 import {
   detectThemeButtonStatus,
-  themeEditorEmbedUrl,
 } from "~/lib/theme-detection.server";
+import { themeEditorEmbedUrl } from "~/lib/theme-embed";
 import { refreshShopSnapshots } from "~/lib/snapshot.server";
 import { authenticate } from "~/shopify.server";
 
