@@ -345,6 +345,29 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   return json({ ok: true });
 };
 
+function SummaryRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "critical";
+}) {
+  return (
+    <InlineStack gap="200" align="space-between" blockAlign="start" wrap={false}>
+      <Text as="span" variant="bodySm" tone="subdued">
+        {label}
+      </Text>
+      <Box maxWidth="70%">
+        <Text as="span" variant="bodySm" alignment="end" tone={tone}>
+          {value}
+        </Text>
+      </Box>
+    </InlineStack>
+  );
+}
+
 export default function EditConfigurator() {
   const {
     configurator,
@@ -389,6 +412,77 @@ export default function EditConfigurator() {
             </Banner>
           </Layout.Section>
         )}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="200">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Summary
+                </Text>
+                <Badge tone={isActive ? "success" : undefined}>
+                  {isActive ? "Active" : "Inactive"}
+                </Badge>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Unsaved edits below are reflected here live. Click Save changes to apply them.
+              </Text>
+              <Box paddingBlockStart="100">
+                <BlockStack gap="150">
+                  <SummaryRow
+                    label="Racquet collections"
+                    value={
+                      selectedCollections.length > 0
+                        ? selectedCollections.map((c) => c.title).join(", ")
+                        : "None"
+                    }
+                  />
+                  <SummaryRow
+                    label="Individual racquets"
+                    value={
+                      selectedProducts.length > 0
+                        ? selectedProducts.map((p) => p.title).join(", ")
+                        : "None"
+                    }
+                  />
+                  <SummaryRow
+                    label="String collections"
+                    value={
+                      selectedStringCollections.length > 0
+                        ? selectedStringCollections.map((c) => c.title).join(", ")
+                        : "None"
+                    }
+                  />
+                  <SummaryRow
+                    label="Individual strings"
+                    value={
+                      selectedStringProducts.length > 0
+                        ? selectedStringProducts.map((p) => p.title).join(", ")
+                        : "None"
+                    }
+                  />
+                  <SummaryRow
+                    label="Labor product"
+                    value={
+                      laborProduct
+                        ? `${laborProduct.title} ($${laborProduct.price.toFixed(2)})`
+                        : "Not set"
+                    }
+                    tone={laborProduct ? undefined : "critical"}
+                  />
+                  <SummaryRow label="Base price" value={`$${(parseFloat(basePrice) || 0).toFixed(2)}`} />
+                  <SummaryRow
+                    label="Add-ons"
+                    value={
+                      configurator.addons.length > 0
+                        ? `${configurator.addons.length} configured`
+                        : "None"
+                    }
+                  />
+                </BlockStack>
+              </Box>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
         <Layout.Section>
           <Form method="post">
             <input type="hidden" name="intent" value="update" />
