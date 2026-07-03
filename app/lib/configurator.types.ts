@@ -16,6 +16,11 @@ export type ConfiguratorWithRelations = Configurator & {
   rules: ConditionalRule[];
 };
 
+// Per-racquet stringing tension (spec §3: "sourced from per-SKU Shopify metafields").
+// Resolved server-side for the specific racquet product being viewed; falls back to
+// DEFAULT_TENSION_RANGE (storefront/lib/string-catalog.ts) when a racquet has none set.
+export type TensionRange = { min: number; max: number; recommended: number };
+
 export type StorefrontConfigurator = {
   id: string;
   name: string;
@@ -28,6 +33,7 @@ export type StorefrontConfigurator = {
   addons: StorefrontAddon[];
   rules: StorefrontRule[];
   theme: StorefrontTheme;
+  tensionRange: TensionRange;
 };
 
 export type StorefrontStep = {
@@ -102,6 +108,9 @@ export type StorefrontTheme = {
 export type SelectionState = Record<string, string>;
 export type AddonSelection = Record<string, number>;
 
+// Fallback tension range used when a racquet has no tension metafields set yet.
+export const DEFAULT_TENSION_RANGE: TensionRange = { min: 46, max: 55, recommended: 51 };
+
 export function parseJson<T>(value: string, fallback: T): T {
   try {
     return JSON.parse(value) as T;
@@ -113,6 +122,7 @@ export function parseJson<T>(value: string, fallback: T): T {
 export function serializeConfiguratorPayload(
   configurator: ConfiguratorWithRelations,
   theme: ThemeSetting | null,
+  tensionRange: TensionRange = DEFAULT_TENSION_RANGE,
 ): StorefrontConfigurator {
   const defaultTheme: StorefrontTheme = {
     buttonEnabled: true,
@@ -210,5 +220,6 @@ export function serializeConfiguratorPayload(
           fontFamily: theme.fontFamily,
         }
       : defaultTheme,
+    tensionRange,
   };
 }

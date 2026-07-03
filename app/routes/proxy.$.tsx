@@ -9,10 +9,13 @@ import {
   saveConfiguration,
   trackAnalyticsEvent,
 } from "~/lib/configurator.server";
-import { serializeConfiguratorPayload } from "~/lib/configurator.types";
+import { DEFAULT_TENSION_RANGE, serializeConfiguratorPayload } from "~/lib/configurator.types";
+import type { TensionRange } from "~/lib/configurator.types";
 import { sanitizeInput } from "~/lib/conditional-logic";
 import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { normalizeProductId } from "~/lib/product-id";
+import { resolveRacquetTensionMap } from "~/lib/product-metafields.server";
+import type { StoredSnapshot } from "~/lib/snapshot.server";
 import {
   getCachedProxyResponse,
   setCachedProxyResponse,
@@ -95,7 +98,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     if (snap) {
       try {
-        const responseData = JSON.parse(snap) as Record<string, unknown>;
+        const stored = JSON.parse(snap) as StoredSnapshot;
+        // Per-racquet tension (spec §3): pick this specific product's range out of the
+        // snapshot's map, falling back to the default when this racquet has no metafields set.
+        const tensionRange = stored.racquetTensionByProductId?.[productId] ?? DEFAULT_TENSION_RANGE;
+        const responseData = {
+          configurator: { ...stored.configurator, tensionRange },
+        };
         setCachedProxyResponse(shopDomain, productId, responseData);
         return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "SNAPSHOT" } });
       } catch (err) {
@@ -105,16 +114,22 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
 
     // Snapshot not yet built (or corrupt) — fall back to live enrichment
-    const [enrichedConfigurator, shop] = await Promise.all([
+    const [enrichedConfigurator, shop, tensionMap] = await Promise.all([
       admin
         ? enrichConfiguratorWithShopifyData(admin, lookup.configurator)
         : Promise.resolve(lookup.configurator),
       ensureShop(shopDomain),
+      admin
+        ? resolveRacquetTensionMap(admin, lookup.configurator)
+        : Promise.resolve<Record<string, TensionRange>>({}),
     ]);
 
     const theme = await getShopThemeSettings(shop.id);
+    const tensionRange = tensionMap[productId] ?? DEFAULT_TENSION_RANGE;
 
-    const responseData = { configurator: serializeConfiguratorPayload(enrichedConfigurator, theme) };
+    const responseData = {
+      configurator: serializeConfiguratorPayload(enrichedConfigurator, theme, tensionRange),
+    };
     setCachedProxyResponse(shopDomain, productId, responseData);
 
     return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "MISS" } });
@@ -141,7 +156,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     if (snap) {
       try {
-        serializedConfigurator = (JSON.parse(snap) as { configurator: unknown }).configurator;
+        const stored = JSON.parse(snap) as StoredSnapshot;
+        const tensionRange =
+          stored.racquetTensionByProductId?.[saved.productId] ?? DEFAULT_TENSION_RANGE;
+        serializedConfigurator = { ...stored.configurator, tensionRange };
       } catch {
         // Corrupt snapshot — fall through to live enrichment.
       }
@@ -156,10 +174,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
       const shop = await ensureShop(shopDomain);
       const theme = await getShopThemeSettings(shop.id);
-      const enriched = admin
-        ? await enrichConfiguratorWithShopifyData(admin, configurator)
-        : configurator;
-      serializedConfigurator = serializeConfiguratorPayload(enriched, theme);
+      const [enriched, tensionMap] = await Promise.all([
+        admin
+          ? enrichConfiguratorWithShopifyData(admin, configurator)
+          : Promise.resolve(configurator),
+        admin
+          ? resolveRacquetTensionMap(admin, configurator)
+          : Promise.resolve<Record<string, TensionRange>>({}),
+      ]);
+      const tensionRange = tensionMap[saved.productId] ?? DEFAULT_TENSION_RANGE;
+      serializedConfigurator = serializeConfiguratorPayload(enriched, theme, tensionRange);
     }
 
     return json({

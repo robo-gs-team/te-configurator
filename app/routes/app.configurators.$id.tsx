@@ -31,6 +31,7 @@ import {
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
+import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
 import { parseProductIdsField } from "~/lib/product-id";
@@ -56,6 +57,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     getCollectionsByIds(admin, collectionIds),
     getCollectionsByIds(admin, stringCollectionIds),
     getProductsByIds(admin, parseJson<string[]>(configurator.productIds, [])),
+    // Idempotent — checks existence first, only creates on first-ever call for this shop.
+    // Registers the per-racquet tension metafield definitions so they show up in Shopify's
+    // native "Metafields" section on every product page.
+    ensureTensionMetafieldDefinitions(admin),
   ]);
 
   const groupCollections: Record<string, Awaited<ReturnType<typeof getCollectionsByIds>>> = {};
@@ -372,6 +377,14 @@ export default function EditConfigurator() {
                     selected={selectedProducts}
                     onChange={setSelectedProducts}
                   />
+                  <Banner tone="info" title="Set stringing tension per racquet">
+                    <p>
+                      Each racquet has its own recommended tension. Open any racquet product in
+                      Shopify admin → <strong>Metafields</strong> → <strong>Stringing</strong>, and
+                      fill in Min / Max / Recommended (lbs). Racquets left blank use a default
+                      range of 46–55 lbs.
+                    </p>
+                  </Banner>
                   <CollectionPicker
                     label="String collections"
                     helpText="Products in these collections appear as string options in the configurator."

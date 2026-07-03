@@ -1,16 +1,13 @@
 import { useMemo, useState } from "react";
 import { useConfiguratorStore } from "../store/configurator-store";
-import type { BedSelection, StringProduct } from "../lib/string-catalog";
+import type { BedSelection, StringProduct, TensionRange } from "../lib/string-catalog";
 import {
+  crossesFromMains,
+  DEFAULT_TENSION_RANGE,
   formatStringPrice,
   getStringById,
   resolveStringCatalog,
   SWATCH_COLORS,
-  TENSION_MAX,
-  TENSION_MIN,
-  TENSION_REC_CROSSES,
-  TENSION_REC_MAINS,
-  TENSION_REC_STANDARD,
 } from "../lib/string-catalog";
 
 const FILTER_CHIPS = [
@@ -48,8 +45,8 @@ function StringImage({ product }: { product: StringProduct }) {
 
 type Accent = "standard" | "mains" | "crosses";
 
-function tensionPercent(value: number) {
-  return ((value - TENSION_MIN) / (TENSION_MAX - TENSION_MIN)) * 100;
+function tensionPercent(value: number, range: TensionRange) {
+  return ((value - range.min) / (range.max - range.min)) * 100;
 }
 
 function normalizeBed(product: StringProduct, bed: BedSelection): BedSelection {
@@ -170,6 +167,7 @@ function BedConfigFields({
   product,
   accent,
   tensionTitle,
+  tensionRange,
   recommendedTension,
   recommendedGauge,
   onChange,
@@ -178,13 +176,14 @@ function BedConfigFields({
   product: StringProduct;
   accent: Accent;
   tensionTitle: string;
+  tensionRange: TensionRange;
   recommendedTension: number;
   recommendedGauge: string;
   onChange: (bed: BedSelection) => void;
 }) {
   const normalized = normalizeBed(product, bed);
-  const pct = tensionPercent(normalized.tension);
-  const recPct = tensionPercent(recommendedTension);
+  const pct = tensionPercent(normalized.tension, tensionRange);
+  const recPct = tensionPercent(recommendedTension, tensionRange);
   const fillClass =
     accent === "mains"
       ? "proto-desk-slider-fill--m"
@@ -264,8 +263,8 @@ function BedConfigFields({
         <div className="relative pt-1 pb-5">
           <input
             type="range"
-            min={TENSION_MIN}
-            max={TENSION_MAX}
+            min={tensionRange.min}
+            max={tensionRange.max}
             step={1}
             value={normalized.tension}
             onChange={(e) => onChange({ ...normalized, tension: Number(e.target.value) })}
@@ -284,9 +283,9 @@ function BedConfigFields({
             />
           </div>
           <div className="flex justify-between text-[9px] text-neutral-400 mt-1">
-            <span>46</span>
-            <span>50</span>
-            <span>55</span>
+            <span>{tensionRange.min}</span>
+            <span>{Math.round((tensionRange.min + tensionRange.max) / 2)}</span>
+            <span>{tensionRange.max}</span>
           </div>
         </div>
       </div>
@@ -415,12 +414,14 @@ function StandardDesktop({
   catalog,
   basePrice,
   laborPrice,
+  tensionRange,
   onAddToCart,
   isAddingToCart,
 }: {
   catalog: StringProduct[];
   basePrice: number;
   laborPrice: number;
+  tensionRange: TensionRange;
   onAddToCart: () => void;
   isAddingToCart: boolean;
 }) {
@@ -469,7 +470,8 @@ function StandardDesktop({
           product={product}
           accent="standard"
           tensionTitle="Tension"
-          recommendedTension={TENSION_REC_STANDARD}
+          tensionRange={tensionRange}
+          recommendedTension={tensionRange.recommended}
           recommendedGauge="16"
           onChange={update}
         />
@@ -491,12 +493,14 @@ function HybridDesktop({
   catalog,
   basePrice,
   laborPrice,
+  tensionRange,
   onAddToCart,
   isAddingToCart,
 }: {
   catalog: StringProduct[];
   basePrice: number;
   laborPrice: number;
+  tensionRange: TensionRange;
   onAddToCart: () => void;
   isAddingToCart: boolean;
 }) {
@@ -537,7 +541,8 @@ function HybridDesktop({
               product={mainsProduct}
               accent="mains"
               tensionTitle="Mains tension"
-              recommendedTension={TENSION_REC_MAINS}
+              tensionRange={tensionRange}
+              recommendedTension={tensionRange.recommended}
               recommendedGauge="16"
               onChange={(b) => update("mains", b)}
             />
@@ -560,7 +565,8 @@ function HybridDesktop({
               product={crossesProduct}
               accent="crosses"
               tensionTitle="Crosses tension"
-              recommendedTension={TENSION_REC_CROSSES}
+              tensionRange={tensionRange}
+              recommendedTension={crossesFromMains(tensionRange.recommended, tensionRange)}
               recommendedGauge="16"
               onChange={(b) => update("crosses", b)}
             />
@@ -634,6 +640,7 @@ export function StringingConfigurator({
 
   const basePrice = configurator.basePrice;
   const laborPrice = configurator.laborPrice ?? 0;
+  const tensionRange = configurator.tensionRange ?? DEFAULT_TENSION_RANGE;
 
   return (
     <div className="proto-desk-shell flex flex-col h-full">
@@ -670,6 +677,7 @@ export function StringingConfigurator({
             catalog={catalog}
             basePrice={basePrice}
             laborPrice={laborPrice}
+            tensionRange={tensionRange}
             onAddToCart={onAddToCart}
             isAddingToCart={isAddingToCart}
           />
@@ -678,6 +686,7 @@ export function StringingConfigurator({
             catalog={catalog}
             basePrice={basePrice}
             laborPrice={laborPrice}
+            tensionRange={tensionRange}
             onAddToCart={onAddToCart}
             isAddingToCart={isAddingToCart}
           />

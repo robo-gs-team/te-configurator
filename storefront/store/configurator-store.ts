@@ -11,6 +11,7 @@ import {
 } from "~/lib/conditional-logic";
 import type { BedSelection } from "../lib/string-catalog";
 import {
+  DEFAULT_TENSION_RANGE,
   defaultBed,
   defaultHybridBeds,
   getStringById,
@@ -85,8 +86,8 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
       shareUrl: null,
       stringingMode: "standard",
       hybridStep: "mains",
-      standardBed: defaultBed(resolveStringCatalog(null)),
-      hybridBeds: defaultHybridBeds(resolveStringCatalog(null)),
+      standardBed: defaultBed(resolveStringCatalog(null), DEFAULT_TENSION_RANGE),
+      hybridBeds: defaultHybridBeds(resolveStringCatalog(null), DEFAULT_TENSION_RANGE),
 
       open: (productId, configurator) => {
         const saved = get();
@@ -94,6 +95,7 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
           saved.productId === productId &&
           saved.configurator?.id === configurator.id;
         const catalog = resolveStringCatalog(configurator);
+        const tensionRange = configurator.tensionRange ?? DEFAULT_TENSION_RANGE;
         set({
           isOpen: true,
           productId,
@@ -110,10 +112,10 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
           hybridStep: sameProduct ? saved.hybridStep : "mains",
           standardBed: sameProduct
             ? saved.standardBed
-            : defaultBed(catalog),
+            : defaultBed(catalog, tensionRange),
           hybridBeds: sameProduct
             ? saved.hybridBeds
-            : defaultHybridBeds(catalog),
+            : defaultHybridBeds(catalog, tensionRange),
         });
       },
 

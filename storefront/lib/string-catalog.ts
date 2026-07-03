@@ -1,4 +1,8 @@
-import type { StorefrontConfigurator } from "~/lib/configurator.types";
+import type { StorefrontConfigurator, TensionRange } from "~/lib/configurator.types";
+import { DEFAULT_TENSION_RANGE } from "~/lib/configurator.types";
+
+export type { TensionRange };
+export { DEFAULT_TENSION_RANGE };
 
 export type StringProduct = {
   id: string;
@@ -32,11 +36,12 @@ export const SWATCH_COLORS: Record<string, string> = {
   Green: "#22c55e",
 };
 
-export const TENSION_MIN = 46;
-export const TENSION_MAX = 55;
-export const TENSION_REC_STANDARD = 51;
-export const TENSION_REC_MAINS = 51;
-export const TENSION_REC_CROSSES = 53;
+// Crosses default to 5% above mains, per spec §3 ("in line with standard stringing
+// practice"), clamped to the racquet's own tension range.
+export function crossesFromMains(mainsTension: number, range: TensionRange): number {
+  const raw = Math.round(mainsTension * 1.05);
+  return Math.min(range.max, Math.max(range.min, raw));
+}
 
 export const DEFAULT_STRING_CATALOG: StringProduct[] = [
   {
@@ -101,36 +106,44 @@ export function getStringById(
   return catalog.find((s) => s.id === id);
 }
 
-export function defaultBed(catalog: StringProduct[], preferredId?: string): BedSelection {
+export function defaultBed(
+  catalog: StringProduct[],
+  tensionRange: TensionRange = DEFAULT_TENSION_RANGE,
+  preferredId?: string,
+): BedSelection {
   const product =
     catalog.find((s) => s.id === preferredId) ??
     catalog.find((s) => s.recommended) ??
     catalog[0];
   if (!product) {
-    return { stringId: "", gauge: "16", color: "Natural", tension: TENSION_REC_STANDARD };
+    return { stringId: "", gauge: "16", color: "Natural", tension: tensionRange.recommended };
   }
   return {
     stringId: product.id,
     gauge: product.gauges[0],
     color: product.colors[0],
-    tension: TENSION_REC_STANDARD,
+    tension: tensionRange.recommended,
   };
 }
 
-export function defaultHybridBeds(catalog: StringProduct[]) {
+export function defaultHybridBeds(
+  catalog: StringProduct[],
+  tensionRange: TensionRange = DEFAULT_TENSION_RANGE,
+) {
   const first = catalog[0];
+  const mainsTension = tensionRange.recommended;
   return {
     mains: {
-      stringId: catalog.find((s) => s.name === "Babolat RPM Blast")?.id ?? catalog[1]?.id ?? first?.id ?? "",
+      stringId: catalog.find((s) => s.recommended)?.id ?? catalog[0]?.id ?? "",
       gauge: "16",
       color: "Black",
-      tension: TENSION_REC_MAINS,
+      tension: mainsTension,
     },
     crosses: {
-      stringId: catalog.find((s) => s.name === "Wilson NXT 16")?.id ?? catalog[4]?.id ?? first?.id ?? "",
+      stringId: catalog.find((s) => s.id !== first?.id)?.id ?? first?.id ?? "",
       gauge: "16",
       color: "Natural",
-      tension: TENSION_REC_CROSSES,
+      tension: crossesFromMains(mainsTension, tensionRange),
     },
   };
 }

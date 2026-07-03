@@ -2,8 +2,9 @@ import prisma from "~/db.server";
 import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { getConfiguratorById, getShopThemeSettings } from "~/lib/configurator.server";
 import { invalidateProxyCache } from "~/lib/proxy-cache.server";
-import { serializeConfiguratorPayload } from "~/lib/configurator.types";
-import type { ConfiguratorWithRelations } from "~/lib/configurator.types";
+import { resolveRacquetTensionMap } from "~/lib/product-metafields.server";
+import { DEFAULT_TENSION_RANGE, serializeConfiguratorPayload } from "~/lib/configurator.types";
+import type { ConfiguratorWithRelations, TensionRange } from "~/lib/configurator.types";
 
 type ShopifyAdmin = {
   graphql: (
@@ -12,17 +13,30 @@ type ShopifyAdmin = {
   ) => Promise<Response>;
 };
 
+// Stored shape of enrichedSnapshot. racquetTensionByProductId covers every racquet product
+// linked to the configurator (spec §3: tension is per-SKU) — the proxy picks out the entry
+// for whichever specific racquet is being viewed at serve time. The nested `configurator`
+// object's own tensionRange field is a placeholder overwritten per-request.
+export type StoredSnapshot = {
+  configurator: ReturnType<typeof serializeConfiguratorPayload>;
+  racquetTensionByProductId: Record<string, TensionRange>;
+};
+
 export async function buildAndStoreSnapshot(
   admin: ShopifyAdmin,
   configurator: ConfiguratorWithRelations,
   shopId: string,
 ): Promise<void> {
-  const [enriched, theme] = await Promise.all([
+  const [enriched, theme, racquetTensionByProductId] = await Promise.all([
     enrichConfiguratorWithShopifyData(admin, configurator),
     getShopThemeSettings(shopId),
+    resolveRacquetTensionMap(admin, configurator),
   ]);
 
-  const payload = { configurator: serializeConfiguratorPayload(enriched, theme) };
+  const payload: StoredSnapshot = {
+    configurator: serializeConfiguratorPayload(enriched, theme, DEFAULT_TENSION_RANGE),
+    racquetTensionByProductId,
+  };
 
   await prisma.configurator.update({
     where: { id: configurator.id },
