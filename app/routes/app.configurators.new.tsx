@@ -9,7 +9,6 @@ import {
   Button,
   Card,
   FormLayout,
-  Icon,
   InlineStack,
   Layout,
   Page,
@@ -17,7 +16,6 @@ import {
   TextField,
   Tooltip,
 } from "@shopify/polaris";
-import { QuestionCircleIcon } from "@shopify/polaris-icons";
 import { useState } from "react";
 import { CollectionPicker } from "~/components/CollectionPicker";
 import { LaborProductPicker, type LaborProductSelection } from "~/components/LaborProductPicker";
@@ -89,9 +87,23 @@ const WIZARD_STEPS = [
 function StepHint({ content }: { content: string }) {
   return (
     <Tooltip content={content}>
-      <span style={{ display: "inline-flex", cursor: "help" }}>
-        <Icon source={QuestionCircleIcon} tone="subdued" />
-      </span>
+      <Text as="span" tone="subdued">
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 16,
+            height: 16,
+            borderRadius: "50%",
+            border: "1px solid currentColor",
+            fontSize: 11,
+            cursor: "help",
+          }}
+        >
+          ?
+        </span>
+      </Text>
     </Tooltip>
   );
 }
@@ -242,7 +254,7 @@ export default function NewConfigurator() {
                         onChange={setName}
                         autoComplete="off"
                         requiredIndicator
-                        helpText="e.g. &quot;Performance racquets&quot; or &quot;Junior racquets&quot;"
+                        helpText='e.g. "Performance racquets" or "Junior racquets"'
                       />
                       <TextField
                         label="Description"
