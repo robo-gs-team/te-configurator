@@ -103,26 +103,6 @@ export async function getProductCollectionIds(
   return ids;
 }
 
-export async function productBelongsToCollections(
-  admin: ShopifyAdmin,
-  productId: string,
-  collectionIds: string[],
-  shopDomain?: string,
-): Promise<boolean> {
-  if (collectionIds.length === 0) return false;
-
-  const normalizedTargets = new Set(
-    collectionIds.map((id) => normalizeCollectionId(id)),
-  );
-  const productCollections = await getProductCollectionIds(
-    admin,
-    productId,
-    shopDomain,
-  );
-
-  return productCollections.some((id) => normalizedTargets.has(id));
-}
-
 export async function getCollectionsByIds(
   admin: ShopifyAdmin,
   collectionIds: string[],

@@ -29,12 +29,21 @@ const DEFINITIONS = [
   { key: TENSION_KEYS.recommended, name: "Stringing tension — recommended (lbs)" },
 ];
 
+// Once the definitions exist for a shop they're permanent, so remember which shops we've
+// already ensured and skip the Shopify existence-check round-trip on every subsequent
+// edit-page load. Cleared on cold start (re-checks once per shop per instance — cheap).
+const ensuredShops = new Set<string>();
+
 /**
  * Idempotently register the three tension metafield definitions on PRODUCT, so they show up
  * in Shopify's native "Metafields" section on every product page with a proper number input.
- * Checks existence first — safe to call on every configurator-edit page load.
+ * Checks existence first; once ensured for a shop, later calls return immediately.
  */
-export async function ensureTensionMetafieldDefinitions(admin: ShopifyAdmin): Promise<void> {
+export async function ensureTensionMetafieldDefinitions(
+  admin: ShopifyAdmin,
+  shopDomain?: string,
+): Promise<void> {
+  if (shopDomain && ensuredShops.has(shopDomain)) return;
   try {
     const existingRes = await admin.graphql(`
       #graphql
@@ -52,7 +61,10 @@ export async function ensureTensionMetafieldDefinitions(admin: ShopifyAdmin): Pr
     );
 
     const missing = DEFINITIONS.filter((d) => !existingKeys.has(d.key));
-    if (missing.length === 0) return;
+    if (missing.length === 0) {
+      if (shopDomain) ensuredShops.add(shopDomain);
+      return;
+    }
 
     for (const def of missing) {
       await admin.graphql(
@@ -78,6 +90,7 @@ export async function ensureTensionMetafieldDefinitions(admin: ShopifyAdmin): Pr
         },
       );
     }
+    if (shopDomain) ensuredShops.add(shopDomain);
   } catch (err) {
     // Best-effort — a merchant can still fall back to the default tension range.
     console.error("Failed to ensure tension metafield definitions:", err);

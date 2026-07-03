@@ -202,7 +202,7 @@ export default function Dashboard() {
                   </BlockStack>
                 </Box>
               ) : (
-                (configurators as Array<{ id: string; name: string; steps: unknown[]; addons: unknown[]; isActive: boolean }>).slice(0, 5).map((c) => (
+                (configurators as Array<{ id: string; name: string; _count: { steps: number; addons: number }; isActive: boolean }>).slice(0, 5).map((c) => (
                   <InlineStack key={c.id} align="space-between" blockAlign="center">
                     <BlockStack gap="100">
                       <Link to={`/app/configurators/${c.id}`}>
@@ -211,7 +211,7 @@ export default function Dashboard() {
                         </Text>
                       </Link>
                       <Text as="p" variant="bodySm" tone="subdued">
-                        {c.steps.length} steps · {c.addons.length} add-ons
+                        {c._count.steps} steps · {c._count.addons} add-ons
                       </Text>
                     </BlockStack>
                     <Badge tone={c.isActive ? "success" : undefined}>

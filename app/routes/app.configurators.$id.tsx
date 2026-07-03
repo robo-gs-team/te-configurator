@@ -57,25 +57,62 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     (configurator as typeof configurator & { stringProductIds?: string }).stringProductIds ?? "[]",
     [],
   );
-  const [collections, stringCollections, products, stringProducts] = await Promise.all([
+  // Collect every option group's collection/product IDs up front so we can fetch them in
+  // TWO batched Shopify calls total (getCollectionsByIds / getProductsByIds both accept
+  // arbitrarily many IDs via nodes(ids:)), instead of 2 serial calls PER group.
+  const groupCollectionIds: Record<string, string[]> = {};
+  const groupProductIds: Record<string, string[]> = {};
+  const allGroupCollectionIds = new Set<string>();
+  const allGroupProductIds = new Set<string>();
+  for (const step of configurator.steps) {
+    for (const group of step.optionGroups) {
+      const cids = parseJson<string[]>(group.collectionIds ?? "[]", []);
+      const pids = parseJson<string[]>(group.productIds ?? "[]", []);
+      groupCollectionIds[group.id] = cids;
+      groupProductIds[group.id] = pids;
+      cids.forEach((id) => allGroupCollectionIds.add(id));
+      pids.forEach((id) => allGroupProductIds.add(id));
+    }
+  }
+
+  const [
+    collections,
+    stringCollections,
+    products,
+    stringProducts,
+    ,
+    allGroupCollections,
+    allGroupProducts,
+  ] = await Promise.all([
     getCollectionsByIds(admin, collectionIds),
     getCollectionsByIds(admin, stringCollectionIds),
     getProductsByIds(admin, parseJson<string[]>(configurator.productIds, [])),
     getProductsByIds(admin, stringProductIds),
-    // Idempotent — checks existence first, only creates on first-ever call for this shop.
-    // Registers the per-racquet tension metafield definitions so they show up in Shopify's
-    // native "Metafields" section on every product page.
-    ensureTensionMetafieldDefinitions(admin),
+    // Idempotent — checks existence first (cached per shop after the first call), only creates
+    // on first-ever call. Registers the per-racquet tension metafield definitions so they show
+    // up in Shopify's native "Metafields" section on every product page.
+    ensureTensionMetafieldDefinitions(admin, session.shop),
+    allGroupCollectionIds.size > 0
+      ? getCollectionsByIds(admin, [...allGroupCollectionIds])
+      : Promise.resolve([]),
+    allGroupProductIds.size > 0
+      ? getProductsByIds(admin, [...allGroupProductIds])
+      : Promise.resolve([]),
   ]);
 
+  // Partition the batched results back to each group in memory.
+  const collectionById = new Map(allGroupCollections.map((c) => [c.id, c]));
+  const productById = new Map(allGroupProducts.map((p) => [p.id, p]));
   const groupCollections: Record<string, Awaited<ReturnType<typeof getCollectionsByIds>>> = {};
   const groupProducts: Record<string, Awaited<ReturnType<typeof getProductsByIds>>> = {};
   for (const step of configurator.steps) {
     for (const group of step.optionGroups) {
-      const ids = parseJson<string[]>(group.collectionIds ?? "[]", []);
-      groupCollections[group.id] = await getCollectionsByIds(admin, ids);
-      const pids = parseJson<string[]>(group.productIds ?? "[]", []);
-      groupProducts[group.id] = await getProductsByIds(admin, pids);
+      groupCollections[group.id] = groupCollectionIds[group.id]
+        .map((id) => collectionById.get(id))
+        .filter((c): c is NonNullable<typeof c> => Boolean(c));
+      groupProducts[group.id] = groupProductIds[group.id]
+        .map((id) => productById.get(id))
+        .filter((p): p is NonNullable<typeof p> => Boolean(p));
     }
   }
 

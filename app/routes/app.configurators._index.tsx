@@ -74,7 +74,7 @@ export default function ConfiguratorsList() {
                         </Text>
                       </Link>
                       <Text as="p" variant="bodySm" tone="subdued">
-                        {c.steps.length} steps · {c.addons.length} add-ons
+                        {c._count.steps} steps · {c._count.addons} add-ons
                       </Text>
                     </BlockStack>
                     <InlineStack gap="200">

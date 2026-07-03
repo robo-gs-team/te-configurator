@@ -113,12 +113,13 @@ export async function getConfiguratorForProduct(
 }
 
 export async function listConfigurators(shopId: string) {
+  // The UI only needs the step/addon counts, not the rows — use _count so we don't pull
+  // (and serialize to the browser) every step/addon id for every configurator.
   return prisma.configurator.findMany({
     where: { shopId },
     orderBy: { updatedAt: "desc" },
     include: {
-      steps: { select: { id: true } },
-      addons: { select: { id: true } },
+      _count: { select: { steps: true, addons: true } },
     },
   });
 }
@@ -166,18 +167,37 @@ export async function getSavedConfiguration(shareId: string) {
   return prisma.savedConfiguration.findUnique({ where: { shareId } });
 }
 
-export async function getAnalyticsSummary(shopId: string, days = 30) {
+export async function getAnalyticsSummary(
+  shopId: string,
+  days = 30,
+  options: { includeEvents?: boolean } = {},
+) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const events = await prisma.analytics.findMany({
-    where: { shopId, createdAt: { gte: since } },
-    orderBy: { createdAt: "desc" },
-    take: 500,
+  const where = { shopId, createdAt: { gte: since } };
+
+  // Counts via a groupBy aggregate — accurate over the whole window (the old code counted
+  // in JS over a 500-row cap, which was both wasteful and wrong for busy shops).
+  const grouped = await prisma.analytics.groupBy({
+    by: ["eventType"],
+    where,
+    _count: { _all: true },
   });
+  const counts: Record<string, number> = {};
+  let total = 0;
+  for (const g of grouped) {
+    counts[g.eventType] = g._count._all;
+    total += g._count._all;
+  }
 
-  const counts = events.reduce<Record<string, number>>((acc, event) => {
-    acc[event.eventType] = (acc[event.eventType] ?? 0) + 1;
-    return acc;
-  }, {});
+  // Only the analytics table needs actual rows (and only shows 50). The dashboard uses
+  // counts only, so it skips this query entirely.
+  const events = options.includeEvents
+    ? await prisma.analytics.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      })
+    : [];
 
-  return { events, counts, total: events.length };
+  return { events, counts, total };
 }

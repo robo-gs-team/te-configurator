@@ -43,58 +43,6 @@ export function crossesFromMains(mainsTension: number, range: TensionRange): num
   return Math.min(range.max, Math.max(range.min, raw));
 }
 
-export const DEFAULT_STRING_CATALOG: StringProduct[] = [
-  {
-    id: "te-synthetic-gut",
-    name: "TE Synthetic Gut",
-    type: "Synthetic gut",
-    price: 0,
-    gauges: ["16", "17"],
-    colors: ["Black", "White", "Yellow", "Blue", "Pink", "Gold"],
-    recommended: true,
-  },
-  {
-    id: "babolat-rpm-blast",
-    name: "Babolat RPM Blast",
-    type: "Polyester",
-    price: 14,
-    gauges: ["15L", "16", "17"],
-    colors: ["Black"],
-  },
-  {
-    id: "luxilon-alu-power",
-    name: "Luxilon ALU Power",
-    type: "Co-polyester",
-    price: 16,
-    gauges: ["16L", "16"],
-    colors: ["Silver"],
-  },
-  {
-    id: "solinco-hyper-g",
-    name: "Solinco Hyper-G",
-    type: "Polyester",
-    price: 20,
-    gauges: ["16", "17", "18"],
-    colors: ["Green"],
-  },
-  {
-    id: "wilson-nxt-16",
-    name: "Wilson NXT 16",
-    type: "Multifilament",
-    price: 18,
-    gauges: ["16", "17"],
-    colors: ["Natural", "Black"],
-  },
-  {
-    id: "babolat-vs-touch",
-    name: "Babolat VS Touch",
-    type: "Natural gut",
-    price: 42,
-    gauges: ["15L", "16"],
-    colors: ["Natural"],
-  },
-];
-
 export function formatStringPrice(price: number): string {
   return price === 0 ? "Free" : `+$${price}`;
 }
