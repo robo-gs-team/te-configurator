@@ -86,9 +86,13 @@ export async function refreshShopSnapshots(
       where: { shopId },
       select: { id: true },
     });
-    for (const { id } of configurators) {
-      await refreshConfiguratorSnapshot(admin, id, shopId, shopDomain);
-    }
+    // Rebuild all configurators concurrently — each refresh is already best-effort (never
+    // throws), so one shop typically has only a handful and this stays well within limits.
+    await Promise.all(
+      configurators.map(({ id }) =>
+        refreshConfiguratorSnapshot(admin, id, shopId, shopDomain),
+      ),
+    );
   } catch (err) {
     console.error(`Shop snapshot refresh failed for shop ${shopId}:`, err);
   }

@@ -16,7 +16,7 @@ import { authenticate } from "~/shopify.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
-  const analytics = await getAnalyticsSummary(shop.id, 30);
+  const analytics = await getAnalyticsSummary(shop.id, 30, { includeEvents: true });
   return json({ analytics });
 };
 
