@@ -1,6 +1,6 @@
-import type { LoaderFunctionArgs } from "@vercel/remix";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
 import { json } from "@vercel/remix";
-import { Link, useLoaderData } from "@remix-run/react";
+import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
 import {
   Badge,
   BlockStack,
@@ -13,31 +13,61 @@ import {
   Page,
   Text,
 } from "@shopify/polaris";
+import prisma from "~/db.server";
 import {
   ensureShop,
   getAnalyticsSummary,
+  getShopThemeSettings,
   listConfigurators,
 } from "~/lib/configurator.server";
 import {
   detectThemeButtonStatus,
   themeEditorEmbedUrl,
 } from "~/lib/theme-detection.server";
+import { refreshShopSnapshots } from "~/lib/snapshot.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
-  const [configurators, analytics, buttonStatus] = await Promise.all([
+  const [configurators, analytics, buttonStatus, theme] = await Promise.all([
     listConfigurators(shop.id),
     getAnalyticsSummary(shop.id, 30),
     detectThemeButtonStatus(admin),
+    getShopThemeSettings(shop.id),
   ]);
 
-  return json({ shop: session.shop, configurators, analytics, buttonStatus });
+  return json({ shop: session.shop, configurators, analytics, buttonStatus, theme });
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session, admin } = await authenticate.admin(request);
+  const shop = await ensureShop(session.shop);
+  const form = await request.formData();
+  const intent = String(form.get("intent"));
+
+  if (intent === "toggle_button_enabled") {
+    const nextEnabled = form.get("nextEnabled") === "true";
+    await prisma.themeSetting.upsert({
+      where: { shopId: shop.id },
+      create: { shopId: shop.id, buttonEnabled: nextEnabled },
+      update: { buttonEnabled: nextEnabled },
+    });
+    // Shop-wide kill switch: rebuild every snapshot (best-effort) so the change reaches
+    // every product page immediately instead of waiting on the daily cron.
+    await refreshShopSnapshots(admin, shop.id, session.shop);
+    return json({ success: true });
+  }
+
+  return json({ ok: true });
 };
 
 export default function Dashboard() {
-  const { shop, configurators, analytics, buttonStatus } = useLoaderData<typeof loader>();
+  const { shop, configurators, analytics, buttonStatus, theme } = useLoaderData<typeof loader>();
+  const navigation = useNavigation();
+  const isToggling =
+    navigation.state !== "idle" &&
+    navigation.formData?.get("intent") === "toggle_button_enabled";
 
   return (
     <Page
@@ -111,6 +141,32 @@ export default function Dashboard() {
                     Enable in Theme Editor →
                   </Button>
                 )}
+              </BlockStack>
+            </Card>
+            <Card>
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Storefront button (all products)
+                </Text>
+                <Badge tone={theme.buttonEnabled ? "success" : "critical"}>
+                  {theme.buttonEnabled ? "On" : "Off — shop-wide"}
+                </Badge>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="toggle_button_enabled" />
+                  <input
+                    type="hidden"
+                    name="nextEnabled"
+                    value={theme.buttonEnabled ? "false" : "true"}
+                  />
+                  <Button
+                    submit
+                    size="slim"
+                    tone={theme.buttonEnabled ? "critical" : "success"}
+                    loading={isToggling}
+                  >
+                    {theme.buttonEnabled ? "Turn off everywhere" : "Turn back on"}
+                  </Button>
+                </Form>
               </BlockStack>
             </Card>
           </InlineGrid>

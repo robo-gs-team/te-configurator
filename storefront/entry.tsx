@@ -398,6 +398,14 @@ async function initStorefrontUi() {
     return;
   }
 
+  // Merchant-wide kill switch (Theme Settings > "Enable customize button globally").
+  // Treat "disabled" the same as "no configurator" — hides the button and restores the
+  // theme's native Add to Cart everywhere, regardless of any individual configurator's state.
+  if (configurator.theme.buttonEnabled === false) {
+    markProductUnlinked();
+    return;
+  }
+
   // Cache so the Configure button click is instant — no second round-trip
   configuratorCache.set(productId, configurator);
   markProductLinked();
