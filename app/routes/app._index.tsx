@@ -1,8 +1,10 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
 import { json } from "@vercel/remix";
-import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { useState } from "react";
 import {
   Badge,
+  Banner,
   BlockStack,
   Box,
   Button,
@@ -12,6 +14,7 @@ import {
   Layout,
   Page,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
 import prisma from "~/db.server";
 import {
@@ -77,9 +80,14 @@ export default function Dashboard() {
   const { shop, configurators, analytics, buttonStatus, theme, buildInfo, deployStatus } =
     useLoaderData<typeof loader>();
   const navigation = useNavigation();
+  const actionData = useActionData<typeof action>();
+  const [confirmingOff, setConfirmingOff] = useState(false);
   const isToggling =
     navigation.state !== "idle" &&
     navigation.formData?.get("intent") === "toggle_button_enabled";
+  // The badge itself flips On/Off after a toggle; this message just confirms it explicitly.
+  const toggleJustSucceeded =
+    navigation.state === "idle" && Boolean((actionData as { success?: boolean } | undefined)?.success);
 
   return (
     <Page
@@ -157,12 +165,47 @@ export default function Dashboard() {
             </Card>
             <Card>
               <BlockStack gap="200">
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Storefront button (all products)
-                </Text>
+                <InlineStack gap="100" blockAlign="center">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Storefront button (all products)
+                  </Text>
+                  <Tooltip content="Master on/off switch for the Configure button across EVERY product. Turning it off hides the button shop-wide within a minute — even on themes where the app embed is enabled — and restores each theme's normal Add to Cart. Independent of individual configurators.">
+                    <Text as="span" tone="subdued">
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 15,
+                          height: 15,
+                          borderRadius: "50%",
+                          border: "1px solid currentColor",
+                          fontSize: 10,
+                          cursor: "help",
+                        }}
+                      >
+                        ?
+                      </span>
+                    </Text>
+                  </Tooltip>
+                </InlineStack>
                 <Badge tone={theme.buttonEnabled ? "success" : "critical"}>
                   {theme.buttonEnabled ? "On" : "Off — shop-wide"}
                 </Badge>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {theme.buttonEnabled
+                    ? "The Configure button can appear on product pages (where the app embed is enabled)."
+                    : "The Configure button is hidden on all products, even where the app embed is on."}
+                </Text>
+                {toggleJustSucceeded && (
+                  <Banner tone={theme.buttonEnabled ? "success" : "warning"}>
+                    <p>
+                      {theme.buttonEnabled
+                        ? "Configure button turned back on. It may take up to a minute to appear on the storefront."
+                        : "Configure button turned off across all products. It may take up to a minute to disappear from the storefront."}
+                    </p>
+                  </Banner>
+                )}
                 <Form method="post">
                   <input type="hidden" name="intent" value="toggle_button_enabled" />
                   <input
@@ -170,14 +213,30 @@ export default function Dashboard() {
                     name="nextEnabled"
                     value={theme.buttonEnabled ? "false" : "true"}
                   />
-                  <Button
-                    submit
-                    size="slim"
-                    tone={theme.buttonEnabled ? "critical" : "success"}
-                    loading={isToggling}
-                  >
-                    {theme.buttonEnabled ? "Turn off everywhere" : "Turn back on"}
-                  </Button>
+                  {theme.buttonEnabled && confirmingOff ? (
+                    <BlockStack gap="150">
+                      <Text as="p" variant="bodySm">
+                        Hide the Configure button on <strong>all</strong> products?
+                      </Text>
+                      <InlineStack gap="200">
+                        <Button submit size="slim" tone="critical" loading={isToggling}>
+                          Yes, turn off everywhere
+                        </Button>
+                        <Button size="slim" onClick={() => setConfirmingOff(false)}>
+                          Cancel
+                        </Button>
+                      </InlineStack>
+                    </BlockStack>
+                  ) : theme.buttonEnabled ? (
+                    // Not a submit — reveals the confirmation step first.
+                    <Button size="slim" tone="critical" onClick={() => setConfirmingOff(true)}>
+                      Turn off everywhere
+                    </Button>
+                  ) : (
+                    <Button submit size="slim" tone="success" loading={isToggling}>
+                      Turn back on
+                    </Button>
+                  )}
                 </Form>
               </BlockStack>
             </Card>
