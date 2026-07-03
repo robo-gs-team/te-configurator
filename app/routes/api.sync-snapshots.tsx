@@ -25,9 +25,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   // Group by shop so we authenticate once per shop instead of once per configurator.
-  const byShop = new Map<string, { domain: string; ids: string[] }>();
+  type ShopGroup = { domain: string; ids: string[] };
+  const byShop = new Map<string, ShopGroup>();
   for (const row of rows) {
-    const entry = byShop.get(row.shopId) ?? { domain: row.shop.domain, ids: [] };
+    const entry: ShopGroup =
+      byShop.get(row.shopId) ?? { domain: row.shop.domain, ids: [] };
     entry.ids.push(row.id);
     byShop.set(row.shopId, entry);
   }
