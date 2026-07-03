@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
 import { json, redirect } from "@vercel/remix";
 import { Form, useActionData, useNavigation } from "@remix-run/react";
 import {
+  Banner,
   BlockStack,
   Button,
   Card,
@@ -76,6 +77,18 @@ export default function NewConfigurator() {
       backAction={{ content: "Configurators", url: "/app/configurators" }}
     >
       <Layout>
+        <Layout.Section>
+          <Banner tone="info" title="What is a configurator?">
+            <p>
+              A configurator is a stringing setup assigned to one or more <strong>racquet
+              collections</strong> (or individual racquet products). Every racquet in that
+              collection shows the Configure button using this configurator's string options,
+              labor fee, and price. Create more than one if different racquet collections need
+              different string options or labor pricing — e.g. one for performance racquets,
+              another for junior racquets. Most shops only need one.
+            </p>
+          </Banner>
+        </Layout.Section>
         <Layout.Section>
           <Card>
             <Form method="post">

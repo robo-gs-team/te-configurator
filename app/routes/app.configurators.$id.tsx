@@ -489,10 +489,49 @@ export default function EditConfigurator() {
                 Add-ons
               </Text>
               <Text as="p" variant="bodySm" tone="subdued">
-                Optional extras customers can add in the configurator popup. Link a
-                Shopify product or collection — featured images and variant IDs are
-                resolved automatically.
+                Optional extras the shopper can add alongside their racquet + stringing —
+                e.g. extra grip tape, a vibration dampener, or a racquet bag. Link a Shopify
+                product or collection and the image, price, and variant are pulled in
+                automatically (or set a manual price). Shown as cards in the configurator popup,
+                right before Add to Cart; shoppers can bump the quantity up if you allow more
+                than one.
               </Text>
+              <Box
+                padding="300"
+                background="bg-surface-secondary"
+                borderRadius="200"
+                borderStyle="dashed"
+                borderWidth="025"
+              >
+                <BlockStack gap="150">
+                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                    Preview — what shoppers see
+                  </Text>
+                  <InlineStack gap="300" blockAlign="center">
+                    <Box
+                      background="bg-surface-tertiary"
+                      borderRadius="200"
+                      minWidth="48px"
+                      minHeight="48px"
+                    />
+                    <BlockStack gap="050">
+                      <Text as="span" variant="bodySm" fontWeight="semibold">
+                        Vibration Dampener
+                      </Text>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        +$4.99
+                      </Text>
+                    </BlockStack>
+                    <Box paddingInlineStart="400">
+                      <InlineStack gap="150" blockAlign="center">
+                        <Badge>−</Badge>
+                        <Text as="span" variant="bodySm">1</Text>
+                        <Badge>+</Badge>
+                      </InlineStack>
+                    </Box>
+                  </InlineStack>
+                </BlockStack>
+              </Box>
               {configurator.addons.length === 0 ? (
                 <Text as="p" variant="bodySm" tone="subdued">
                   No add-ons yet. Skip this section if you only need string/options.
