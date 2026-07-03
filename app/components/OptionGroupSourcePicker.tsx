@@ -1,6 +1,5 @@
-import { useFetcher } from "@remix-run/react";
-import { BlockStack, Box, Button, Text } from "@shopify/polaris";
-import { useEffect, useState } from "react";
+import { BlockStack, Text } from "@shopify/polaris";
+import { useState } from "react";
 import { CollectionPicker } from "~/components/CollectionPicker";
 import { ProductPicker } from "~/components/ProductPicker";
 import type { CollectionSummary } from "~/lib/shopify-collections.server";
@@ -13,33 +12,18 @@ type Props = {
   initialProducts: ProductSummary[];
 };
 
+// Purely a controlled sub-section of the page's single "Save changes" form — no submit
+// button, no fetcher of its own. CollectionPicker/ProductPicker already render a hidden
+// input under the given name, so their selections travel with the enclosing <Form> and are
+// picked up by the `update` action alongside everything else on the page.
 export function OptionGroupSourcePicker({
   groupId,
   groupName,
   initialCollections,
   initialProducts,
 }: Props) {
-  const fetcher = useFetcher<{ error?: string; success?: boolean }>();
   const [collections, setCollections] = useState(initialCollections);
   const [products, setProducts] = useState(initialProducts);
-  const isSubmitting = fetcher.state !== "idle";
-
-  useEffect(() => {
-    setCollections(initialCollections);
-    setProducts(initialProducts);
-  }, [initialCollections, initialProducts]);
-
-  const handleSave = () => {
-    fetcher.submit(
-      {
-        intent: "update_group_sources",
-        groupId,
-        collectionIds: JSON.stringify(collections.map((c) => c.id)),
-        productIds: JSON.stringify(products.map((p) => p.id)),
-      },
-      { method: "post" },
-    );
-  };
 
   return (
     <BlockStack gap="300">
@@ -50,16 +34,6 @@ export function OptionGroupSourcePicker({
         Pick collections and/or individual products. Featured images and variant IDs
         are pulled from Shopify automatically. Manual options above are kept as well.
       </Text>
-      {fetcher.data?.error ? (
-        <Text as="p" tone="critical">
-          {fetcher.data.error}
-        </Text>
-      ) : null}
-      {fetcher.data?.success ? (
-        <Text as="p" tone="success">
-          Sources saved.
-        </Text>
-      ) : null}
       <CollectionPicker
         label="Collections"
         helpText="All products in these collections appear as options."
@@ -74,16 +48,6 @@ export function OptionGroupSourcePicker({
         onChange={setProducts}
         name={`groupProducts_${groupId}`}
       />
-      <Box>
-        <Button
-          size="slim"
-          variant="primary"
-          loading={isSubmitting}
-          onClick={handleSave}
-        >
-          Save sources
-        </Button>
-      </Box>
     </BlockStack>
   );
 }

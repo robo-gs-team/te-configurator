@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
-import { json, redirect } from "@vercel/remix";
+import { json } from "@vercel/remix";
 import { Form, useLoaderData, useNavigation } from "@remix-run/react";
 import {
   Badge,
@@ -31,6 +31,7 @@ import {
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
+import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
 import { parseProductIdsField } from "~/lib/product-id";
@@ -52,10 +53,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     (configurator as typeof configurator & { stringCollectionIds?: string }).stringCollectionIds ?? "[]",
     [],
   );
-  const [collections, stringCollections, products] = await Promise.all([
+  const stringProductIds = parseJson<string[]>(
+    (configurator as typeof configurator & { stringProductIds?: string }).stringProductIds ?? "[]",
+    [],
+  );
+  const [collections, stringCollections, products, stringProducts] = await Promise.all([
     getCollectionsByIds(admin, collectionIds),
     getCollectionsByIds(admin, stringCollectionIds),
     getProductsByIds(admin, parseJson<string[]>(configurator.productIds, [])),
+    getProductsByIds(admin, stringProductIds),
+    // Idempotent — checks existence first, only creates on first-ever call for this shop.
+    // Registers the per-racquet tension metafield definitions so they show up in Shopify's
+    // native "Metafields" section on every product page.
+    ensureTensionMetafieldDefinitions(admin),
   ]);
 
   const groupCollections: Record<string, Awaited<ReturnType<typeof getCollectionsByIds>>> = {};
@@ -77,7 +87,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     : null;
 
-  return json({ configurator, collections, stringCollections, products, groupCollections, groupProducts, labor });
+  return json({
+    configurator,
+    collections,
+    stringCollections,
+    products,
+    stringProducts,
+    groupCollections,
+    groupProducts,
+    labor,
+  });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -97,6 +116,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
     const stringCollectionIds = parseCollectionIdsField(String(form.get("stringCollectionIds") || ""));
     const productIds = parseProductIdsField(String(form.get("productIds") || ""));
+    const stringProductIds = parseProductIdsField(String(form.get("stringProductIds") || ""));
     const laborVariantId = String(form.get("laborVariantId") || "").trim() || null;
     const laborPrice = parseFloat(String(form.get("laborPrice") || "0")) || 0;
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
@@ -110,59 +130,40 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         productIds: JSON.stringify(productIds),
         collectionIds: JSON.stringify(collectionIds),
         stringCollectionIds: JSON.stringify(stringCollectionIds),
+        stringProductIds: JSON.stringify(stringProductIds),
         laborVariantId,
         laborPrice,
         basePrice,
         isActive,
-      } as Parameters<typeof prisma.configurator.update>[0]["data"],
+      },
     });
+
+    // One save covers everything on the page: general settings above, plus every option
+    // group's product sources below (submitted as groupCollections_<id> / groupProducts_<id>
+    // hidden fields inside this same form — see OptionGroupSourcePicker).
+    const allGroups = existing.steps.flatMap((step) => step.optionGroups);
+    await Promise.all(
+      allGroups.map((group) => {
+        const groupCollectionIds = form.get(`groupCollections_${group.id}`);
+        const groupProductIds = form.get(`groupProducts_${group.id}`);
+        if (groupCollectionIds === null && groupProductIds === null) return null;
+        return prisma.optionGroup.update({
+          where: { id: group.id },
+          data: {
+            collectionIds: JSON.stringify(
+              parseCollectionIdsField(String(groupCollectionIds ?? "[]")),
+            ),
+            productIds: JSON.stringify(
+              parseProductIdsField(String(groupProductIds ?? "[]")),
+            ),
+          },
+        });
+      }),
+    );
 
     // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change
     await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true });
-  }
-
-  if (intent === "update_group_sources" || intent === "update_group_collections") {
-    const groupId = String(form.get("groupId") || "").trim();
-    const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
-    const productIds = parseProductIdsField(String(form.get("productIds") || ""));
-
-    const group = await prisma.optionGroup.findFirst({
-      where: { id: groupId, step: { configuratorId: params.id } },
-    });
-    if (!group) {
-      return json({ error: "Option group not found", intent }, { status: 404 });
-    }
-
-    await prisma.optionGroup.update({
-      where: { id: groupId },
-      data: {
-        collectionIds: JSON.stringify(collectionIds),
-        productIds: JSON.stringify(productIds),
-      },
-    });
-
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
-    return json({ success: true, intent });
-  }
-
-  if (intent === "add_rule") {
-    await prisma.conditionalRule.create({
-      data: {
-        configuratorId: params.id!,
-        name: String(form.get("ruleName") || "New rule"),
-        conditionField: String(form.get("conditionField") || ""),
-        conditionOp: "equals",
-        conditionValue: String(form.get("conditionValue") || ""),
-        actionType: String(form.get("actionType") || "price_adjust"),
-        actionValue: JSON.stringify({
-          amount: parseFloat(String(form.get("actionAmount") || "0")) || 0,
-        }),
-        actionTarget: String(form.get("actionTarget") || "") || null,
-      },
-    });
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
-    return redirect(`/app/configurators/${params.id}`);
   }
 
   if (intent === "add_step") {
@@ -308,8 +309,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditConfigurator() {
-  const { configurator, collections, stringCollections, products, groupCollections, groupProducts, labor } =
-    useLoaderData<typeof loader>();
+  const {
+    configurator,
+    collections,
+    stringCollections,
+    products,
+    stringProducts,
+    groupCollections,
+    groupProducts,
+    labor,
+  } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
 
   const [name, setName] = useState(configurator.name);
@@ -317,6 +326,7 @@ export default function EditConfigurator() {
   const [selectedCollections, setSelectedCollections] = useState(collections);
   const [selectedStringCollections, setSelectedStringCollections] = useState(stringCollections);
   const [selectedProducts, setSelectedProducts] = useState(products);
+  const [selectedStringProducts, setSelectedStringProducts] = useState(stringProducts);
   const [laborProduct, setLaborProduct] = useState<LaborProductSelection | null>(labor);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
@@ -343,9 +353,10 @@ export default function EditConfigurator() {
           </Layout.Section>
         )}
         <Layout.Section>
-          <Card>
-            <Form method="post">
-              <input type="hidden" name="intent" value="update" />
+          <Form method="post">
+            <input type="hidden" name="intent" value="update" />
+            <BlockStack gap="400">
+            <Card>
               <BlockStack gap="400">
                 <Text as="h2" variant="headingMd">
                   General settings
@@ -372,12 +383,35 @@ export default function EditConfigurator() {
                     selected={selectedProducts}
                     onChange={setSelectedProducts}
                   />
+                  <Banner tone="info" title="Set stringing tension per racquet">
+                    <BlockStack gap="150">
+                      <p>
+                        Each racquet has its own recommended tension. Open any racquet product in
+                        Shopify admin → <strong>Metafields</strong>, and fill in the three
+                        &quot;Stringing tension&quot; fields (Min / Max / Recommended, lbs).
+                        Racquets left blank use a default range of 46–55 lbs.
+                      </p>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Technical field names, if you need to match them exactly:{" "}
+                        <code>te_stringing.tension_min</code>,{" "}
+                        <code>te_stringing.tension_max</code>,{" "}
+                        <code>te_stringing.tension_recommended</code>.
+                      </Text>
+                    </BlockStack>
+                  </Banner>
                   <CollectionPicker
                     label="String collections"
                     helpText="Products in these collections appear as string options in the configurator."
                     name="stringCollectionIds"
                     selected={selectedStringCollections}
                     onChange={setSelectedStringCollections}
+                  />
+                  <ProductPicker
+                    label="Individual string products"
+                    helpText="These specific products also appear as string options, in addition to any string collections above."
+                    name="stringProductIds"
+                    selected={selectedStringProducts}
+                    onChange={setSelectedStringProducts}
                   />
                   <LaborProductPicker selected={laborProduct} onChange={setLaborProduct} />
                   <TextField
@@ -398,16 +432,22 @@ export default function EditConfigurator() {
                   Save changes
                 </Button>
               </BlockStack>
-            </Form>
-          </Card>
-        </Layout.Section>
+            </Card>
 
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="400">
               <Text as="h2" variant="headingMd">
                 Steps & options
               </Text>
+              <Banner tone="info">
+                <p>
+                  Most stringing configurators don't need this section — racquets and strings
+                  are already fully configured above. Only add a step here if you need string
+                  options beyond the collections/products above; other step or option types
+                  won't appear to shoppers, since stringing configurators use a dedicated
+                  interface.
+                </p>
+              </Banner>
               {configurator.steps.length === 0 ? (
                 <Text as="p" tone="subdued">
                   No steps yet. Add a step below, then add options to it.
@@ -482,8 +522,13 @@ export default function EditConfigurator() {
                   <StepAddForm />
                 </Box>
               </Box>
+              <Button submit variant="primary" loading={navigation.state !== "idle"}>
+                Save changes
+              </Button>
+              </BlockStack>
+            </Card>
             </BlockStack>
-          </Card>
+          </Form>
         </Layout.Section>
 
         <Layout.Section variant="oneHalf">
@@ -493,10 +538,49 @@ export default function EditConfigurator() {
                 Add-ons
               </Text>
               <Text as="p" variant="bodySm" tone="subdued">
-                Optional extras customers can add in the configurator popup. Link a
-                Shopify product or collection — featured images and variant IDs are
-                resolved automatically.
+                Optional extras the shopper can add alongside their racquet + stringing —
+                e.g. extra grip tape, a vibration dampener, or a racquet bag. Link a Shopify
+                product or collection and the image, price, and variant are pulled in
+                automatically (or set a manual price). Shown as cards in the configurator popup,
+                right before Add to Cart; shoppers can bump the quantity up if you allow more
+                than one.
               </Text>
+              <Box
+                padding="300"
+                background="bg-surface-secondary"
+                borderRadius="200"
+                borderStyle="dashed"
+                borderWidth="025"
+              >
+                <BlockStack gap="150">
+                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                    Preview — what shoppers see
+                  </Text>
+                  <InlineStack gap="300" blockAlign="center">
+                    <Box
+                      background="bg-surface-tertiary"
+                      borderRadius="200"
+                      minWidth="48px"
+                      minHeight="48px"
+                    />
+                    <BlockStack gap="050">
+                      <Text as="span" variant="bodySm" fontWeight="semibold">
+                        Vibration Dampener
+                      </Text>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        +$4.99
+                      </Text>
+                    </BlockStack>
+                    <Box paddingInlineStart="400">
+                      <InlineStack gap="150" blockAlign="center">
+                        <Badge>−</Badge>
+                        <Text as="span" variant="bodySm">1</Text>
+                        <Badge>+</Badge>
+                      </InlineStack>
+                    </Box>
+                  </InlineStack>
+                </BlockStack>
+              </Box>
               {configurator.addons.length === 0 ? (
                 <Text as="p" variant="bodySm" tone="subdued">
                   No add-ons yet. Skip this section if you only need string/options.
@@ -533,60 +617,29 @@ export default function EditConfigurator() {
           </Card>
         </Layout.Section>
 
-        <Layout.Section variant="oneHalf">
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Conditional rules
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Advanced logic: when a customer picks a certain option, you can adjust price,
-                show/hide add-ons, or hide other options. Use option group IDs and option IDs from
-                your database (shown in Shopify admin or browser dev tools). Most string setups do
-                not need rules.
-              </Text>
-              {configurator.rules.length === 0 ? (
-                <Text as="p" variant="bodySm" tone="subdued">
-                  No rules yet.
+        {configurator.rules.length > 0 && (
+          <Layout.Section variant="oneHalf">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Conditional rules
                 </Text>
-              ) : (
-                configurator.rules.map((rule) => (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Advanced logic configured on this configurator. New rules can no longer be
+                  added here — most stringing setups don't need them, and this simple list view
+                  is read-only.
+                </Text>
+                {configurator.rules.map((rule) => (
                   <Text as="p" key={rule.id} variant="bodySm">
                     IF {rule.conditionField} {rule.conditionOp} &quot;{rule.conditionValue}
                     &quot; THEN {rule.actionType}
                     {rule.actionTarget ? ` → ${rule.actionTarget}` : ""}
                   </Text>
-                ))
-              )}
-              <Form method="post">
-                <input type="hidden" name="intent" value="add_rule" />
-                <FormLayout>
-                  <TextField label="Rule name" name="ruleName" autoComplete="off" />
-                  <TextField
-                    label="Condition field (option group ID)"
-                    name="conditionField"
-                    autoComplete="off"
-                  />
-                  <TextField label="Condition value (option ID)" name="conditionValue" autoComplete="off" />
-                  <TextField
-                    label="Action type"
-                    name="actionType"
-                    defaultValue="price_adjust"
-                    helpText="price_adjust | show_addon | hide_addon | hide_option"
-                    autoComplete="off"
-                  />
-                  <TextField label="Action target (addon/option ID)" name="actionTarget" autoComplete="off" />
-                  <TextField label="Price amount" name="actionAmount" type="number" autoComplete="off" />
-                </FormLayout>
-                <Box paddingBlockStart="200">
-                  <Button submit size="slim">
-                    Add rule
-                  </Button>
-                </Box>
-              </Form>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+                ))}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
       </Layout>
     </Page>
   );
