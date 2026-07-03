@@ -41,6 +41,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (!name) return json({ error: "Name is required" }, { status: 400 });
 
+  // No pre-seeded steps/option groups: a racquet collection + string collection + labor
+  // product is enough for a working stringing configurator on its own (the string catalog
+  // is auto-resolved from stringCollectionIds — see enrich-configurator.server.ts). Merchants
+  // only need "Steps & options" for extra customization beyond standard stringing.
   const configurator = await (prisma.configurator.create as Function)({
     data: {
       shopId: shop.id,
@@ -50,41 +54,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       collectionIds: JSON.stringify(collectionIds),
       stringCollectionIds: JSON.stringify(stringCollectionIds),
       basePrice,
-      steps: {
-        create: [
-          {
-            title: "Choose Your Options",
-            stepType: "variant",
-            sortOrder: 0,
-            optionGroups: {
-              create: [
-                {
-                  name: "Color",
-                  displayType: "swatch",
-                  sortOrder: 0,
-                  options: {
-                    create: [
-                      {
-                        label: "Black",
-                        value: "black",
-                        colorHex: "#111827",
-                        sortOrder: 0,
-                        isDefault: true,
-                      },
-                      {
-                        label: "White",
-                        value: "white",
-                        colorHex: "#f9fafb",
-                        sortOrder: 1,
-                      },
-                    ],
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      },
     },
   });
 

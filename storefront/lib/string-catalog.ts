@@ -153,11 +153,26 @@ export function resolveStringCatalog(
 ): StringProduct[] {
   if (!configurator) return [];
 
-  const stringGroup = configurator.steps
+  // Merge every group whose name matches "string" (not just the first) — a merchant may
+  // split string sources across multiple groups (e.g. one per collection), and each one
+  // represents real configuration effort that must reach the shopper.
+  const stringGroups = configurator.steps
     .flatMap((s) => s.optionGroups)
-    .find((g) => /string/i.test(g.name));
+    .filter((g) => /string/i.test(g.name));
 
-  if (!stringGroup || stringGroup.options.length === 0) {
+  // Dedup by productId (falling back to option id for manually-entered options with no
+  // linked product) — a merchant could add the same string product to more than one group.
+  const seen = new Set<string>();
+  const allOptions = stringGroups
+    .flatMap((g) => g.options)
+    .filter((o) => {
+      const key = o.productId ?? o.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  if (allOptions.length === 0) {
     return [];
   }
 
@@ -169,7 +184,7 @@ export function resolveStringCatalog(
     colorGroup?.options.map((o) => o.label) ??
     ["Black", "White", "Natural"];
 
-  return stringGroup.options.map((option) => {
+  return allOptions.map((option) => {
     const meta = option.metadata as {
       type?: string;
       gauges?: string[];

@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
-import { json, redirect } from "@vercel/remix";
+import { json } from "@vercel/remix";
 import { Form, useLoaderData, useNavigation } from "@remix-run/react";
 import {
   Badge,
@@ -122,52 +122,32 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       } as Parameters<typeof prisma.configurator.update>[0]["data"],
     });
 
+    // One save covers everything on the page: general settings above, plus every option
+    // group's product sources below (submitted as groupCollections_<id> / groupProducts_<id>
+    // hidden fields inside this same form — see OptionGroupSourcePicker).
+    const allGroups = existing.steps.flatMap((step) => step.optionGroups);
+    await Promise.all(
+      allGroups.map((group) => {
+        const groupCollectionIds = form.get(`groupCollections_${group.id}`);
+        const groupProductIds = form.get(`groupProducts_${group.id}`);
+        if (groupCollectionIds === null && groupProductIds === null) return null;
+        return prisma.optionGroup.update({
+          where: { id: group.id },
+          data: {
+            collectionIds: JSON.stringify(
+              parseCollectionIdsField(String(groupCollectionIds ?? "[]")),
+            ),
+            productIds: JSON.stringify(
+              parseProductIdsField(String(groupProductIds ?? "[]")),
+            ),
+          },
+        });
+      }),
+    );
+
     // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change
     await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true });
-  }
-
-  if (intent === "update_group_sources" || intent === "update_group_collections") {
-    const groupId = String(form.get("groupId") || "").trim();
-    const collectionIds = parseCollectionIdsField(String(form.get("collectionIds") || ""));
-    const productIds = parseProductIdsField(String(form.get("productIds") || ""));
-
-    const group = await prisma.optionGroup.findFirst({
-      where: { id: groupId, step: { configuratorId: params.id } },
-    });
-    if (!group) {
-      return json({ error: "Option group not found", intent }, { status: 404 });
-    }
-
-    await prisma.optionGroup.update({
-      where: { id: groupId },
-      data: {
-        collectionIds: JSON.stringify(collectionIds),
-        productIds: JSON.stringify(productIds),
-      },
-    });
-
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
-    return json({ success: true, intent });
-  }
-
-  if (intent === "add_rule") {
-    await prisma.conditionalRule.create({
-      data: {
-        configuratorId: params.id!,
-        name: String(form.get("ruleName") || "New rule"),
-        conditionField: String(form.get("conditionField") || ""),
-        conditionOp: "equals",
-        conditionValue: String(form.get("conditionValue") || ""),
-        actionType: String(form.get("actionType") || "price_adjust"),
-        actionValue: JSON.stringify({
-          amount: parseFloat(String(form.get("actionAmount") || "0")) || 0,
-        }),
-        actionTarget: String(form.get("actionTarget") || "") || null,
-      },
-    });
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
-    return redirect(`/app/configurators/${params.id}`);
   }
 
   if (intent === "add_step") {
@@ -348,9 +328,10 @@ export default function EditConfigurator() {
           </Layout.Section>
         )}
         <Layout.Section>
-          <Card>
-            <Form method="post">
-              <input type="hidden" name="intent" value="update" />
+          <Form method="post">
+            <input type="hidden" name="intent" value="update" />
+            <BlockStack gap="400">
+            <Card>
               <BlockStack gap="400">
                 <Text as="h2" variant="headingMd">
                   General settings
@@ -411,13 +392,10 @@ export default function EditConfigurator() {
                   Save changes
                 </Button>
               </BlockStack>
-            </Form>
-          </Card>
-        </Layout.Section>
+            </Card>
 
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="400">
               <Text as="h2" variant="headingMd">
                 Steps & options
               </Text>
@@ -495,8 +473,13 @@ export default function EditConfigurator() {
                   <StepAddForm />
                 </Box>
               </Box>
+              <Button submit variant="primary" loading={navigation.state !== "idle"}>
+                Save changes
+              </Button>
+              </BlockStack>
+            </Card>
             </BlockStack>
-          </Card>
+          </Form>
         </Layout.Section>
 
         <Layout.Section variant="oneHalf">
@@ -546,60 +529,29 @@ export default function EditConfigurator() {
           </Card>
         </Layout.Section>
 
-        <Layout.Section variant="oneHalf">
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Conditional rules
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Advanced logic: when a customer picks a certain option, you can adjust price,
-                show/hide add-ons, or hide other options. Use option group IDs and option IDs from
-                your database (shown in Shopify admin or browser dev tools). Most string setups do
-                not need rules.
-              </Text>
-              {configurator.rules.length === 0 ? (
-                <Text as="p" variant="bodySm" tone="subdued">
-                  No rules yet.
+        {configurator.rules.length > 0 && (
+          <Layout.Section variant="oneHalf">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Conditional rules
                 </Text>
-              ) : (
-                configurator.rules.map((rule) => (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Advanced logic configured on this configurator. New rules can no longer be
+                  added here — most stringing setups don't need them, and this simple list view
+                  is read-only.
+                </Text>
+                {configurator.rules.map((rule) => (
                   <Text as="p" key={rule.id} variant="bodySm">
                     IF {rule.conditionField} {rule.conditionOp} &quot;{rule.conditionValue}
                     &quot; THEN {rule.actionType}
                     {rule.actionTarget ? ` → ${rule.actionTarget}` : ""}
                   </Text>
-                ))
-              )}
-              <Form method="post">
-                <input type="hidden" name="intent" value="add_rule" />
-                <FormLayout>
-                  <TextField label="Rule name" name="ruleName" autoComplete="off" />
-                  <TextField
-                    label="Condition field (option group ID)"
-                    name="conditionField"
-                    autoComplete="off"
-                  />
-                  <TextField label="Condition value (option ID)" name="conditionValue" autoComplete="off" />
-                  <TextField
-                    label="Action type"
-                    name="actionType"
-                    defaultValue="price_adjust"
-                    helpText="price_adjust | show_addon | hide_addon | hide_option"
-                    autoComplete="off"
-                  />
-                  <TextField label="Action target (addon/option ID)" name="actionTarget" autoComplete="off" />
-                  <TextField label="Price amount" name="actionAmount" type="number" autoComplete="off" />
-                </FormLayout>
-                <Box paddingBlockStart="200">
-                  <Button submit size="slim">
-                    Add rule
-                  </Button>
-                </Box>
-              </Form>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+                ))}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
       </Layout>
     </Page>
   );
