@@ -21,6 +21,17 @@ type ShopifyAdmin = {
 // (e.g. "Strings", matching the storefront's own nav), so it's checked last.
 const STRING_TYPE_CATEGORIES = ["Polyester", "Multifilament", "Natural gut", "Synthetic gut"] as const;
 
+// Extra phrases that reliably imply a category but don't contain the category's own words —
+// used only for title inference, where tennis-string names encode the material by convention.
+// Deliberately conservative (whole recognizable terms) to avoid mislabeling. "nylon" is the
+// standard material name for synthetic gut; "co-poly"/"copoly" for polyester.
+const STRING_TYPE_TITLE_ALIASES: Array<{ category: string; needles: string[] }> = [
+  { category: "Natural gut", needles: ["natural gut"] },
+  { category: "Synthetic gut", needles: ["synthetic gut", "nylon"] },
+  { category: "Multifilament", needles: ["multifilament", "multi-filament"] },
+  { category: "Polyester", needles: ["polyester", "co-poly", "copoly"] },
+];
+
 /** Case-insensitively match a raw value against the canonical category names, if any. */
 function matchStringTypeCategory(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
@@ -28,12 +39,25 @@ function matchStringTypeCategory(value: string | null | undefined): string | und
   return STRING_TYPE_CATEGORIES.find((category) => normalized.includes(category.toLowerCase()));
 }
 
+/** Infer a category from a product title, using both the category words and known aliases. */
+function inferStringTypeFromTitle(title: string | undefined): string | undefined {
+  const direct = matchStringTypeCategory(title);
+  if (direct) return direct;
+  if (!title) return undefined;
+  const normalized = title.toLowerCase();
+  return STRING_TYPE_TITLE_ALIASES.find((alias) =>
+    alias.needles.some((needle) => normalized.includes(needle)),
+  )?.category;
+}
+
 function resolveStringType(
+  title: string | undefined,
   stringType: string | null | undefined,
   stringType2: string | null | undefined,
   tags: string[] | undefined,
   productType: string | undefined,
 ): string {
+  // Explicit merchant-set metafields win.
   const metafieldMatch = matchStringTypeCategory(stringType) ?? matchStringTypeCategory(stringType2);
   if (metafieldMatch) return metafieldMatch;
 
@@ -41,6 +65,11 @@ function resolveStringType(
     (tags ?? []).some((tag) => tag.toLowerCase().includes(category.toLowerCase())),
   );
   if (tagMatch) return tagMatch;
+
+  // Then infer from the product title — most tennis strings name their material (e.g.
+  // "…Natural Gut Tennis String") even when no metafield/tag is set.
+  const titleMatch = inferStringTypeFromTitle(title);
+  if (titleMatch) return titleMatch;
 
   return matchStringTypeCategory(productType) ?? "String";
 }
@@ -75,6 +104,7 @@ function shopifyProductToOption(
     isDefault: sortOrder === 0,
     metadata: JSON.stringify({
       type: resolveStringType(
+        product.title,
         "stringType" in product ? product.stringType : undefined,
         "stringType2" in product ? product.stringType2 : undefined,
         "tags" in product ? product.tags : undefined,

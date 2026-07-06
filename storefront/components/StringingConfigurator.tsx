@@ -62,8 +62,13 @@ function normalizeBed(product: StringProduct, bed: BedSelection): BedSelection {
 // when a merchant's catalog has dozens of strings, without hiding anything behind a filter.
 const STRING_PAGE_SIZE = 20;
 
-function filterCatalog(catalog: StringProduct[], filter: string) {
-  const matching = filter === "all" ? catalog : catalog.filter((s) => s.type === filter);
+function filterCatalog(catalog: StringProduct[], filter: string, search: string) {
+  const query = search.trim().toLowerCase();
+  const matching = catalog.filter((s) => {
+    if (filter !== "all" && s.type !== filter) return false;
+    if (query && !`${s.name} ${s.type}`.toLowerCase().includes(query)) return false;
+    return true;
+  });
   // Array.prototype.sort is stable (ES2019+), so this only moves recommended items to the
   // front — it doesn't otherwise reorder the merchant's original catalog order.
   return [...matching].sort((a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)));
@@ -105,8 +110,9 @@ function StringCatalog({
   onSelect: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<string>("all");
+  const [search, setSearch] = useState("");
   const [visibleCount, setVisibleCount] = useState(STRING_PAGE_SIZE);
-  const filtered = filterCatalog(catalog, filter);
+  const filtered = filterCatalog(catalog, filter, search);
   const visible = filtered.slice(0, visibleCount);
   const remaining = filtered.length - visible.length;
   const selectedClass =
@@ -121,8 +127,21 @@ function StringCatalog({
     setVisibleCount(STRING_PAGE_SIZE);
   };
 
+  const onSearch = (value: string) => {
+    setSearch(value);
+    setVisibleCount(STRING_PAGE_SIZE);
+  };
+
   return (
     <>
+      <input
+        type="search"
+        className="proto-desk-search"
+        placeholder="Search strings…"
+        value={search}
+        onChange={(e) => onSearch(e.target.value)}
+        aria-label="Search strings"
+      />
       <div className="proto-desk-chips">
         {FILTER_CHIPS.map((chip) => (
           <button
@@ -136,6 +155,11 @@ function StringCatalog({
         ))}
       </div>
       <div className="proto-desk-string-list">
+        {visible.length === 0 && (
+          <p className="proto-desk-string-empty">
+            No strings match{search.trim() ? ` “${search.trim()}”` : " this filter"}.
+          </p>
+        )}
         {visible.map((product) => {
           const isSelected = product.id === selectedId;
           return (

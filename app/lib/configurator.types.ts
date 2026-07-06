@@ -8,6 +8,10 @@ import type {
   ThemeSetting,
 } from "@prisma/client";
 
+// Re-exported so other modules can import the Prisma Addon type from here alongside the
+// configurator types, rather than reaching into @prisma/client directly.
+export type { Addon };
+
 export type ConfiguratorWithRelations = Configurator & {
   steps: (ConfiguratorStep & {
     optionGroups: (OptionGroup & { options: Option[] })[];
