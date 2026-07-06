@@ -111,6 +111,10 @@ export function resolveStringCatalog(
   const cached = catalogCache.get(configurator);
   if (cached) return cached;
 
+  // Strings this specific racquet recommends (from its strings_collection metafield), resolved
+  // per-racquet by the proxy. Used to badge them "Recommended" and drive the default filter.
+  const recommendedSet = new Set(configurator.recommendedStringProductIds ?? []);
+
   // Merge every group whose name matches "string" (not just the first) — a merchant may
   // split string sources across multiple groups (e.g. one per collection), and each one
   // represents real configuration effort that must reach the shopper.
@@ -156,10 +160,12 @@ export function resolveStringCatalog(
       price: option.priceAdjust,
       gauges: meta.gauges?.length ? meta.gauges : ["16", "17"],
       colors: meta.colors?.length ? meta.colors : colors,
-      // Only badge a string "Recommended" when it's an explicit signal — NOT just because it's
-      // first in the list (option.isDefault is set to the first item during enrichment, which
-      // previously mislabeled whatever happened to lead the catalog, e.g. a stringing machine).
-      recommended: Boolean(meta.recommended),
+      // "Recommended" = this racquet's own recommended-strings collection (per-racquet metafield),
+      // or an explicit metafield flag. NOT just first-in-list (which previously mislabeled
+      // whatever led the catalog, e.g. a stringing machine).
+      recommended:
+        (option.productId ? recommendedSet.has(option.productId) : false) ||
+        Boolean(meta.recommended),
       imageUrl: option.imageUrl ?? option.previewLayer ?? null,
       variantId: option.variantId,
       productId: option.productId,

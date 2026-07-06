@@ -196,17 +196,17 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
 /* Compact search that sits in the header strip between the name/description and the price. */
 .proto-desk-search-wrap {
   position: relative;
-  flex: 0 1 200px;
-  min-width: 120px;
-  display: flex;
-  align-items: center;
+  flex: 0 1 220px;
+  min-width: 130px;
 }
 
 .proto-desk-search-icon {
   position: absolute;
-  left: 9px;
-  width: 14px;
-  height: 14px;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
   color: #9ca3af;
   pointer-events: none;
 }
@@ -214,7 +214,9 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
 .proto-desk-search {
   width: 100%;
   box-sizing: border-box;
-  padding: 7px 10px 7px 28px;
+  height: 32px;
+  line-height: 32px;
+  padding: 0 12px 0 30px;
   border: 1px solid #d4d4d4;
   border-radius: 999px;
   font-size: 12px;

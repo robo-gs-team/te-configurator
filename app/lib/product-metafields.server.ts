@@ -1,5 +1,6 @@
 import prisma from "~/db.server";
 import { normalizeProductId, toProductGid } from "~/lib/product-id";
+import { normalizeCollectionId } from "~/lib/collection-id";
 import { DEFAULT_TENSION_RANGE, parseJson, type TensionRange } from "~/lib/configurator.types";
 import { getProductsInCollections } from "~/lib/shopify-collections.server";
 
@@ -213,6 +214,81 @@ export async function resolveRacquetTensionMap(
   );
 
   return getRacquetTensionMetafields(admin, allIds);
+}
+
+// Per-racquet "recommended strings" — a Collection-reference metafield on each racquet product
+// pointing at a curated collection of strings recommended for that frame. Resolved per-racquet
+// (like tension) and surfaced as the default "Recommended" filter in the storefront.
+const RECOMMENDED_STRINGS_NAMESPACE = "configurator";
+const RECOMMENDED_STRINGS_KEY = "strings_collection";
+
+/**
+ * For every racquet linked to the configurator, read its `configurator.strings_collection`
+ * metafield (a collection reference), then resolve that collection to the list of recommended
+ * string product ids. Returns racquetProductId -> [stringProductId, ...]; racquets without the
+ * metafield are simply absent. Batched: one metafield read per 50 racquets, then each unique
+ * recommended-collection fetched once.
+ */
+export async function resolveRecommendedStringsMap(
+  admin: ShopifyAdmin,
+  configurator: { productIds: string; collectionIds: string },
+): Promise<Record<string, string[]>> {
+  const explicitIds = parseJson<string[]>(configurator.productIds ?? "[]", []);
+  const collectionIds = parseJson<string[]>(configurator.collectionIds ?? "[]", []);
+  const collectionProducts =
+    collectionIds.length > 0 ? await getProductsInCollections(admin, collectionIds) : [];
+  const racquetIds = Array.from(
+    new Set([...explicitIds, ...collectionProducts.map((p) => p.id)]),
+  );
+  if (racquetIds.length === 0) return {};
+
+  // racquet product id -> normalized recommended-strings collection id
+  const racquetToCollection: Record<string, string> = {};
+  for (const batch of chunk(racquetIds, 50)) {
+    const res = await admin.graphql(
+      `
+      #graphql
+      query ProtoRecommendedStrings($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Product {
+            legacyResourceId
+            rec: metafield(namespace: "${RECOMMENDED_STRINGS_NAMESPACE}", key: "${RECOMMENDED_STRINGS_KEY}") { value }
+          }
+        }
+      }
+    `,
+      { variables: { ids: batch.map((id) => toProductGid(id)) } },
+    );
+    const body = (await res.json()) as {
+      data?: { nodes?: Array<{ legacyResourceId?: string; rec?: { value?: string } | null } | null> };
+    };
+    for (const node of body.data?.nodes ?? []) {
+      const collectionRef = node?.rec?.value;
+      if (node?.legacyResourceId && collectionRef) {
+        racquetToCollection[normalizeProductId(node.legacyResourceId)] =
+          normalizeCollectionId(collectionRef);
+      }
+    }
+  }
+
+  const uniqueCollections = Array.from(new Set(Object.values(racquetToCollection)));
+  if (uniqueCollections.length === 0) return {};
+
+  // Fetch each unique recommended-strings collection once.
+  const collectionToProductIds: Record<string, string[]> = {};
+  await Promise.all(
+    uniqueCollections.map(async (cid) => {
+      const products = await getProductsInCollections(admin, [cid]);
+      collectionToProductIds[cid] = products.map((p) => p.id);
+    }),
+  );
+
+  const result: Record<string, string[]> = {};
+  for (const [racquetId, cid] of Object.entries(racquetToCollection)) {
+    const ids = collectionToProductIds[cid];
+    if (ids?.length) result[racquetId] = ids;
+  }
+  return result;
 }
 
 /**

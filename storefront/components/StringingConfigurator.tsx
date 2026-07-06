@@ -65,7 +65,8 @@ const STRING_PAGE_SIZE = 20;
 function filterCatalog(catalog: StringProduct[], filter: string, search: string) {
   const query = search.trim().toLowerCase();
   const matching = catalog.filter((s) => {
-    if (filter !== "all" && s.type !== filter) return false;
+    if (filter === "recommended" && !s.recommended) return false;
+    if (filter !== "all" && filter !== "recommended" && s.type !== filter) return false;
     if (query && !`${s.name} ${s.type}`.toLowerCase().includes(query)) return false;
     return true;
   });
@@ -111,7 +112,17 @@ function StringCatalog({
   search: string;
   onSelect: (id: string) => void;
 }) {
-  const [filter, setFilter] = useState<string>("all");
+  // Show a "Recommended" chip (and default to it) only when this racquet actually recommends
+  // some of the available strings — otherwise start on "All".
+  const hasRecommended = useMemo(() => catalog.some((s) => s.recommended), [catalog]);
+  const chips = useMemo(
+    () =>
+      hasRecommended
+        ? [{ id: "recommended", label: "Recommended" }, ...FILTER_CHIPS]
+        : [...FILTER_CHIPS],
+    [hasRecommended],
+  );
+  const [filter, setFilter] = useState<string>(hasRecommended ? "recommended" : "all");
   const [visibleCount, setVisibleCount] = useState(STRING_PAGE_SIZE);
   const filtered = filterCatalog(catalog, filter, search);
   const visible = filtered.slice(0, visibleCount);
@@ -137,7 +148,7 @@ function StringCatalog({
   return (
     <>
       <div className="proto-desk-chips">
-        {FILTER_CHIPS.map((chip) => (
+        {chips.map((chip) => (
           <button
             key={chip.id}
             type="button"
