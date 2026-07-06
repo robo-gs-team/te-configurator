@@ -365,21 +365,27 @@ function TrustStrip() {
   return (
     <div className="proto-desk-trust">
       <div className="proto-desk-trust-item">
-        <span className="proto-desk-trust-dot" aria-hidden />
+        <span className="proto-desk-trust-dot" aria-hidden>
+          ✓
+        </span>
         <div>
           <p className="proto-desk-trust-title">Same-day stringing</p>
           <p className="proto-desk-trust-sub">Order before 2pm CST</p>
         </div>
       </div>
       <div className="proto-desk-trust-item">
-        <span className="proto-desk-trust-dot" aria-hidden />
+        <span className="proto-desk-trust-dot" aria-hidden>
+          ✓
+        </span>
         <div>
           <p className="proto-desk-trust-title">Strung to your exact specs</p>
           <p className="proto-desk-trust-sub">±0.5 lbs by USRSA technicians</p>
         </div>
       </div>
       <div className="proto-desk-trust-item">
-        <span className="proto-desk-trust-dot" aria-hidden />
+        <span className="proto-desk-trust-dot" aria-hidden>
+          ✓
+        </span>
         <div>
           <p className="proto-desk-trust-title">Free restring if anything&apos;s wrong</p>
           <p className="proto-desk-trust-sub">No questions asked</p>
