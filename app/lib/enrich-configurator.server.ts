@@ -5,6 +5,7 @@ import { getProductsInCollections } from "~/lib/shopify-collections.server";
 import {
   getProductsDetailedByIds,
   getProductsWithImages,
+  type ProductMeta,
 } from "~/lib/shopify-products.server";
 
 type ShopifyAdmin = {
@@ -230,7 +231,7 @@ export async function enrichConfiguratorWithShopifyData(
   const [imageByProductId, stringCollectionProducts, stringIndividualProducts] = await Promise.all([
     manualProductIds.length > 0
       ? getProductsWithImages(admin, manualProductIds)
-      : Promise.resolve(new Map<string, { imageUrl: string | null; variantId: string | null; price: number }>()),
+      : Promise.resolve(new Map<string, ProductMeta>()),
     stringCollectionIds.length > 0
       ? getProductsInCollections(admin, stringCollectionIds)
       : Promise.resolve([]),
@@ -283,8 +284,24 @@ export async function enrichConfiguratorWithShopifyData(
               option.priceAdjust > 0
                 ? option.priceAdjust
                 : (productMeta?.price ?? option.priceAdjust);
+            // Re-classify the string type from LIVE product metafields for manual string options
+            // too — otherwise a string saved as a DB option keeps whatever `type` it had at
+            // creation (usually the generic "String"), so the filter chips never match it even
+            // though the product's "String Type" metafield is set.
+            let metadata = option.metadata;
+            if (isStringGroup && productMeta) {
+              const resolvedType = resolveStringType(
+                productMeta.title,
+                productMeta.stringType,
+                productMeta.stringType2,
+                productMeta.tags,
+                productMeta.productType,
+              );
+              metadata = JSON.stringify({ ...parseJson(option.metadata, {}), type: resolvedType });
+            }
             return {
               ...option,
+              metadata,
               imageUrl: productMeta?.imageUrl ?? option.imageUrl ?? null,
               previewLayer:
                 productMeta?.imageUrl ?? option.previewLayer ?? option.imageUrl ?? null,
