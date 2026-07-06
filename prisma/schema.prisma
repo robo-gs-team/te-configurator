@@ -54,6 +54,11 @@ model Configurator {
   // (e.g. a stringing machine that lives in a string collection) and never shown the Configure
   // button, even if a racquet collection/product would otherwise include them.
   excludedProductIds  String   @default("[]")
+  // When true, the linked racquet variants' Shopify inventoryPolicy is set to CONTINUE so they
+  // can be ordered while out of stock (the only way /cart/add.js accepts an OOS variant). Applied
+  // to Shopify on save when this toggles; reverts variants to DENY when turned off. Note this is
+  // a real per-variant Shopify setting — it affects every sales channel, not just this app.
+  allowOutOfStock Boolean @default(false)
   laborVariantId String?
   laborPrice     Float    @default(0)
   basePrice   Float    @default(0)

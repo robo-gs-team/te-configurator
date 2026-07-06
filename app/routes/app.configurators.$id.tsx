@@ -31,6 +31,7 @@ import {
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
+import { setRacquetInventoryPolicy } from "~/lib/inventory.server";
 import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
@@ -166,6 +167,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const laborPrice = parseFloat(String(form.get("laborPrice") || "0")) || 0;
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
     const isActive = form.get("isActive") === "on";
+    const allowOutOfStock = form.get("allowOutOfStock") === "on";
+    const allowOutOfStockChanged =
+      allowOutOfStock !==
+      Boolean((existing as { allowOutOfStock?: boolean }).allowOutOfStock);
 
     await prisma.configurator.update({
       where: { id: params.id },
@@ -177,12 +182,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         stringCollectionIds: JSON.stringify(stringCollectionIds),
         stringProductIds: JSON.stringify(stringProductIds),
         excludedProductIds: JSON.stringify(excludedProductIds),
+        allowOutOfStock,
         laborVariantId,
         laborPrice,
         basePrice,
         isActive,
-      },
+      } as Parameters<typeof prisma.configurator.update>[0]["data"],
     });
+
+    // Only touch Shopify inventory policy when the toggle actually flips — this mutates the real
+    // per-variant setting (all channels), so we don't re-apply it on every unrelated save.
+    if (allowOutOfStockChanged) {
+      await setRacquetInventoryPolicy(
+        admin,
+        { productIds: JSON.stringify(productIds), collectionIds: JSON.stringify(collectionIds) },
+        allowOutOfStock,
+      );
+    }
 
     // One save covers everything on the page: general settings above, plus every option
     // group's product sources below (submitted as groupCollections_<id> / groupProducts_<id>
@@ -423,6 +439,9 @@ export default function EditConfigurator() {
   const [laborProduct, setLaborProduct] = useState<LaborProductSelection | null>(labor);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
+  const [allowOutOfStock, setAllowOutOfStock] = useState(
+    Boolean((configurator as { allowOutOfStock?: boolean }).allowOutOfStock),
+  );
 
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -439,6 +458,7 @@ export default function EditConfigurator() {
     selectedProducts,
     selectedStringProducts,
     excludedProductsSel,
+    allowOutOfStock,
     laborProduct,
   });
   const [savedSnapshot, setSavedSnapshot] = useState(buildSnapshot);
@@ -663,6 +683,15 @@ export default function EditConfigurator() {
                   />
                   {isActive ? (
                     <input type="hidden" name="isActive" value="on" />
+                  ) : null}
+                  <Checkbox
+                    label={<FieldLabel facing="setup">Allow ordering out-of-stock racquets</FieldLabel>}
+                    checked={allowOutOfStock}
+                    onChange={setAllowOutOfStock}
+                    helpText="Lets shoppers configure and buy a racquet even when it's out of stock. On save this sets those racquet variants' Shopify inventory policy to “Continue selling when out of stock” — a real Shopify setting that applies to ALL sales channels, not just this configurator (turning it off reverts them to “Stop selling”)."
+                  />
+                  {allowOutOfStock ? (
+                    <input type="hidden" name="allowOutOfStock" value="on" />
                   ) : null}
                 </FormLayout>
                 <Button submit variant="primary" loading={navigation.state !== "idle"}>

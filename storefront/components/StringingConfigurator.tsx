@@ -62,17 +62,30 @@ function normalizeBed(product: StringProduct, bed: BedSelection): BedSelection {
 // when a merchant's catalog has dozens of strings, without hiding anything behind a filter.
 const STRING_PAGE_SIZE = 20;
 
-function filterCatalog(catalog: StringProduct[], filter: string, search: string) {
+// Which recommendation applies depends on the column: the standard catalog uses the racquet's
+// standard recommendation, the mains/crosses columns use its hybrid recommendation.
+function isRecommended(product: StringProduct, useHybrid: boolean): boolean {
+  return useHybrid ? Boolean(product.recommendedHybrid) : Boolean(product.recommended);
+}
+
+function filterCatalog(
+  catalog: StringProduct[],
+  filter: string,
+  search: string,
+  useHybrid: boolean,
+) {
   const query = search.trim().toLowerCase();
   const matching = catalog.filter((s) => {
-    if (filter === "recommended" && !s.recommended) return false;
+    if (filter === "recommended" && !isRecommended(s, useHybrid)) return false;
     if (filter !== "all" && filter !== "recommended" && s.type !== filter) return false;
     if (query && !`${s.name} ${s.type}`.toLowerCase().includes(query)) return false;
     return true;
   });
   // Array.prototype.sort is stable (ES2019+), so this only moves recommended items to the
   // front — it doesn't otherwise reorder the merchant's original catalog order.
-  return [...matching].sort((a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)));
+  return [...matching].sort(
+    (a, b) => Number(isRecommended(b, useHybrid)) - Number(isRecommended(a, useHybrid)),
+  );
 }
 
 function ModeToggle() {
@@ -112,9 +125,15 @@ function StringCatalog({
   search: string;
   onSelect: (id: string) => void;
 }) {
+  // The mains/crosses columns use the racquet's hybrid recommendation; the standard column its
+  // standard one.
+  const useHybrid = accent !== "standard";
   // Show a "Recommended" chip (and default to it) only when this racquet actually recommends
   // some of the available strings — otherwise start on "All".
-  const hasRecommended = useMemo(() => catalog.some((s) => s.recommended), [catalog]);
+  const hasRecommended = useMemo(
+    () => catalog.some((s) => isRecommended(s, useHybrid)),
+    [catalog, useHybrid],
+  );
   const chips = useMemo(
     () =>
       hasRecommended
@@ -124,7 +143,7 @@ function StringCatalog({
   );
   const [filter, setFilter] = useState<string>(hasRecommended ? "recommended" : "all");
   const [visibleCount, setVisibleCount] = useState(STRING_PAGE_SIZE);
-  const filtered = filterCatalog(catalog, filter, search);
+  const filtered = filterCatalog(catalog, filter, search, useHybrid);
   const visible = filtered.slice(0, visibleCount);
   const remaining = filtered.length - visible.length;
   const selectedClass =
@@ -178,7 +197,7 @@ function StringCatalog({
                 <StringImage product={product} />
               </div>
               <div className="proto-desk-str-info">
-                {product.recommended && !isSelected && (
+                {isRecommended(product, useHybrid) && !isSelected && (
                   <span className="proto-desk-str-badge proto-desk-str-badge--rec">Recommended</span>
                 )}
                 {isSelected && accent === "mains" && (

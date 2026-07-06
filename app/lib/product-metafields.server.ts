@@ -216,23 +216,33 @@ export async function resolveRacquetTensionMap(
   return getRacquetTensionMetafields(admin, allIds);
 }
 
-// Per-racquet "recommended strings" — a Collection-reference metafield on each racquet product
-// pointing at a curated collection of strings recommended for that frame. Resolved per-racquet
-// (like tension) and surfaced as the default "Recommended" filter in the storefront.
+// Per-racquet "recommended strings" — Collection-reference metafields on each racquet product
+// pointing at curated collections of strings recommended for that frame, one for standard
+// stringing and one for hybrid. Resolved per-racquet (like tension) and surfaced as the default
+// "Recommended" filter in the storefront (standard mode uses the standard set; the mains/crosses
+// columns in hybrid mode use the hybrid set).
 const RECOMMENDED_STRINGS_NAMESPACE = "configurator";
 const RECOMMENDED_STRINGS_KEY = "strings_collection";
+const RECOMMENDED_HYBRID_STRINGS_KEY = "hybrid_strings_collection";
+
+export type RecommendedStringsMaps = {
+  standard: Record<string, string[]>;
+  hybrid: Record<string, string[]>;
+};
 
 /**
- * For every racquet linked to the configurator, read its `configurator.strings_collection`
- * metafield (a collection reference), then resolve that collection to the list of recommended
- * string product ids. Returns racquetProductId -> [stringProductId, ...]; racquets without the
- * metafield are simply absent. Batched: one metafield read per 50 racquets, then each unique
- * recommended-collection fetched once.
+ * For every racquet linked to the configurator, read its `configurator.strings_collection` and
+ * `configurator.hybrid_strings_collection` metafields (collection references), then resolve each
+ * to the list of recommended string product ids. Returns { standard, hybrid }, each a map of
+ * racquetProductId -> [stringProductId, ...]; racquets/metafields that are unset are simply
+ * absent. Batched: one metafield read per 50 racquets (both keys at once), then each unique
+ * collection fetched once (shared across standard/hybrid when they reference the same one).
  */
 export async function resolveRecommendedStringsMap(
   admin: ShopifyAdmin,
   configurator: { productIds: string; collectionIds: string },
-): Promise<Record<string, string[]>> {
+): Promise<RecommendedStringsMaps> {
+  const empty: RecommendedStringsMaps = { standard: {}, hybrid: {} };
   const explicitIds = parseJson<string[]>(configurator.productIds ?? "[]", []);
   const collectionIds = parseJson<string[]>(configurator.collectionIds ?? "[]", []);
   const collectionProducts =
@@ -240,10 +250,11 @@ export async function resolveRecommendedStringsMap(
   const racquetIds = Array.from(
     new Set([...explicitIds, ...collectionProducts.map((p) => p.id)]),
   );
-  if (racquetIds.length === 0) return {};
+  if (racquetIds.length === 0) return empty;
 
-  // racquet product id -> normalized recommended-strings collection id
-  const racquetToCollection: Record<string, string> = {};
+  // racquet product id -> normalized recommended-strings collection id (standard / hybrid)
+  const racquetToStandard: Record<string, string> = {};
+  const racquetToHybrid: Record<string, string> = {};
   for (const batch of chunk(racquetIds, 50)) {
     const res = await admin.graphql(
       `
@@ -253,6 +264,7 @@ export async function resolveRecommendedStringsMap(
           ... on Product {
             legacyResourceId
             rec: metafield(namespace: "${RECOMMENDED_STRINGS_NAMESPACE}", key: "${RECOMMENDED_STRINGS_KEY}") { value }
+            recHybrid: metafield(namespace: "${RECOMMENDED_STRINGS_NAMESPACE}", key: "${RECOMMENDED_HYBRID_STRINGS_KEY}") { value }
           }
         }
       }
@@ -260,21 +272,32 @@ export async function resolveRecommendedStringsMap(
       { variables: { ids: batch.map((id) => toProductGid(id)) } },
     );
     const body = (await res.json()) as {
-      data?: { nodes?: Array<{ legacyResourceId?: string; rec?: { value?: string } | null } | null> };
+      data?: {
+        nodes?: Array<
+          | {
+              legacyResourceId?: string;
+              rec?: { value?: string } | null;
+              recHybrid?: { value?: string } | null;
+            }
+          | null
+        >;
+      };
     };
     for (const node of body.data?.nodes ?? []) {
-      const collectionRef = node?.rec?.value;
-      if (node?.legacyResourceId && collectionRef) {
-        racquetToCollection[normalizeProductId(node.legacyResourceId)] =
-          normalizeCollectionId(collectionRef);
-      }
+      if (!node?.legacyResourceId) continue;
+      const racquetId = normalizeProductId(node.legacyResourceId);
+      if (node.rec?.value) racquetToStandard[racquetId] = normalizeCollectionId(node.rec.value);
+      if (node.recHybrid?.value) racquetToHybrid[racquetId] = normalizeCollectionId(node.recHybrid.value);
     }
   }
 
-  const uniqueCollections = Array.from(new Set(Object.values(racquetToCollection)));
-  if (uniqueCollections.length === 0) return {};
+  const uniqueCollections = Array.from(
+    new Set([...Object.values(racquetToStandard), ...Object.values(racquetToHybrid)]),
+  );
+  if (uniqueCollections.length === 0) return empty;
 
-  // Fetch each unique recommended-strings collection once.
+  // Fetch each unique recommended-strings collection once (a collection referenced by both the
+  // standard and hybrid metafields, or by multiple racquets, is only fetched a single time).
   const collectionToProductIds: Record<string, string[]> = {};
   await Promise.all(
     uniqueCollections.map(async (cid) => {
@@ -283,12 +306,16 @@ export async function resolveRecommendedStringsMap(
     }),
   );
 
-  const result: Record<string, string[]> = {};
-  for (const [racquetId, cid] of Object.entries(racquetToCollection)) {
-    const ids = collectionToProductIds[cid];
-    if (ids?.length) result[racquetId] = ids;
-  }
-  return result;
+  const build = (racquetToCollection: Record<string, string>): Record<string, string[]> => {
+    const result: Record<string, string[]> = {};
+    for (const [racquetId, cid] of Object.entries(racquetToCollection)) {
+      const ids = collectionToProductIds[cid];
+      if (ids?.length) result[racquetId] = ids;
+    }
+    return result;
+  };
+
+  return { standard: build(racquetToStandard), hybrid: build(racquetToHybrid) };
 }
 
 /**
