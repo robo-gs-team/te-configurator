@@ -1,6 +1,5 @@
-import { toProductGid } from "~/lib/product-id";
-import { normalizeProductId } from "~/lib/product-id";
-import { parseJson, type TensionRange } from "~/lib/configurator.types";
+import { normalizeProductId, toProductGid } from "~/lib/product-id";
+import { DEFAULT_TENSION_RANGE, parseJson, type TensionRange } from "~/lib/configurator.types";
 import { getProductsInCollections } from "~/lib/shopify-collections.server";
 
 type ShopifyAdmin = {
@@ -112,9 +111,45 @@ type TensionMetafieldsResponse = {
 };
 
 /**
- * Fetch per-racquet tension metafields for a set of product ids. A product is only included
- * in the result if all three fields are set and form a sane range (min < max, recommended
- * inside it) — otherwise it's omitted so callers fall back to a sane default.
+ * Merge a racquet's raw min/max/recommended metafield values into a usable TensionRange,
+ * tolerating partial data instead of discarding the whole racquet when one field is blank.
+ *
+ * - All three set and sane (min < max, recommended inside it) → used as-is.
+ * - Only `recommended` set → paired with the generic default min/max, widened to include
+ *   `recommended` if the merchant's real value falls outside that default range.
+ * - Only min/max set (sane) → used as-is, with `recommended` defaulted (clamped into them).
+ * - Nothing usable set → null, so the caller falls back to the full generic default.
+ */
+function mergeTensionFields(
+  min: number,
+  max: number,
+  recommended: number,
+): TensionRange | null {
+  const hasMin = Number.isFinite(min);
+  const hasMax = Number.isFinite(max);
+  const hasRecommended = Number.isFinite(recommended);
+  if (!hasMin && !hasMax && !hasRecommended) return null;
+
+  const rangeSane = hasMin && hasMax && min < max;
+  let resolvedMin = rangeSane ? min : DEFAULT_TENSION_RANGE.min;
+  let resolvedMax = rangeSane ? max : DEFAULT_TENSION_RANGE.max;
+  const resolvedRecommended = hasRecommended
+    ? recommended
+    : Math.min(resolvedMax, Math.max(resolvedMin, DEFAULT_TENSION_RANGE.recommended));
+
+  // Never silently discard a real merchant-entered recommended value that falls outside
+  // whatever min/max we ended up with — widen the range to include it instead.
+  if (resolvedRecommended < resolvedMin) resolvedMin = resolvedRecommended;
+  if (resolvedRecommended > resolvedMax) resolvedMax = resolvedRecommended;
+
+  return { min: resolvedMin, max: resolvedMax, recommended: resolvedRecommended };
+}
+
+/**
+ * Fetch per-racquet tension metafields for a set of product ids. A product is included in the
+ * result as long as at least one of the three fields is usable — see mergeTensionFields for how
+ * partial data is filled in. A racquet with none of the three set is omitted entirely so the
+ * caller falls back to the full generic default.
  */
 export async function getRacquetTensionMetafields(
   admin: ShopifyAdmin,
@@ -147,15 +182,9 @@ export async function getRacquetTensionMetafields(
     const min = parseInt(node.tensionMin?.value ?? "", 10);
     const max = parseInt(node.tensionMax?.value ?? "", 10);
     const recommended = parseInt(node.tensionRecommended?.value ?? "", 10);
-    if (
-      Number.isFinite(min) &&
-      Number.isFinite(max) &&
-      Number.isFinite(recommended) &&
-      min < max &&
-      recommended >= min &&
-      recommended <= max
-    ) {
-      result[normalizeProductId(node.legacyResourceId)] = { min, max, recommended };
+    const merged = mergeTensionFields(min, max, recommended);
+    if (merged) {
+      result[normalizeProductId(node.legacyResourceId)] = merged;
     }
   }
 
