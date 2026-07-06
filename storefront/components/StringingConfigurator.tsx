@@ -58,9 +58,15 @@ function normalizeBed(product: StringProduct, bed: BedSelection): BedSelection {
   };
 }
 
+// Page size for the string list's "Show more" pagination — keeps the initial render short even
+// when a merchant's catalog has dozens of strings, without hiding anything behind a filter.
+const STRING_PAGE_SIZE = 20;
+
 function filterCatalog(catalog: StringProduct[], filter: string) {
-  if (filter === "all") return catalog;
-  return catalog.filter((s) => s.type === filter);
+  const matching = filter === "all" ? catalog : catalog.filter((s) => s.type === filter);
+  // Array.prototype.sort is stable (ES2019+), so this only moves recommended items to the
+  // front — it doesn't otherwise reorder the merchant's original catalog order.
+  return [...matching].sort((a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)));
 }
 
 function ModeToggle() {
@@ -99,13 +105,21 @@ function StringCatalog({
   onSelect: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<string>("all");
+  const [visibleCount, setVisibleCount] = useState(STRING_PAGE_SIZE);
   const filtered = filterCatalog(catalog, filter);
+  const visible = filtered.slice(0, visibleCount);
+  const remaining = filtered.length - visible.length;
   const selectedClass =
     accent === "mains"
       ? "proto-desk-string-row--m"
       : accent === "crosses"
         ? "proto-desk-string-row--c"
         : "proto-desk-string-row--selected";
+
+  const selectFilter = (id: string) => {
+    setFilter(id);
+    setVisibleCount(STRING_PAGE_SIZE);
+  };
 
   return (
     <>
@@ -115,14 +129,14 @@ function StringCatalog({
             key={chip.id}
             type="button"
             className={`proto-desk-chip ${filter === chip.id ? "proto-desk-chip--active" : ""}`}
-            onClick={() => setFilter(chip.id)}
+            onClick={() => selectFilter(chip.id)}
           >
             {chip.label}
           </button>
         ))}
       </div>
       <div className="proto-desk-string-list">
-        {filtered.map((product) => {
+        {visible.map((product) => {
           const isSelected = product.id === selectedId;
           return (
             <button
@@ -158,6 +172,15 @@ function StringCatalog({
           );
         })}
       </div>
+      {remaining > 0 && (
+        <button
+          type="button"
+          className="proto-desk-load-more"
+          onClick={() => setVisibleCount((count) => count + STRING_PAGE_SIZE)}
+        >
+          Show {Math.min(remaining, STRING_PAGE_SIZE)} more ({remaining} left)
+        </button>
+      )}
     </>
   );
 }
