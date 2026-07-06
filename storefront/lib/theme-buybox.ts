@@ -46,20 +46,6 @@ function canHideElement(el: HTMLElement): boolean {
 }
 
 /**
- * Locate the product's add-to-cart form (Dawn-style `<product-form>` first, then any form
- * posting to /cart/add).
- *
- * NOTE: currently unused within this module; retained as a helper/anchor for buy-box scans.
- * @returns The form element, or null if not found.
- */
-function getProductForm(): Element | null {
-  return (
-    document.querySelector("product-form form") ??
-    document.querySelector('form[action*="/cart/add"]')
-  );
-}
-
-/**
  * Scan the page for "Buy now" / accelerated-checkout / express-checkout buttons that are
  * safe to hide. Matches several known theme selectors and filters out the app's own UI.
  * @returns The matching checkout elements (may be empty).

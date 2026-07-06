@@ -6,7 +6,6 @@ import type {
 import {
   calculatePrice,
   getDefaultSelections,
-  getPreviewLayers,
   getSelectedVariantId,
 } from "~/lib/conditional-logic";
 import type { BedSelection } from "../lib/string-catalog";
@@ -19,31 +18,23 @@ import {
   usesStringingUi,
 } from "../lib/string-catalog";
 
-export type ConfiguratorStep = "variant" | "preview" | "addons" | "summary" | "cart";
 export type StringingMode = "standard" | "hybrid";
-export type HybridStep = "mains" | "crosses" | "review";
 
 interface ConfiguratorStore {
   isOpen: boolean;
   productId: string | null;
   configurator: StorefrontConfigurator | null;
-  currentStep: ConfiguratorStep;
-  stepIndex: number;
   selections: SelectionState;
   addonSelections: Record<string, number>;
   isAddingToCart: boolean;
   cartError: string | null;
   shareUrl: string | null;
   stringingMode: StringingMode;
-  hybridStep: HybridStep;
   standardBed: BedSelection;
   hybridBeds: { mains: BedSelection; crosses: BedSelection };
 
   open: (productId: string, configurator: StorefrontConfigurator) => void;
   close: () => void;
-  setStep: (step: ConfiguratorStep) => void;
-  nextStep: () => void;
-  prevStep: () => void;
   selectOption: (groupId: string, optionId: string) => void;
   toggleAddon: (addonId: string) => void;
   setAddonQuantity: (addonId: string, qty: number) => void;
@@ -55,37 +46,24 @@ interface ConfiguratorStore {
   setCartError: (err: string | null) => void;
   setShareUrl: (url: string | null) => void;
   setStringingMode: (mode: StringingMode) => void;
-  setHybridStep: (step: HybridStep) => void;
   updateStandardBed: (patch: Partial<BedSelection>) => void;
   updateHybridBed: (side: "mains" | "crosses", patch: Partial<BedSelection>) => void;
 
   getPrice: () => ReturnType<typeof calculatePrice>;
   getStringingTotal: () => number;
-  getLayers: () => string[];
   getVariantId: () => string | null;
 }
-
-const STEPS: ConfiguratorStep[] = [
-  "variant",
-  "preview",
-  "addons",
-  "summary",
-  "cart",
-];
 
 export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
       isOpen: false,
       productId: null,
       configurator: null,
-      currentStep: "variant",
-      stepIndex: 0,
       selections: {},
       addonSelections: {},
       isAddingToCart: false,
       cartError: null,
       shareUrl: null,
       stringingMode: "standard",
-      hybridStep: "mains",
       standardBed: defaultBed(resolveStringCatalog(null), DEFAULT_TENSION_RANGE),
       hybridBeds: defaultHybridBeds(resolveStringCatalog(null), DEFAULT_TENSION_RANGE),
 
@@ -100,8 +78,6 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
           isOpen: true,
           productId,
           configurator,
-          currentStep: "variant",
-          stepIndex: 0,
           selections: sameProduct
             ? saved.selections
             : getDefaultSelections(configurator),
@@ -109,7 +85,6 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
           cartError: null,
           shareUrl: null,
           stringingMode: sameProduct ? saved.stringingMode : "standard",
-          hybridStep: sameProduct ? saved.hybridStep : "mains",
           standardBed: sameProduct
             ? saved.standardBed
             : defaultBed(catalog, tensionRange),
@@ -120,31 +95,6 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
       },
 
       close: () => set({ isOpen: false, cartError: null }),
-
-      setStep: (step) => {
-        const idx = STEPS.indexOf(step);
-        set({ currentStep: step, stepIndex: idx >= 0 ? idx : 0 });
-      },
-
-      nextStep: () => {
-        const { stepIndex } = get();
-        if (stepIndex < STEPS.length - 1) {
-          set({
-            stepIndex: stepIndex + 1,
-            currentStep: STEPS[stepIndex + 1],
-          });
-        }
-      },
-
-      prevStep: () => {
-        const { stepIndex } = get();
-        if (stepIndex > 0) {
-          set({
-            stepIndex: stepIndex - 1,
-            currentStep: STEPS[stepIndex - 1],
-          });
-        }
-      },
 
       selectOption: (groupId, optionId) => {
         set((s) => ({
@@ -171,7 +121,7 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
       },
 
       restoreFromShare: (selections, addons) => {
-        set({ selections, addonSelections: addons, currentStep: "summary", stepIndex: 3 });
+        set({ selections, addonSelections: addons });
       },
 
       setAddingToCart: (v) => set({ isAddingToCart: v }),
@@ -179,8 +129,6 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
       setShareUrl: (url) => set({ shareUrl: url }),
 
       setStringingMode: (mode) => set({ stringingMode: mode }),
-
-      setHybridStep: (step) => set({ hybridStep: step }),
 
       updateStandardBed: (patch) =>
         set((s) => ({ standardBed: { ...s.standardBed, ...patch } })),
@@ -214,7 +162,7 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
       },
 
       getPrice: () => {
-        const { configurator, selections, addonSelections, stringingMode } = get();
+        const { configurator, selections, addonSelections } = get();
         if (!configurator)
           return { base: 0, options: [], addons: [], total: 0 };
         const breakdown = calculatePrice(configurator, selections, addonSelections);
@@ -224,12 +172,6 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
         return breakdown;
       },
 
-      getLayers: () => {
-        const { configurator, selections } = get();
-        if (!configurator) return [];
-        return getPreviewLayers(configurator, selections);
-      },
-
       getVariantId: () => {
         const { configurator, selections } = get();
         if (!configurator) return null;
@@ -237,5 +179,3 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
         return getSelectedVariantId(configurator, selections);
       },
     }));
-
-export { STEPS };

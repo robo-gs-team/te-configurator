@@ -10,10 +10,10 @@ import {
 } from "./lib/product-linkage";
 import {
   getProductInfoInsertPoint,
+  invalidateThemeBlockCache,
   scheduleConfiguratorRelocation,
 } from "./lib/theme-placement";
 import type { StorefrontConfigurator } from "~/lib/configurator.types";
-import { getDefaultSelections } from "~/lib/conditional-logic";
 import type { ProtoConfiguratorModalApi } from "./modal-entry";
 import "./styles.css";
 
@@ -392,7 +392,12 @@ async function initStorefrontUi() {
   }
 
   markProductLinkagePending();
-  const { configurator } = await fetchConfigurator(productId);
+  // Reuse the per-product cache when this re-runs on a `shopify:section:load` for the same
+  // product — avoids a redundant round trip to the App Proxy on every section reload.
+  const cached = configuratorCache.get(productId);
+  const { configurator } = cached
+    ? { configurator: cached }
+    : await fetchConfigurator(productId);
   if (!configurator) {
     markProductUnlinked();
     return;
@@ -424,6 +429,7 @@ async function initStorefrontUi() {
  * (or immediately when a share link is present), keeping page-load JS tiny.
  */
 function boot() {
+  invalidateThemeBlockCache();
   initConfigureClickDelegation();
   initStringingPageGate();
   void initStorefrontUi();
@@ -437,6 +443,7 @@ if (document.readyState === "loading") {
 }
 
 document.addEventListener("shopify:section:load", () => {
+  invalidateThemeBlockCache();
   initStringingPageGate();
   void initStorefrontUi();
 });
@@ -455,5 +462,3 @@ window.ProtoConfigurator = {
     window.ProtoConfiguratorModal?.close();
   },
 };
-
-export { getDefaultSelections };
