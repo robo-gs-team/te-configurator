@@ -14,7 +14,10 @@ import type { TensionRange } from "~/lib/configurator.types";
 import { sanitizeInput } from "~/lib/conditional-logic";
 import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { normalizeProductId } from "~/lib/product-id";
-import { resolveRacquetTensionMap } from "~/lib/product-metafields.server";
+import {
+  resolveRacquetTensionMap,
+  resolveRecommendedStringsMap,
+} from "~/lib/product-metafields.server";
 import type { StoredSnapshot } from "~/lib/snapshot.server";
 import {
   getCachedProxyResponse,
@@ -102,8 +105,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         // Per-racquet tension (spec §3): pick this specific product's range out of the
         // snapshot's map, falling back to the default when this racquet has no metafields set.
         const tensionRange = stored.racquetTensionByProductId?.[productId] ?? DEFAULT_TENSION_RANGE;
+        const recommendedStringProductIds =
+          stored.recommendedStringsByRacquet?.[productId] ?? [];
         const responseData = {
-          configurator: { ...stored.configurator, tensionRange },
+          configurator: { ...stored.configurator, tensionRange, recommendedStringProductIds },
         };
         setCachedProxyResponse(shopDomain, productId, responseData);
         return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "SNAPSHOT" } });
@@ -114,7 +119,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
 
     // Snapshot not yet built (or corrupt) — fall back to live enrichment
-    const [enrichedConfigurator, shop, tensionMap] = await Promise.all([
+    const [enrichedConfigurator, shop, tensionMap, recommendedMap] = await Promise.all([
       admin
         ? enrichConfiguratorWithShopifyData(admin, lookup.configurator)
         : Promise.resolve(lookup.configurator),
@@ -122,13 +127,22 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       admin
         ? resolveRacquetTensionMap(admin, lookup.configurator)
         : Promise.resolve<Record<string, TensionRange>>({}),
+      admin
+        ? resolveRecommendedStringsMap(admin, lookup.configurator)
+        : Promise.resolve<Record<string, string[]>>({}),
     ]);
 
     const theme = await getShopThemeSettings(shop.id);
     const tensionRange = tensionMap[productId] ?? DEFAULT_TENSION_RANGE;
+    const recommendedStringProductIds = recommendedMap[productId] ?? [];
 
     const responseData = {
-      configurator: serializeConfiguratorPayload(enrichedConfigurator, theme, tensionRange),
+      configurator: serializeConfiguratorPayload(
+        enrichedConfigurator,
+        theme,
+        tensionRange,
+        recommendedStringProductIds,
+      ),
     };
     setCachedProxyResponse(shopDomain, productId, responseData);
 
@@ -159,7 +173,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         const stored = JSON.parse(snap) as StoredSnapshot;
         const tensionRange =
           stored.racquetTensionByProductId?.[saved.productId] ?? DEFAULT_TENSION_RANGE;
-        serializedConfigurator = { ...stored.configurator, tensionRange };
+        const recommendedStringProductIds =
+          stored.recommendedStringsByRacquet?.[saved.productId] ?? [];
+        serializedConfigurator = {
+          ...stored.configurator,
+          tensionRange,
+          recommendedStringProductIds,
+        };
       } catch {
         // Corrupt snapshot — fall through to live enrichment.
       }
@@ -174,16 +194,25 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
       const shop = await ensureShop(shopDomain);
       const theme = await getShopThemeSettings(shop.id);
-      const [enriched, tensionMap] = await Promise.all([
+      const [enriched, tensionMap, recommendedMap] = await Promise.all([
         admin
           ? enrichConfiguratorWithShopifyData(admin, configurator)
           : Promise.resolve(configurator),
         admin
           ? resolveRacquetTensionMap(admin, configurator)
           : Promise.resolve<Record<string, TensionRange>>({}),
+        admin
+          ? resolveRecommendedStringsMap(admin, configurator)
+          : Promise.resolve<Record<string, string[]>>({}),
       ]);
       const tensionRange = tensionMap[saved.productId] ?? DEFAULT_TENSION_RANGE;
-      serializedConfigurator = serializeConfiguratorPayload(enriched, theme, tensionRange);
+      const recommendedStringProductIds = recommendedMap[saved.productId] ?? [];
+      serializedConfigurator = serializeConfiguratorPayload(
+        enriched,
+        theme,
+        tensionRange,
+        recommendedStringProductIds,
+      );
     }
 
     return json({

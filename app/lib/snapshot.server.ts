@@ -2,7 +2,10 @@ import prisma from "~/db.server";
 import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { getConfiguratorById, getShopThemeSettings } from "~/lib/configurator.server";
 import { invalidateProxyCache } from "~/lib/proxy-cache.server";
-import { resolveRacquetTensionMap } from "~/lib/product-metafields.server";
+import {
+  resolveRacquetTensionMap,
+  resolveRecommendedStringsMap,
+} from "~/lib/product-metafields.server";
 import { DEFAULT_TENSION_RANGE, serializeConfiguratorPayload } from "~/lib/configurator.types";
 import type { ConfiguratorWithRelations, TensionRange } from "~/lib/configurator.types";
 
@@ -20,6 +23,10 @@ type ShopifyAdmin = {
 export type StoredSnapshot = {
   configurator: ReturnType<typeof serializeConfiguratorPayload>;
   racquetTensionByProductId: Record<string, TensionRange>;
+  // Per-racquet recommended string product ids (from each racquet's strings_collection metafield);
+  // the proxy picks the entry for the viewed racquet and passes it to the storefront's default
+  // "Recommended" filter. Absent racquets simply have no recommended set.
+  recommendedStringsByRacquet: Record<string, string[]>;
 };
 
 export async function buildAndStoreSnapshot(
@@ -27,15 +34,18 @@ export async function buildAndStoreSnapshot(
   configurator: ConfiguratorWithRelations,
   shopId: string,
 ): Promise<void> {
-  const [enriched, theme, racquetTensionByProductId] = await Promise.all([
-    enrichConfiguratorWithShopifyData(admin, configurator),
-    getShopThemeSettings(shopId),
-    resolveRacquetTensionMap(admin, configurator),
-  ]);
+  const [enriched, theme, racquetTensionByProductId, recommendedStringsByRacquet] =
+    await Promise.all([
+      enrichConfiguratorWithShopifyData(admin, configurator),
+      getShopThemeSettings(shopId),
+      resolveRacquetTensionMap(admin, configurator),
+      resolveRecommendedStringsMap(admin, configurator),
+    ]);
 
   const payload: StoredSnapshot = {
     configurator: serializeConfiguratorPayload(enriched, theme, DEFAULT_TENSION_RANGE),
     racquetTensionByProductId,
+    recommendedStringsByRacquet,
   };
 
   await prisma.configurator.update({
