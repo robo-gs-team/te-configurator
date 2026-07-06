@@ -274,7 +274,12 @@ export async function enrichConfiguratorWithShopifyData(
               ? topLevelStringProducts
               : [];
 
-          const manualOptions = group.options
+          // For a stringing config that sources strings from the top-level String collections/
+          // products, ignore this group's legacy MANUAL options entirely — those are leftovers
+          // from the old step-based editor (e.g. a stringing machine) and shouldn't reach shoppers.
+          // Configs with no top-level string source keep their manual options as a fallback.
+          const dropManualOptions = isStringGroup && topLevelStringProducts.length > 0;
+          const manualOptions = (dropManualOptions ? [] : group.options)
             .filter((option) => !isExcluded(option.productId))
             .map((option) => {
             const productMeta = option.productId

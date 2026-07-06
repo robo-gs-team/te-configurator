@@ -17,7 +17,7 @@ import type {
   StorefrontConfigurator,
 } from "~/lib/configurator.types";
 import type { BedSelection } from "./string-catalog";
-import { usesStringingUi } from "./string-catalog";
+import { getStringById, resolveStringCatalog, usesStringingUi } from "./string-catalog";
 import { buildStringingProperties } from "./stringing-cart";
 import type { StringingMode } from "../store/configurator-store";
 
@@ -56,15 +56,12 @@ function pushVariantLine(
 /**
  * Build and submit the cart for a completed configuration.
  *
- * Assembles up to three kinds of line: (1) the racquet variant carrying all configuration as
- * line-item properties — stringing specs for the stringing UI, or generic selection properties
- * otherwise; (2) the optional labor/service line (stringing only), tagged `_line_type: labor`
- * + `_parent_configurator`; (3) one line per selected add-on, tagged `_parent_configurator`.
- * Posts all lines in one /cart/add.js request, then fires cart events and opens the drawer.
- *
- * GOTCHA (known v1 bug): on a failed multi-line POST for stringing it retries with ONLY the
- * racquet line and still returns success — silently dropping the labor line. v2 should surface
- * a real error instead (see HOW_IT_WORKS_ON_SITE.md / V2_PLAN.md).
+ * For the stringing UI it assembles: (1) the racquet variant carrying the full spec as line-item
+ * properties; (2) one line per selected string variant (standard = one, hybrid = mains + crosses),
+ * tagged `_line_type: string` — so the cart total matches the modal's racquet + string(s) + labor
+ * breakdown; (3) the optional labor/service line, tagged `_line_type: labor`; (4) one line per
+ * selected add-on. For the generic UI it's the racquet line + add-ons. Posts all lines in one
+ * /cart/add.js request, then fires cart events and opens the drawer.
  *
  * @param variantId Racquet variant id; falls back to reading it from the page if null.
  * @param stringing Present only when the stringing UI is in use; carries mode + bed selections.
@@ -112,8 +109,30 @@ export async function addToShopifyCart(
   ];
 
   if (isStringing && stringing) {
-    // String SKUs are catalog references — selections are stored on the racket line.
-    // Only the optional labor service is added as a separate cart line.
+    // Charge the selected string(s) as their own cart line(s) so the cart total matches the
+    // modal's breakdown (racquet + string(s) + labor). Standard = the one bed's string; hybrid =
+    // the mains + crosses strings. The racquet line still carries the full spec as properties.
+    const catalog = resolveStringCatalog(configurator);
+    const stringBeds =
+      stringing.mode === "standard"
+        ? [{ bed: stringing.standardBed, side: "" }]
+        : [
+            { bed: stringing.hybridBeds.mains, side: "Mains" },
+            { bed: stringing.hybridBeds.crosses, side: "Crosses" },
+          ];
+    for (const { bed, side } of stringBeds) {
+      const stringProduct = getStringById(catalog, bed.stringId);
+      pushVariantLine(items, stringProduct?.variantId, 1, {
+        ...parentTag,
+        _line_type: "string",
+        ...(side ? { _string_side: side } : {}),
+        Gauge: `${bed.gauge}g`,
+        Color: bed.color,
+        Tension: `${bed.tension} lbs`,
+      });
+    }
+
+    // The optional labor/stringing service.
     if (configurator.laborVariantId) {
       pushVariantLine(items, configurator.laborVariantId, 1, {
         ...parentTag,
@@ -240,6 +259,44 @@ function getProductVariantFromPage(): string | null {
     } catch {
       /* ignore malformed JSON */
     }
+  }
+
+  return null;
+}
+
+/**
+ * Best-effort read of the current racquet's price from the product page, so the configurator's
+ * "Racquet" line and total reflect the real product price rather than a manually-entered value.
+ * Reads the selected/first variant's price from the embedded product JSON (Shopify prices are in
+ * cents), falling back to a `[data-selected-variant-price]` element. Returns null if unavailable,
+ * so the caller can fall back to the configurator's stored base price.
+ */
+export function getProductPriceFromPage(): number | null {
+  const productJson = document.querySelector<HTMLScriptElement>(
+    'script[type="application/json"][data-product-json], script[type="application/json"][id*="ProductJson"]',
+  );
+  if (productJson?.textContent) {
+    try {
+      const data = JSON.parse(productJson.textContent) as {
+        selected_or_first_available_variant?: { price?: number | string };
+        variants?: Array<{ price?: number | string }>;
+      };
+      const raw =
+        data.selected_or_first_available_variant?.price ?? data.variants?.[0]?.price;
+      if (raw != null) {
+        const cents = Number(raw);
+        if (Number.isFinite(cents)) return cents / 100;
+      }
+    } catch {
+      /* ignore malformed JSON */
+    }
+  }
+
+  const priceEl = document.querySelector<HTMLElement>("[data-selected-variant-price]");
+  const attr = priceEl?.dataset.selectedVariantPrice;
+  if (attr) {
+    const cents = Number(attr);
+    if (Number.isFinite(cents)) return cents / 100;
   }
 
   return null;

@@ -442,7 +442,8 @@ export default function EditConfigurator() {
   const [selectedStringProducts, setSelectedStringProducts] = useState(stringProducts);
   const [excludedProductsSel, setExcludedProductsSel] = useState(excludedProducts);
   const [laborProduct, setLaborProduct] = useState<LaborProductSelection | null>(labor);
-  const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
+  // Kept only as a hidden fallback value; the racquet price is now read live from the page.
+  const [basePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
   const [allowOutOfStock, setAllowOutOfStock] = useState(
     Boolean((configurator as { allowOutOfStock?: boolean }).allowOutOfStock),
@@ -589,7 +590,7 @@ export default function EditConfigurator() {
                     }
                     tone={laborProduct ? undefined : "critical"}
                   />
-                  <SummaryRow label="Base price" value={`$${(parseFloat(basePrice) || 0).toFixed(2)}`} />
+                  <SummaryRow label="Racquet price" value="Pulled live from the product page" />
                   <SummaryRow
                     label="Add-ons"
                     value={
@@ -687,16 +688,9 @@ export default function EditConfigurator() {
                     onChange={setExcludedProductsSel}
                   />
                   <LaborProductPicker selected={laborProduct} onChange={setLaborProduct} />
-                  <TextField
-                    label={<FieldLabel facing="shopper">Base price</FieldLabel>}
-                    name="basePrice"
-                    value={basePrice}
-                    onChange={setBasePrice}
-                    helpText="The racquet line in the price breakdown shoppers see."
-                    type="number"
-                    prefix="$"
-                    autoComplete="off"
-                  />
+                  {/* The racquet price is pulled live from the product page at open time — no
+                      manual base price needed. `basePrice` stays in the DB as a fallback only. */}
+                  <input type="hidden" name="basePrice" value={basePrice} />
                   <Checkbox
                     label={<FieldLabel facing="setup">Active</FieldLabel>}
                     checked={isActive}
@@ -721,6 +715,10 @@ export default function EditConfigurator() {
               </BlockStack>
             </Card>
 
+            {/* Steps & options is the legacy generic-configurator editor. Stringing configurators
+                (which have a labor product) source everything from the fields above, so it's just
+                clutter there — hide it. Any leftover manual step data is ignored by enrichment. */}
+            {!laborProduct && (
             <Card>
               <BlockStack gap="400">
               <Text as="h2" variant="headingMd">
@@ -814,6 +812,7 @@ export default function EditConfigurator() {
               </Button>
               </BlockStack>
             </Card>
+            )}
             </BlockStack>
           </Form>
         </Layout.Section>

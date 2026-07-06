@@ -17,6 +17,7 @@ import {
   resolveStringCatalog,
   usesStringingUi,
 } from "../lib/string-catalog";
+import { getProductPriceFromPage } from "../lib/cart";
 
 export type StringingMode = "standard" | "hybrid";
 
@@ -24,6 +25,9 @@ interface ConfiguratorStore {
   isOpen: boolean;
   productId: string | null;
   configurator: StorefrontConfigurator | null;
+  // The live racquet price read from the product page at open() time; drives the "Racquet" line
+  // and total instead of a manually-entered base price. Null when the page price can't be read.
+  racquetPrice: number | null;
   selections: SelectionState;
   addonSelections: Record<string, number>;
   isAddingToCart: boolean;
@@ -58,6 +62,7 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
       isOpen: false,
       productId: null,
       configurator: null,
+      racquetPrice: null,
       selections: {},
       addonSelections: {},
       isAddingToCart: false,
@@ -78,6 +83,7 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
           isOpen: true,
           productId,
           configurator,
+          racquetPrice: getProductPriceFromPage(),
           selections: sameProduct
             ? saved.selections
             : getDefaultSelections(configurator),
@@ -142,10 +148,11 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
         })),
 
       getStringingTotal: () => {
-        const { configurator, stringingMode, standardBed, hybridBeds } = get();
+        const { configurator, stringingMode, standardBed, hybridBeds, racquetPrice } = get();
         if (!configurator) return 0;
         const catalog = resolveStringCatalog(configurator);
-        let total = configurator.basePrice;
+        // Prefer the live racquet price from the page; fall back to the stored base price.
+        let total = racquetPrice ?? configurator.basePrice;
 
         if (stringingMode === "standard") {
           const product = getStringById(catalog, standardBed.stringId);
