@@ -1,10 +1,11 @@
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { BlockStack, Button, InlineStack, Tag, Text } from "@shopify/polaris";
+import type { ReactNode } from "react";
 import { toProductGid } from "~/lib/product-id";
 import type { ProductSummary } from "~/lib/shopify-products.server";
 
 type Props = {
-  label?: string;
+  label?: ReactNode;
   helpText?: string;
   name?: string;
   multiple?: boolean;
@@ -50,9 +51,13 @@ export function ProductPicker({
 
   return (
     <BlockStack gap="200">
-      <Text as="p" variant="bodyMd" fontWeight="semibold">
-        {label}
-      </Text>
+      {typeof label === "string" ? (
+        <Text as="p" variant="bodyMd" fontWeight="semibold">
+          {label}
+        </Text>
+      ) : (
+        label
+      )}
       {helpText ? (
         <Text as="p" variant="bodySm" tone="subdued">
           {helpText}

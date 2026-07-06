@@ -192,6 +192,31 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   gap: 0;
 }
 
+.proto-desk-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  margin-bottom: 10px;
+  border: 1px solid #d4d4d4;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #1a1a1a;
+  background: #fff;
+}
+
+.proto-desk-search:focus {
+  outline: 2px solid rgba(200, 16, 46, 0.25);
+  outline-offset: 1px;
+  border-color: #c8102e;
+}
+
+.proto-desk-string-empty {
+  padding: 20px 4px;
+  text-align: center;
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .proto-desk-chips {
   display: flex;
   gap: 5px;

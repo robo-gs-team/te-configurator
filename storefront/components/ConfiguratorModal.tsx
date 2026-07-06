@@ -297,7 +297,9 @@ export function ConfiguratorModal() {
             </footer>
             )}
 
-            {cartError && (
+            {/* Stringing flow renders its own cartError inside StringingConfigurator, so only
+                show this one for the generic flow — otherwise a stringing error appears twice. */}
+            {cartError && !isStringing && (
               <div className="absolute bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-red-500/90 text-white text-sm">
                 {cartError}
               </div>

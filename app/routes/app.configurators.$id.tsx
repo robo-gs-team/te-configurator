@@ -368,6 +368,28 @@ function SummaryRow({
   );
 }
 
+// A field label carrying a badge that tells the merchant whether shoppers see this field.
+// "shopper" = the value (or the products it selects) is visible in the storefront modal/cart;
+// "setup" = it only controls behaviour (e.g. where the button appears) and is never shown.
+function FieldLabel({
+  children,
+  facing,
+}: {
+  children: string;
+  facing: "shopper" | "setup";
+}) {
+  return (
+    <InlineStack gap="200" blockAlign="center">
+      <Text as="span" variant="bodyMd" fontWeight="semibold">
+        {children}
+      </Text>
+      <Badge tone={facing === "shopper" ? "info" : undefined}>
+        {facing === "shopper" ? "Shown to shoppers" : "Setup only"}
+      </Badge>
+    </InlineStack>
+  );
+}
+
 export default function EditConfigurator() {
   const {
     configurator,
@@ -537,24 +559,39 @@ export default function EditConfigurator() {
                 <Text as="h2" variant="headingMd">
                   General settings
                 </Text>
+                <Banner tone="info">
+                  <p>
+                    <Badge tone="info">Shown to shoppers</Badge> fields appear in the storefront
+                    modal or cart exactly as entered. <Badge>Setup only</Badge> fields never show
+                    to shoppers — they just control how the configurator behaves.
+                  </p>
+                </Banner>
                 <FormLayout>
-                  <TextField label="Name" name="name" value={name} onChange={setName} autoComplete="off" />
                   <TextField
-                    label="Description"
+                    label={<FieldLabel facing="shopper">Name</FieldLabel>}
+                    name="name"
+                    value={name}
+                    onChange={setName}
+                    helpText="Appears as the title at the top of the configurator modal."
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label={<FieldLabel facing="shopper">Description</FieldLabel>}
                     name="description"
                     value={description}
                     onChange={setDescription}
+                    helpText="Appears as the subtitle under the name in the modal."
                     multiline={2}
                     autoComplete="off"
                   />
                   <CollectionPicker
-                    label="Racquet collections"
+                    label={<FieldLabel facing="setup">Racquet collections</FieldLabel>}
                     helpText="Products in these collections will show the Configure button."
                     selected={selectedCollections}
                     onChange={setSelectedCollections}
                   />
                   <ProductPicker
-                    label="Individual racquet products"
+                    label={<FieldLabel facing="setup">Individual racquet products</FieldLabel>}
                     helpText="These specific products will also show the Configure button."
                     selected={selectedProducts}
                     onChange={setSelectedProducts}
@@ -576,14 +613,14 @@ export default function EditConfigurator() {
                     </BlockStack>
                   </Banner>
                   <CollectionPicker
-                    label="String collections"
-                    helpText="Products in these collections appear as string options in the configurator."
+                    label={<FieldLabel facing="shopper">String collections</FieldLabel>}
+                    helpText="Products in these collections appear as string options shoppers can pick in the configurator."
                     name="stringCollectionIds"
                     selected={selectedStringCollections}
                     onChange={setSelectedStringCollections}
                   />
                   <ProductPicker
-                    label="Individual string products"
+                    label={<FieldLabel facing="shopper">Individual string products</FieldLabel>}
                     helpText="These specific products also appear as string options, in addition to any string collections above."
                     name="stringProductIds"
                     selected={selectedStringProducts}
@@ -591,15 +628,20 @@ export default function EditConfigurator() {
                   />
                   <LaborProductPicker selected={laborProduct} onChange={setLaborProduct} />
                   <TextField
-                    label="Base price"
+                    label={<FieldLabel facing="shopper">Base price</FieldLabel>}
                     name="basePrice"
                     value={basePrice}
                     onChange={setBasePrice}
+                    helpText="The racquet line in the price breakdown shoppers see."
                     type="number"
                     prefix="$"
                     autoComplete="off"
                   />
-                  <Checkbox label="Active" checked={isActive} onChange={setIsActive} />
+                  <Checkbox
+                    label={<FieldLabel facing="setup">Active</FieldLabel>}
+                    checked={isActive}
+                    onChange={setIsActive}
+                  />
                   {isActive ? (
                     <input type="hidden" name="isActive" value="on" />
                   ) : null}
