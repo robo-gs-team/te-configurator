@@ -216,6 +216,16 @@ export async function enrichConfiguratorWithShopifyData(
       .stringProductIds ?? "[]",
     [],
   );
+  // Products the merchant explicitly excluded — hidden from the string list regardless of which
+  // collection/product source they came in through (e.g. a stringing machine in a string collection).
+  const excludedIds = new Set(
+    parseJson<string[]>(
+      (configurator as ConfiguratorWithRelations & { excludedProductIds?: string })
+        .excludedProductIds ?? "[]",
+      [],
+    ),
+  );
+  const isExcluded = (id: string | null | undefined) => Boolean(id) && excludedIds.has(String(id));
 
   const [imageByProductId, stringCollectionProducts, stringIndividualProducts] = await Promise.all([
     manualProductIds.length > 0
@@ -229,13 +239,14 @@ export async function enrichConfiguratorWithShopifyData(
       : Promise.resolve([]),
   ]);
 
-  // Dedup — a merchant could add the same product both via a collection and individually.
+  // Dedup — a merchant could add the same product both via a collection and individually —
+  // then drop any explicitly-excluded products (e.g. a stringing machine).
   const topLevelStringProducts = [
     ...stringCollectionProducts,
     ...stringIndividualProducts.filter(
       (p) => !stringCollectionProducts.some((cp) => cp.id === p.id),
     ),
-  ];
+  ].filter((p) => !isExcluded(p.id));
 
   const enrichedSteps = await Promise.all(
     configurator.steps.map(async (step) => ({
@@ -262,7 +273,9 @@ export async function enrichConfiguratorWithShopifyData(
               ? topLevelStringProducts
               : [];
 
-          const manualOptions = group.options.map((option) => {
+          const manualOptions = group.options
+            .filter((option) => !isExcluded(option.productId))
+            .map((option) => {
             const productMeta = option.productId
               ? imageByProductId.get(option.productId)
               : undefined;
@@ -288,6 +301,7 @@ export async function enrichConfiguratorWithShopifyData(
           );
           const dynamicOptions = [...collectionProducts, ...directProducts, ...extraStringProducts]
             .filter((product) => {
+              if (isExcluded(product.id)) return false;
               if (seen.has(product.id)) return false;
               seen.add(product.id);
               return true;

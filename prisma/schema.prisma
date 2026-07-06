@@ -50,6 +50,10 @@ model Configurator {
   collectionIds       String   @default("[]")
   stringCollectionIds String   @default("[]")
   stringProductIds    String   @default("[]")
+  // Products to explicitly keep OUT of the configurator — removed from the string option list
+  // (e.g. a stringing machine that lives in a string collection) and never shown the Configure
+  // button, even if a racquet collection/product would otherwise include them.
+  excludedProductIds  String   @default("[]")
   laborVariantId String?
   laborPrice     Float    @default(0)
   basePrice   Float    @default(0)

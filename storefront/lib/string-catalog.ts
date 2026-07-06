@@ -156,7 +156,10 @@ export function resolveStringCatalog(
       price: option.priceAdjust,
       gauges: meta.gauges?.length ? meta.gauges : ["16", "17"],
       colors: meta.colors?.length ? meta.colors : colors,
-      recommended: option.isDefault || meta.recommended,
+      // Only badge a string "Recommended" when it's an explicit signal — NOT just because it's
+      // first in the list (option.isDefault is set to the first item during enrichment, which
+      // previously mislabeled whatever happened to lead the catalog, e.g. a stringing machine).
+      recommended: Boolean(meta.recommended),
       imageUrl: option.imageUrl ?? option.previewLayer ?? null,
       variantId: option.variantId,
       productId: option.productId,
