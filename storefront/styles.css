@@ -344,6 +344,23 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   cursor: pointer;
 }
 
+.proto-desk-load-more {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c8102e;
+  background: none;
+  border: 1px dashed #e5e5e5;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.proto-desk-load-more:hover {
+  border-color: #c8102e;
+}
+
 .proto-desk-config-panel {
   padding: 16px;
   background: #f5f5f5;
