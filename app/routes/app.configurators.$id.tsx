@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
 import { json } from "@vercel/remix";
-import { Form, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import {
   Badge,
   Banner,
@@ -190,14 +190,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       } as Parameters<typeof prisma.configurator.update>[0]["data"],
     });
 
-    // Only touch Shopify inventory policy when the toggle actually flips — this mutates the real
-    // per-variant setting (all channels), so we don't re-apply it on every unrelated save.
-    if (allowOutOfStockChanged) {
-      await setRacquetInventoryPolicy(
-        admin,
-        { productIds: JSON.stringify(productIds), collectionIds: JSON.stringify(collectionIds) },
-        allowOutOfStock,
-      );
+    // Apply the Shopify inventory policy. When ON we re-apply CONTINUE on every save (idempotent
+    // — this also self-heals if a prior attempt silently failed, e.g. a transient API error). We
+    // only apply DENY when the toggle flips OFF, so we never clobber a merchant's own settings on
+    // unrelated saves. `inventoryResult.updated` lets the UI confirm how many variants changed.
+    let inventoryResult: { updated: number } | null = null;
+    const linkedIds = {
+      productIds: JSON.stringify(productIds),
+      collectionIds: JSON.stringify(collectionIds),
+    };
+    if (allowOutOfStock) {
+      inventoryResult = await setRacquetInventoryPolicy(admin, linkedIds, true);
+    } else if (allowOutOfStockChanged) {
+      inventoryResult = await setRacquetInventoryPolicy(admin, linkedIds, false);
     }
 
     // One save covers everything on the page: general settings above, plus every option
@@ -225,7 +230,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change
     await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
-    return json({ success: true });
+    return json({ success: true, inventory: inventoryResult });
   }
 
   if (intent === "add_step") {
@@ -466,6 +471,11 @@ export default function EditConfigurator() {
   latestSnapshotRef.current = buildSnapshot();
   const isDirty = JSON.stringify(latestSnapshotRef.current) !== JSON.stringify(savedSnapshot);
 
+  // After a save, surface how many racquet variants the out-of-stock toggle updated in Shopify.
+  const actionData = useActionData<{ inventory?: { updated: number } | null }>();
+  const inventoryResult =
+    navigation.state === "idle" ? actionData?.inventory ?? null : null;
+
   // Once this form's own submission completes, treat the just-submitted values as the new
   // clean baseline so the "Unsaved changes" indicator clears.
   const wasSubmittingThisForm = useRef(false);
@@ -507,6 +517,17 @@ export default function EditConfigurator() {
               <p>
                 The storefront will not load this configurator until <strong>Active</strong> is
                 enabled and you click <strong>Save changes</strong> below.
+              </p>
+            </Banner>
+          </Layout.Section>
+        )}
+        {inventoryResult && (
+          <Layout.Section>
+            <Banner tone={inventoryResult.updated > 0 ? "success" : "warning"}>
+              <p>
+                {inventoryResult.updated > 0
+                  ? `Out-of-stock setting applied: ${inventoryResult.updated} racquet variant${inventoryResult.updated === 1 ? "" : "s"} updated in Shopify.`
+                  : "No racquet variants were updated — check that this configurator has racquet collections or individual racquet products linked above."}
               </p>
             </Banner>
           </Layout.Section>

@@ -193,41 +193,70 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   gap: 0;
 }
 
-/* Compact search that sits in the header strip between the name/description and the price. */
+/* Compact search that sits in the header strip between the name/description and the price.
+   The border/height live on the WRAP and the <input> is fully reset with !important so the
+   host theme's global `input` styles (height, padding, borders) can't distort it. */
 .proto-desk-search-wrap {
-  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   flex: 0 1 220px;
   min-width: 130px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #d4d4d4;
+  border-radius: 999px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.proto-desk-search-wrap:focus-within {
+  border-color: #c8102e;
+  box-shadow: 0 0 0 2px rgba(200, 16, 46, 0.15);
 }
 
 .proto-desk-search-icon {
-  position: absolute;
-  left: 11px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
   color: #9ca3af;
   pointer-events: none;
 }
 
 .proto-desk-search {
-  width: 100%;
-  box-sizing: border-box;
-  height: 32px;
-  line-height: 32px;
-  padding: 0 12px 0 30px;
-  border: 1px solid #d4d4d4;
-  border-radius: 999px;
-  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
   color: #1a1a1a;
-  background: #fff;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
-.proto-desk-search:focus {
-  outline: 2px solid rgba(200, 16, 46, 0.25);
-  outline-offset: 1px;
-  border-color: #c8102e;
+.proto-desk-search-clear {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: #9ca3af;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.proto-desk-str-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .proto-desk-string-empty {
