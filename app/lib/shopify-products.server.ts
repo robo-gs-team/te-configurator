@@ -13,6 +13,8 @@ export type ProductWithImage = {
   price: number;
   productType?: string;
   tags?: string[];
+  stringType?: string | null;
+  stringType2?: string | null;
 };
 
 type ShopifyAdmin = {
@@ -92,6 +94,8 @@ type ProductsWithImagesResponse = {
           title?: string;
           productType?: string;
           tags?: string[];
+          stringType?: { value?: string } | null;
+          stringType2?: { value?: string } | null;
           variants?: {
             nodes?: Array<{ legacyResourceId?: string; price?: string }>;
           };
@@ -116,6 +120,8 @@ export async function getProductsDetailedByIds(
             title
             productType
             tags
+            stringType: metafield(namespace: "global", key: "string_type") { value }
+            stringType2: metafield(namespace: "custom", key: "string_type2") { value }
             featuredImage {
               url
             }
@@ -159,6 +165,8 @@ export async function getProductsDetailedByIds(
         title: node.title ?? "Product",
         productType: node.productType ?? undefined,
         tags: node.tags ?? [],
+        stringType: node.stringType?.value ?? null,
+        stringType2: node.stringType2?.value ?? null,
         imageUrl: resolveProductImageUrl(node),
         variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
         price: parseFloat(String(variant?.price ?? "0")) || 0,

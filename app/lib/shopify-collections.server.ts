@@ -19,6 +19,8 @@ export type CollectionProduct = {
   title: string;
   productType: string;
   tags: string[];
+  stringType: string | null;
+  stringType2: string | null;
   imageUrl: string | null;
   variantId: string;
   price: number;
@@ -148,6 +150,8 @@ type CollectionProductsResponse = {
           title?: string;
           productType?: string;
           tags?: string[];
+          stringType?: { value?: string } | null;
+          stringType2?: { value?: string } | null;
           featuredImage?: { url?: string } | null;
           variants?: {
             nodes?: Array<{
@@ -181,6 +185,8 @@ async function fetchCollectionProducts(
                 title
                 productType
                 tags
+                stringType: metafield(namespace: "global", key: "string_type") { value }
+                stringType2: metafield(namespace: "custom", key: "string_type2") { value }
                 featuredImage {
                   url
                 }
@@ -226,6 +232,8 @@ async function fetchCollectionProducts(
         title: node.title ?? "Product",
         productType: node.productType ?? "String",
         tags: node.tags ?? [],
+        stringType: node.stringType?.value ?? null,
+        stringType2: node.stringType2?.value ?? null,
         imageUrl: resolveProductImageUrl(node),
         variantId: String(variant.legacyResourceId),
         price: parseFloat(String(variant.price ?? "0")) || 0,
