@@ -16,18 +16,25 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 /**
- * Set the Shopify `inventoryPolicy` on every variant of every racquet linked to the configurator
- * (explicit productIds ∪ racquet-collection products). CONTINUE lets a variant be ordered while
- * out of stock (the only way Shopify's /cart/add.js accepts an OOS item); DENY blocks it.
+ * Set the Shopify `inventoryPolicy` on every variant of every product linked to the configurator
+ * — BOTH the racquets (explicit productIds ∪ racquet-collection products) AND the strings
+ * (stringProductIds ∪ string-collection products), since the shop provides the strings and they
+ * shouldn't block checkout. CONTINUE lets a variant be ordered while out of stock (the only way
+ * Shopify's /cart/add.js accepts an OOS item); DENY blocks it.
  *
  * Best-effort — never throws, so a transient Shopify error can't fail the merchant's save. Note
  * this changes the REAL per-variant setting: it affects every sales channel, not just this app.
  *
  * @returns the number of variants updated.
  */
-export async function setRacquetInventoryPolicy(
+export async function setConfiguratorInventoryPolicy(
   admin: ShopifyAdmin,
-  configurator: { productIds: string; collectionIds: string },
+  configurator: {
+    productIds: string;
+    collectionIds: string;
+    stringProductIds?: string;
+    stringCollectionIds?: string;
+  },
   allow: boolean,
 ): Promise<{ updated: number }> {
   const policy = allow ? "CONTINUE" : "DENY";
@@ -35,10 +42,17 @@ export async function setRacquetInventoryPolicy(
   try {
     const explicitIds = parseJson<string[]>(configurator.productIds ?? "[]", []);
     const collectionIds = parseJson<string[]>(configurator.collectionIds ?? "[]", []);
+    const stringProductIds = parseJson<string[]>(configurator.stringProductIds ?? "[]", []);
+    const stringCollectionIds = parseJson<string[]>(configurator.stringCollectionIds ?? "[]", []);
+    const allCollectionIds = [...collectionIds, ...stringCollectionIds];
     const collectionProducts =
-      collectionIds.length > 0 ? await getProductsInCollections(admin, collectionIds) : [];
+      allCollectionIds.length > 0 ? await getProductsInCollections(admin, allCollectionIds) : [];
     const racquetIds = Array.from(
-      new Set([...explicitIds, ...collectionProducts.map((p) => p.id)]),
+      new Set([
+        ...explicitIds,
+        ...stringProductIds,
+        ...collectionProducts.map((p) => p.id),
+      ]),
     );
     if (racquetIds.length === 0) return { updated: 0 };
 
