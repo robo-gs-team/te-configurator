@@ -12,6 +12,15 @@ export type ThemeButtonStatus = {
   themeName: string | null;
   themeId: string | null;
   detail: "active" | "embed_missing" | "unknown";
+  // When detail === "unknown", why — so the admin can show a specific hint instead of a
+  // vague "Unknown". Populated by the detection; null on the success paths.
+  reason:
+    | "missing_theme_scope" // themes query returned an access/permission error
+    | "no_published_theme" // query succeeded but no MAIN-role theme
+    | "settings_unreadable" // theme found but its settings_data.json couldn't be read
+    | "api_error" // request threw (network/throttle/etc.)
+    | "graphql_error" // query returned some other GraphQL error
+    | null;
 };
 
 // Two live Shopify Admin API round-trips (themes list + theme file) on every dashboard
@@ -84,6 +93,20 @@ export async function detectThemeButtonStatus(
   return result;
 }
 
+// A GraphQL errors array from Shopify that mentions access/permission/scope means the app's
+// token isn't allowed to read themes — almost always because read_themes was added to the app
+// after it was installed, so the merchant needs to re-authorize.
+function looksLikeScopeError(errors: unknown): boolean {
+  const text = JSON.stringify(errors ?? "").toLowerCase();
+  return (
+    text.includes("access denied") ||
+    text.includes("not approved") ||
+    text.includes("scope") ||
+    text.includes("permission") ||
+    text.includes("read_themes")
+  );
+}
+
 async function fetchThemeButtonStatus(admin: ShopifyAdmin): Promise<ThemeButtonStatus> {
   try {
     const themesRes = await admin.graphql(`
@@ -95,16 +118,25 @@ async function fetchThemeButtonStatus(admin: ShopifyAdmin): Promise<ThemeButtonS
       }
     `);
     const themesJson = (await themesRes.json()) as {
-      data?: {
-        themes?: {
-          nodes?: Array<{ id: string; name: string; role: string }>;
-        };
-      };
+      data?: { themes?: { nodes?: Array<{ id: string; name: string; role: string }> } };
+      errors?: unknown;
     };
-    const mainTheme = themesJson.data?.themes?.nodes?.find(
-      (t) => t.role === "MAIN",
-    );
-    if (!mainTheme) return { live: false, themeName: null, themeId: null, detail: "unknown" };
+
+    if (themesJson.errors) {
+      console.error("theme-detection: themes query returned errors:", JSON.stringify(themesJson.errors));
+      return {
+        live: false,
+        themeName: null,
+        themeId: null,
+        detail: "unknown",
+        reason: looksLikeScopeError(themesJson.errors) ? "missing_theme_scope" : "graphql_error",
+      };
+    }
+
+    const mainTheme = themesJson.data?.themes?.nodes?.find((t) => t.role === "MAIN");
+    if (!mainTheme) {
+      return { live: false, themeName: null, themeId: null, detail: "unknown", reason: "no_published_theme" };
+    }
 
     const fileRes = await admin.graphql(
       `
@@ -129,25 +161,30 @@ async function fetchThemeButtonStatus(admin: ShopifyAdmin): Promise<ThemeButtonS
 
     const fileJson = (await fileRes.json()) as {
       data?: {
-        theme?: {
-          files?: {
-            nodes?: Array<{
-              filename: string;
-              body?: { content?: string };
-            }>;
-          };
-        };
+        theme?: { files?: { nodes?: Array<{ filename: string; body?: { content?: string } }> } };
       };
+      errors?: unknown;
     };
-    const content =
-      fileJson.data?.theme?.files?.nodes?.[0]?.body?.content;
 
+    if (fileJson.errors) {
+      console.error("theme-detection: theme file query returned errors:", JSON.stringify(fileJson.errors));
+      return {
+        live: false,
+        themeName: mainTheme.name,
+        themeId: mainTheme.id,
+        detail: "unknown",
+        reason: looksLikeScopeError(fileJson.errors) ? "missing_theme_scope" : "settings_unreadable",
+      };
+    }
+
+    const content = fileJson.data?.theme?.files?.nodes?.[0]?.body?.content;
     if (!content) {
       return {
         live: false,
         themeName: mainTheme.name,
         themeId: mainTheme.id,
         detail: "unknown",
+        reason: "settings_unreadable",
       };
     }
 
@@ -158,8 +195,10 @@ async function fetchThemeButtonStatus(admin: ShopifyAdmin): Promise<ThemeButtonS
       themeName: mainTheme.name,
       themeId: mainTheme.id,
       detail,
+      reason: null,
     };
-  } catch {
-    return { live: false, themeName: null, themeId: null, detail: "unknown" };
+  } catch (err) {
+    console.error("theme-detection: request threw:", err);
+    return { live: false, themeName: null, themeId: null, detail: "unknown", reason: "api_error" };
   }
 }
