@@ -151,6 +151,17 @@ export default function Dashboard() {
                       ? "App embed not installed"
                       : "Unknown"}
                 </Badge>
+                {buttonStatus.detail === "unknown" && buttonStatus.reason && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {buttonStatus.reason === "missing_theme_scope"
+                      ? "The app can't read your theme (missing theme permission). Reinstall / reopen the app to grant it — this badge is informational and doesn't affect the storefront."
+                      : buttonStatus.reason === "no_published_theme"
+                        ? "No published theme found for this store."
+                        : buttonStatus.reason === "settings_unreadable"
+                          ? "Found your published theme but couldn't read its settings."
+                          : "Couldn't reach Shopify to check the theme — try again shortly."}
+                  </Text>
+                )}
                 {buttonStatus.detail !== "active" && buttonStatus.themeId && (
                   <Button
                     variant="plain"
