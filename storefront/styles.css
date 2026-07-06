@@ -350,6 +350,12 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* The string list can run much longer than the sidebar — without this, scrolling down to
+     browse more strings scrolls the Add to Cart button and price out of view with it, since
+     CSS Grid stretches both columns to the same height by default. */
+  position: sticky;
+  top: 0;
+  align-self: start;
 }
 
 .proto-desk-panel-title {
@@ -552,6 +558,13 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   border-radius: 50%;
   border: 1.5px solid #c8102e;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: #c8102e;
 }
 
 .proto-desk-trust-title {
@@ -626,6 +639,11 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* Same reasoning as .proto-desk-config-panel — keep the summary/Add to Cart column in view
+     while the mains/crosses string columns scroll independently. */
+  position: sticky;
+  top: 0;
+  align-self: start;
 }
 
 @media (max-width: 767px) {
@@ -644,6 +662,13 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   .proto-desk-hcol-head--sum {
     border-top: none;
     border-bottom: 1px solid #e5e5e5;
+  }
+
+  /* Below the grid breakpoint everything stacks in one column, so the sidebar is no longer a
+     side column to pin — sticky here would just freeze it mid-scroll partway down the page. */
+  .proto-desk-config-panel,
+  .proto-desk-hcol-sum {
+    position: static;
   }
 }
 
