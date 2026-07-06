@@ -197,15 +197,19 @@ function StringCatalog({
                 <StringImage product={product} />
               </div>
               <div className="proto-desk-str-info">
-                {isRecommended(product, useHybrid) && !isSelected && (
-                  <span className="proto-desk-str-badge proto-desk-str-badge--rec">Recommended</span>
-                )}
-                {isSelected && accent === "mains" && (
-                  <span className="proto-desk-str-badge proto-desk-str-badge--m">Selected</span>
-                )}
-                {isSelected && accent === "crosses" && (
-                  <span className="proto-desk-str-badge proto-desk-str-badge--c">Selected</span>
-                )}
+                <span className="proto-desk-str-badges">
+                  {isSelected && accent === "mains" && (
+                    <span className="proto-desk-str-badge proto-desk-str-badge--m">Selected</span>
+                  )}
+                  {isSelected && accent === "crosses" && (
+                    <span className="proto-desk-str-badge proto-desk-str-badge--c">Selected</span>
+                  )}
+                  {/* Show the Recommended badge even when the row is selected — it's a property of
+                      the string, not a transient state. */}
+                  {isRecommended(product, useHybrid) && (
+                    <span className="proto-desk-str-badge proto-desk-str-badge--rec">Recommended</span>
+                  )}
+                </span>
                 <p className="proto-desk-str-name">{product.name}</p>
                 <p className="proto-desk-str-type">{product.type}</p>
               </div>
@@ -759,13 +763,23 @@ export function StringingConfigurator({
             <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
           <input
-            type="search"
+            type="text"
             className="proto-desk-search"
             placeholder="Search strings"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search strings"
           />
+          {search && (
+            <button
+              type="button"
+              className="proto-desk-search-clear"
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+            >
+              ✕
+            </button>
+          )}
         </div>
         <p className="text-base font-bold text-neutral-900 shrink-0">${basePrice.toFixed(0)}</p>
       </div>
