@@ -31,7 +31,7 @@ import {
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
-import { setRacquetInventoryPolicy } from "~/lib/inventory.server";
+import { setConfiguratorInventoryPolicy } from "~/lib/inventory.server";
 import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
@@ -198,11 +198,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const linkedIds = {
       productIds: JSON.stringify(productIds),
       collectionIds: JSON.stringify(collectionIds),
+      stringProductIds: JSON.stringify(stringProductIds),
+      stringCollectionIds: JSON.stringify(stringCollectionIds),
     };
     if (allowOutOfStock) {
-      inventoryResult = await setRacquetInventoryPolicy(admin, linkedIds, true);
+      inventoryResult = await setConfiguratorInventoryPolicy(admin, linkedIds, true);
     } else if (allowOutOfStockChanged) {
-      inventoryResult = await setRacquetInventoryPolicy(admin, linkedIds, false);
+      inventoryResult = await setConfiguratorInventoryPolicy(admin, linkedIds, false);
     }
 
     // One save covers everything on the page: general settings above, plus every option
@@ -527,8 +529,8 @@ export default function EditConfigurator() {
             <Banner tone={inventoryResult.updated > 0 ? "success" : "warning"}>
               <p>
                 {inventoryResult.updated > 0
-                  ? `Out-of-stock setting applied: ${inventoryResult.updated} racquet variant${inventoryResult.updated === 1 ? "" : "s"} updated in Shopify.`
-                  : "No racquet variants were updated — check that this configurator has racquet collections or individual racquet products linked above."}
+                  ? `Out-of-stock setting applied: ${inventoryResult.updated} racquet + string variant${inventoryResult.updated === 1 ? "" : "s"} updated in Shopify.`
+                  : "No variants were updated — check that this configurator has racquet or string collections/products linked above."}
               </p>
             </Banner>
           </Layout.Section>
@@ -700,10 +702,10 @@ export default function EditConfigurator() {
                     <input type="hidden" name="isActive" value="on" />
                   ) : null}
                   <Checkbox
-                    label={<FieldLabel facing="setup">Allow ordering out-of-stock racquets</FieldLabel>}
+                    label={<FieldLabel facing="setup">Allow ordering out-of-stock racquets & strings</FieldLabel>}
                     checked={allowOutOfStock}
                     onChange={setAllowOutOfStock}
-                    helpText="Lets shoppers configure and buy a racquet even when it's out of stock. On save this sets those racquet variants' Shopify inventory policy to “Continue selling when out of stock” — a real Shopify setting that applies to ALL sales channels, not just this configurator (turning it off reverts them to “Stop selling”)."
+                    helpText="Lets shoppers configure and buy even when the racquet OR the chosen string is out of stock (the shop provides the strings). On save this sets those racquet AND string variants' Shopify inventory policy to “Continue selling when out of stock” — a real Shopify setting that applies to ALL sales channels (turning it off reverts them to “Stop selling”). When off, out-of-stock strings are hidden from the picker instead."
                   />
                   {allowOutOfStock ? (
                     <input type="hidden" name="allowOutOfStock" value="on" />
