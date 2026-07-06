@@ -16,7 +16,7 @@ import {
   Text,
   TextField,
 } from "@shopify/polaris";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AddonAddForm } from "~/components/AddonAddForm";
 import { CollectionPicker } from "~/components/CollectionPicker";
 import { LaborProductPicker, type LaborProductSelection } from "~/components/LaborProductPicker";
@@ -391,14 +391,59 @@ export default function EditConfigurator() {
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
 
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Snapshot of the values as of the last successful save, used only to detect unsaved edits —
+  // a plain JSON comparison against current state is far simpler than tracking dirtiness field
+  // by field, and cheap given how small these values are.
+  const buildSnapshot = () => ({
+    name,
+    description,
+    basePrice,
+    isActive,
+    selectedCollections,
+    selectedStringCollections,
+    selectedProducts,
+    selectedStringProducts,
+    laborProduct,
+  });
+  const [savedSnapshot, setSavedSnapshot] = useState(buildSnapshot);
+  const latestSnapshotRef = useRef(buildSnapshot());
+  latestSnapshotRef.current = buildSnapshot();
+  const isDirty = JSON.stringify(latestSnapshotRef.current) !== JSON.stringify(savedSnapshot);
+
+  // Once this form's own submission completes, treat the just-submitted values as the new
+  // clean baseline so the "Unsaved changes" indicator clears.
+  const wasSubmittingThisForm = useRef(false);
+  useEffect(() => {
+    const isSubmittingThisForm =
+      navigation.state !== "idle" && navigation.formData?.get("intent") === "update";
+    if (wasSubmittingThisForm.current && !isSubmittingThisForm) {
+      setSavedSnapshot(latestSnapshotRef.current);
+    }
+    wasSubmittingThisForm.current = isSubmittingThisForm;
+  }, [navigation.state, navigation.formData]);
+
   return (
     <Page
       title={configurator.name}
       backAction={{ content: "Configurators", url: "/app/configurators" }}
       titleMetadata={
-        <Badge tone={configurator.isActive ? "success" : undefined}>
-          {configurator.isActive ? "Active" : "Inactive"}
-        </Badge>
+        <InlineStack gap="200" blockAlign="center">
+          <Badge tone={configurator.isActive ? "success" : undefined}>
+            {configurator.isActive ? "Active" : "Inactive"}
+          </Badge>
+          {isDirty && <Badge tone="attention">Unsaved changes</Badge>}
+        </InlineStack>
+      }
+      primaryAction={
+        <Button
+          variant="primary"
+          loading={navigation.state !== "idle"}
+          onClick={() => formRef.current?.requestSubmit()}
+        >
+          Save changes
+        </Button>
       }
     >
       <Layout>
@@ -484,7 +529,7 @@ export default function EditConfigurator() {
           </Card>
         </Layout.Section>
         <Layout.Section>
-          <Form method="post">
+          <Form method="post" ref={formRef}>
             <input type="hidden" name="intent" value="update" />
             <BlockStack gap="400">
             <Card>
