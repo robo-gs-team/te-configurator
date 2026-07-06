@@ -174,10 +174,21 @@ export async function getProductsDetailedByIds(
     });
 }
 
+export type ProductMeta = {
+  imageUrl: string | null;
+  variantId: string | null;
+  price: number;
+  title: string;
+  productType?: string;
+  tags: string[];
+  stringType: string | null;
+  stringType2: string | null;
+};
+
 export async function getProductsWithImages(
   admin: ShopifyAdmin,
   productIds: string[],
-): Promise<Map<string, { imageUrl: string | null; variantId: string | null; price: number }>> {
+): Promise<Map<string, ProductMeta>> {
   if (productIds.length === 0) return new Map();
 
   const response = await admin.graphql(
@@ -187,6 +198,10 @@ export async function getProductsWithImages(
           ... on Product {
             legacyResourceId
             title
+            productType
+            tags
+            stringType: metafield(namespace: "global", key: "string_type") { value }
+            stringType2: metafield(namespace: "custom", key: "string_type2") { value }
             featuredImage {
               url
             }
@@ -220,10 +235,7 @@ export async function getProductsWithImages(
   );
 
   const body = (await response.json()) as ProductsWithImagesResponse;
-  const map = new Map<
-    string,
-    { imageUrl: string | null; variantId: string | null; price: number }
-  >();
+  const map = new Map<string, ProductMeta>();
 
   for (const node of body.data?.nodes ?? []) {
     if (!node?.legacyResourceId) continue;
@@ -233,6 +245,11 @@ export async function getProductsWithImages(
       imageUrl: resolveProductImageUrl(node),
       variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
       price: parseFloat(String(variant?.price ?? "0")) || 0,
+      title: node.title ?? "Product",
+      productType: node.productType ?? undefined,
+      tags: node.tags ?? [],
+      stringType: node.stringType?.value ?? null,
+      stringType2: node.stringType2?.value ?? null,
     });
   }
 
