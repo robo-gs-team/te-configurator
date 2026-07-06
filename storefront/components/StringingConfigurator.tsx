@@ -709,6 +709,7 @@ export function StringingConfigurator({
   const configurator = useConfiguratorStore((s) => s.configurator);
   const mode = useConfiguratorStore((s) => s.stringingMode);
   const cartError = useConfiguratorStore((s) => s.cartError);
+  const racquetPrice = useConfiguratorStore((s) => s.racquetPrice);
   const [search, setSearch] = useState("");
 
   const catalog = useMemo(
@@ -727,7 +728,8 @@ export function StringingConfigurator({
     );
   }
 
-  const basePrice = configurator.basePrice;
+  // Prefer the live racquet price read from the product page; fall back to the stored base price.
+  const basePrice = racquetPrice ?? configurator.basePrice;
   const laborPrice = configurator.laborPrice ?? 0;
   const tensionRange = configurator.tensionRange ?? DEFAULT_TENSION_RANGE;
 

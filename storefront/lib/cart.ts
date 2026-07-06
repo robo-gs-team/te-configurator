@@ -246,6 +246,44 @@ function getProductVariantFromPage(): string | null {
 }
 
 /**
+ * Best-effort read of the current racquet's price from the product page, so the configurator's
+ * "Racquet" line and total reflect the real product price rather than a manually-entered value.
+ * Reads the selected/first variant's price from the embedded product JSON (Shopify prices are in
+ * cents), falling back to a `[data-selected-variant-price]` element. Returns null if unavailable,
+ * so the caller can fall back to the configurator's stored base price.
+ */
+export function getProductPriceFromPage(): number | null {
+  const productJson = document.querySelector<HTMLScriptElement>(
+    'script[type="application/json"][data-product-json], script[type="application/json"][id*="ProductJson"]',
+  );
+  if (productJson?.textContent) {
+    try {
+      const data = JSON.parse(productJson.textContent) as {
+        selected_or_first_available_variant?: { price?: number | string };
+        variants?: Array<{ price?: number | string }>;
+      };
+      const raw =
+        data.selected_or_first_available_variant?.price ?? data.variants?.[0]?.price;
+      if (raw != null) {
+        const cents = Number(raw);
+        if (Number.isFinite(cents)) return cents / 100;
+      }
+    } catch {
+      /* ignore malformed JSON */
+    }
+  }
+
+  const priceEl = document.querySelector<HTMLElement>("[data-selected-variant-price]");
+  const attr = priceEl?.dataset.selectedVariantPrice;
+  if (attr) {
+    const cents = Number(attr);
+    if (Number.isFinite(cents)) return cents / 100;
+  }
+
+  return null;
+}
+
+/**
  * Persist the current configuration via the App Proxy (`POST /save`) so it can be shared.
  * @returns The share URL on success, or null on failure (network or non-OK response).
  */
