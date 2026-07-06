@@ -71,8 +71,19 @@ export async function lookupConfiguratorForProduct(
     include: configuratorInclude,
   });
 
+  // A configurator never applies to a product the merchant explicitly excluded — even if that
+  // product's ID or collection would otherwise match below.
+  const isExcludedFor = (configurator: (typeof configurators)[number]) => {
+    const excluded = parseJson<string[]>(
+      (configurator as { excludedProductIds?: string }).excludedProductIds ?? "[]",
+      [],
+    );
+    return productIdsMatch(excluded, productId);
+  };
+
   // First pass: check explicit product IDs — no network call needed
   for (const configurator of configurators) {
+    if (isExcludedFor(configurator)) continue;
     const productIds = parseJson<string[]>(configurator.productIds, []);
     if (productIdsMatch(productIds, productId)) {
       if (!configurator.isActive) return { status: "inactive", configurator };
@@ -92,6 +103,7 @@ export async function lookupConfiguratorForProduct(
     const productCollSet = new Set(productCollectionIds.map(normalizeCollectionId));
 
     for (const configurator of collectionConfigurators) {
+      if (isExcludedFor(configurator)) continue;
       const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
       const matches = collectionIds.some((id) => productCollSet.has(normalizeCollectionId(id)));
       if (matches) {

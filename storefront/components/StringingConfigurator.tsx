@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useConfiguratorStore } from "../store/configurator-store";
 import type { BedSelection, StringProduct, TensionRange } from "../lib/string-catalog";
 import {
@@ -102,15 +102,16 @@ function StringCatalog({
   catalog,
   selectedId,
   accent,
+  search,
   onSelect,
 }: {
   catalog: StringProduct[];
   selectedId: string;
   accent: "standard" | "mains" | "crosses";
+  search: string;
   onSelect: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<string>("all");
-  const [search, setSearch] = useState("");
   const [visibleCount, setVisibleCount] = useState(STRING_PAGE_SIZE);
   const filtered = filterCatalog(catalog, filter, search);
   const visible = filtered.slice(0, visibleCount);
@@ -122,26 +123,19 @@ function StringCatalog({
         ? "proto-desk-string-row--c"
         : "proto-desk-string-row--selected";
 
+  // Reset pagination whenever the (parent-owned) search text changes, so a narrowed result
+  // set always starts at the top of its first page.
+  useEffect(() => {
+    setVisibleCount(STRING_PAGE_SIZE);
+  }, [search]);
+
   const selectFilter = (id: string) => {
     setFilter(id);
     setVisibleCount(STRING_PAGE_SIZE);
   };
 
-  const onSearch = (value: string) => {
-    setSearch(value);
-    setVisibleCount(STRING_PAGE_SIZE);
-  };
-
   return (
     <>
-      <input
-        type="search"
-        className="proto-desk-search"
-        placeholder="Search strings…"
-        value={search}
-        onChange={(e) => onSearch(e.target.value)}
-        aria-label="Search strings"
-      />
       <div className="proto-desk-chips">
         {FILTER_CHIPS.map((chip) => (
           <button
@@ -307,7 +301,7 @@ function BedConfigFields({
         <p className="text-[10px] text-neutral-500 mb-2">
           Recommended: <span className={`font-bold ${recClass}`}>{recommendedTension} lbs</span>
         </p>
-        <div className="relative pt-1 pb-5">
+        <div className="relative pt-3 pb-5">
           <input
             type="range"
             min={tensionRange.min}
@@ -315,7 +309,7 @@ function BedConfigFields({
             step={1}
             value={normalized.tension}
             onChange={(e) => onChange({ ...normalized, tension: Number(e.target.value) })}
-            className="absolute inset-x-0 top-2 z-10 w-full h-5 opacity-0 cursor-pointer"
+            className="absolute inset-x-0 -top-1 z-10 w-full h-10 opacity-0 cursor-pointer"
             aria-label={tensionTitle}
           />
           <div className="proto-desk-slider-track">
@@ -468,6 +462,7 @@ function StandardDesktop({
   basePrice,
   laborPrice,
   tensionRange,
+  search,
   onAddToCart,
   isAddingToCart,
 }: {
@@ -475,6 +470,7 @@ function StandardDesktop({
   basePrice: number;
   laborPrice: number;
   tensionRange: TensionRange;
+  search: string;
   onAddToCart: () => void;
   isAddingToCart: boolean;
 }) {
@@ -500,6 +496,7 @@ function StandardDesktop({
           catalog={catalog}
           selectedId={normalized.stringId}
           accent="standard"
+          search={search}
           onSelect={setString}
         />
         <div className="proto-desk-hybrid-cta-row">
@@ -547,6 +544,7 @@ function HybridDesktop({
   basePrice,
   laborPrice,
   tensionRange,
+  search,
   onAddToCart,
   isAddingToCart,
 }: {
@@ -554,6 +552,7 @@ function HybridDesktop({
   basePrice: number;
   laborPrice: number;
   tensionRange: TensionRange;
+  search: string;
   onAddToCart: () => void;
   isAddingToCart: boolean;
 }) {
@@ -583,6 +582,7 @@ function HybridDesktop({
             catalog={catalog}
             selectedId={mainsNorm.stringId}
             accent="mains"
+            search={search}
             onSelect={(id) => {
               const p = getStringById(catalog, id);
               if (p) update("mains", normalizeBed(p, mainsNorm));
@@ -607,6 +607,7 @@ function HybridDesktop({
             catalog={catalog}
             selectedId={crossesNorm.stringId}
             accent="crosses"
+            search={search}
             onSelect={(id) => {
               const p = getStringById(catalog, id);
               if (p) update("crosses", normalizeBed(p, crossesNorm));
@@ -674,6 +675,7 @@ export function StringingConfigurator({
   const configurator = useConfiguratorStore((s) => s.configurator);
   const mode = useConfiguratorStore((s) => s.stringingMode);
   const cartError = useConfiguratorStore((s) => s.cartError);
+  const [search, setSearch] = useState("");
 
   const catalog = useMemo(
     () => resolveStringCatalog(configurator),
@@ -715,13 +717,27 @@ export function StringingConfigurator({
       </div>
 
       <div className="proto-desk-rq-strip">
-        <div>
-          <p className="text-base font-bold text-neutral-900">{configurator.name}</p>
-          <p className="text-xs text-neutral-500 mt-0.5">
+        <div className="min-w-0">
+          <p className="text-base font-bold text-neutral-900 truncate">{configurator.name}</p>
+          <p className="text-xs text-neutral-500 mt-0.5 truncate">
             {configurator.description ?? "Custom stringing"}
           </p>
         </div>
-        <p className="text-base font-bold text-neutral-900">${basePrice.toFixed(0)}</p>
+        <div className="proto-desk-search-wrap">
+          <svg className="proto-desk-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+            <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <input
+            type="search"
+            className="proto-desk-search"
+            placeholder="Search strings"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search strings"
+          />
+        </div>
+        <p className="text-base font-bold text-neutral-900 shrink-0">${basePrice.toFixed(0)}</p>
       </div>
 
       <div className="flex-1 overflow-y-auto proto-scrollbar min-h-0">
@@ -731,6 +747,7 @@ export function StringingConfigurator({
             basePrice={basePrice}
             laborPrice={laborPrice}
             tensionRange={tensionRange}
+            search={search}
             onAddToCart={onAddToCart}
             isAddingToCart={isAddingToCart}
           />
@@ -740,6 +757,7 @@ export function StringingConfigurator({
             basePrice={basePrice}
             laborPrice={laborPrice}
             tensionRange={tensionRange}
+            search={search}
             onAddToCart={onAddToCart}
             isAddingToCart={isAddingToCart}
           />

@@ -57,6 +57,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     (configurator as typeof configurator & { stringProductIds?: string }).stringProductIds ?? "[]",
     [],
   );
+  const excludedProductIds = parseJson<string[]>(
+    (configurator as typeof configurator & { excludedProductIds?: string }).excludedProductIds ?? "[]",
+    [],
+  );
   // Collect every option group's collection/product IDs up front so we can fetch them in
   // TWO batched Shopify calls total (getCollectionsByIds / getProductsByIds both accept
   // arbitrarily many IDs via nodes(ids:)), instead of 2 serial calls PER group.
@@ -80,6 +84,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     stringCollections,
     products,
     stringProducts,
+    excludedProducts,
     ,
     allGroupCollections,
     allGroupProducts,
@@ -88,6 +93,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     getCollectionsByIds(admin, stringCollectionIds),
     getProductsByIds(admin, parseJson<string[]>(configurator.productIds, [])),
     getProductsByIds(admin, stringProductIds),
+    getProductsByIds(admin, excludedProductIds),
     // Idempotent — checks existence first (cached per shop after the first call), only creates
     // on first-ever call. Registers the per-racquet tension metafield definitions so they show
     // up in Shopify's native "Metafields" section on every product page.
@@ -130,6 +136,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     stringCollections,
     products,
     stringProducts,
+    excludedProducts,
     groupCollections,
     groupProducts,
     labor,
@@ -154,6 +161,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const stringCollectionIds = parseCollectionIdsField(String(form.get("stringCollectionIds") || ""));
     const productIds = parseProductIdsField(String(form.get("productIds") || ""));
     const stringProductIds = parseProductIdsField(String(form.get("stringProductIds") || ""));
+    const excludedProductIds = parseProductIdsField(String(form.get("excludedProductIds") || ""));
     const laborVariantId = String(form.get("laborVariantId") || "").trim() || null;
     const laborPrice = parseFloat(String(form.get("laborPrice") || "0")) || 0;
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
@@ -168,6 +176,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         collectionIds: JSON.stringify(collectionIds),
         stringCollectionIds: JSON.stringify(stringCollectionIds),
         stringProductIds: JSON.stringify(stringProductIds),
+        excludedProductIds: JSON.stringify(excludedProductIds),
         laborVariantId,
         laborPrice,
         basePrice,
@@ -397,6 +406,7 @@ export default function EditConfigurator() {
     stringCollections,
     products,
     stringProducts,
+    excludedProducts,
     groupCollections,
     groupProducts,
     labor,
@@ -409,6 +419,7 @@ export default function EditConfigurator() {
   const [selectedStringCollections, setSelectedStringCollections] = useState(stringCollections);
   const [selectedProducts, setSelectedProducts] = useState(products);
   const [selectedStringProducts, setSelectedStringProducts] = useState(stringProducts);
+  const [excludedProductsSel, setExcludedProductsSel] = useState(excludedProducts);
   const [laborProduct, setLaborProduct] = useState<LaborProductSelection | null>(labor);
   const [basePrice, setBasePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
@@ -427,6 +438,7 @@ export default function EditConfigurator() {
     selectedStringCollections,
     selectedProducts,
     selectedStringProducts,
+    excludedProductsSel,
     laborProduct,
   });
   const [savedSnapshot, setSavedSnapshot] = useState(buildSnapshot);
@@ -625,6 +637,13 @@ export default function EditConfigurator() {
                     name="stringProductIds"
                     selected={selectedStringProducts}
                     onChange={setSelectedStringProducts}
+                  />
+                  <ProductPicker
+                    label={<FieldLabel facing="setup">Excluded products</FieldLabel>}
+                    helpText="Products to hide from the configurator — removed from the string list (e.g. a stringing machine) and never shown the Configure button, even if a collection above would otherwise include them."
+                    name="excludedProductIds"
+                    selected={excludedProductsSel}
+                    onChange={setExcludedProductsSel}
                   />
                   <LaborProductPicker selected={laborProduct} onChange={setLaborProduct} />
                   <TextField
