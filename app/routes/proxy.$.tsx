@@ -17,6 +17,7 @@ import { normalizeProductId } from "~/lib/product-id";
 import {
   resolveRacquetTensionMap,
   resolveRecommendedStringsMap,
+  type RecommendedStringsMaps,
 } from "~/lib/product-metafields.server";
 import type { StoredSnapshot } from "~/lib/snapshot.server";
 import {
@@ -107,8 +108,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         const tensionRange = stored.racquetTensionByProductId?.[productId] ?? DEFAULT_TENSION_RANGE;
         const recommendedStringProductIds =
           stored.recommendedStringsByRacquet?.[productId] ?? [];
+        const recommendedHybridStringProductIds =
+          stored.recommendedHybridStringsByRacquet?.[productId] ?? [];
         const responseData = {
-          configurator: { ...stored.configurator, tensionRange, recommendedStringProductIds },
+          configurator: {
+            ...stored.configurator,
+            tensionRange,
+            recommendedStringProductIds,
+            recommendedHybridStringProductIds,
+          },
         };
         setCachedProxyResponse(shopDomain, productId, responseData);
         return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "SNAPSHOT" } });
@@ -129,12 +137,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         : Promise.resolve<Record<string, TensionRange>>({}),
       admin
         ? resolveRecommendedStringsMap(admin, lookup.configurator)
-        : Promise.resolve<Record<string, string[]>>({}),
+        : Promise.resolve({ standard: {}, hybrid: {} } as RecommendedStringsMaps),
     ]);
 
     const theme = await getShopThemeSettings(shop.id);
     const tensionRange = tensionMap[productId] ?? DEFAULT_TENSION_RANGE;
-    const recommendedStringProductIds = recommendedMap[productId] ?? [];
+    const recommendedStringProductIds = recommendedMap.standard[productId] ?? [];
+    const recommendedHybridStringProductIds = recommendedMap.hybrid[productId] ?? [];
 
     const responseData = {
       configurator: serializeConfiguratorPayload(
@@ -142,6 +151,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         theme,
         tensionRange,
         recommendedStringProductIds,
+        recommendedHybridStringProductIds,
       ),
     };
     setCachedProxyResponse(shopDomain, productId, responseData);
@@ -175,10 +185,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           stored.racquetTensionByProductId?.[saved.productId] ?? DEFAULT_TENSION_RANGE;
         const recommendedStringProductIds =
           stored.recommendedStringsByRacquet?.[saved.productId] ?? [];
+        const recommendedHybridStringProductIds =
+          stored.recommendedHybridStringsByRacquet?.[saved.productId] ?? [];
         serializedConfigurator = {
           ...stored.configurator,
           tensionRange,
           recommendedStringProductIds,
+          recommendedHybridStringProductIds,
         };
       } catch {
         // Corrupt snapshot — fall through to live enrichment.
@@ -203,15 +216,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           : Promise.resolve<Record<string, TensionRange>>({}),
         admin
           ? resolveRecommendedStringsMap(admin, configurator)
-          : Promise.resolve<Record<string, string[]>>({}),
+          : Promise.resolve({ standard: {}, hybrid: {} } as RecommendedStringsMaps),
       ]);
       const tensionRange = tensionMap[saved.productId] ?? DEFAULT_TENSION_RANGE;
-      const recommendedStringProductIds = recommendedMap[saved.productId] ?? [];
+      const recommendedStringProductIds = recommendedMap.standard[saved.productId] ?? [];
+      const recommendedHybridStringProductIds = recommendedMap.hybrid[saved.productId] ?? [];
       serializedConfigurator = serializeConfiguratorPayload(
         enriched,
         theme,
         tensionRange,
         recommendedStringProductIds,
+        recommendedHybridStringProductIds,
       );
     }
 

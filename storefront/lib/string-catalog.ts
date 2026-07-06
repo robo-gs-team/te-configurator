@@ -12,6 +12,7 @@ export type StringProduct = {
   gauges: string[];
   colors: string[];
   recommended?: boolean;
+  recommendedHybrid?: boolean;
   imageUrl?: string | null;
   variantId?: string | null;
   productId?: string | null;
@@ -78,17 +79,26 @@ export function defaultHybridBeds(
   catalog: StringProduct[],
   tensionRange: TensionRange = DEFAULT_TENSION_RANGE,
 ) {
-  const first = catalog[0];
+  // Prefer the racquet's hybrid recommendation (then standard, then first) for the mains bed.
+  const mainsPick =
+    catalog.find((s) => s.recommendedHybrid) ??
+    catalog.find((s) => s.recommended) ??
+    catalog[0];
   const mainsTension = tensionRange.recommended;
   return {
     mains: {
-      stringId: catalog.find((s) => s.recommended)?.id ?? catalog[0]?.id ?? "",
+      stringId: mainsPick?.id ?? "",
       gauge: "16",
       color: "Black",
       tension: mainsTension,
     },
     crosses: {
-      stringId: catalog.find((s) => s.id !== first?.id)?.id ?? first?.id ?? "",
+      // A different hybrid-recommended string if there is one, else any other string.
+      stringId:
+        catalog.find((s) => s.recommendedHybrid && s.id !== mainsPick?.id)?.id ??
+        catalog.find((s) => s.id !== mainsPick?.id)?.id ??
+        mainsPick?.id ??
+        "",
       gauge: "16",
       color: "Natural",
       tension: crossesFromMains(mainsTension, tensionRange),
@@ -111,9 +121,11 @@ export function resolveStringCatalog(
   const cached = catalogCache.get(configurator);
   if (cached) return cached;
 
-  // Strings this specific racquet recommends (from its strings_collection metafield), resolved
-  // per-racquet by the proxy. Used to badge them "Recommended" and drive the default filter.
+  // Strings this specific racquet recommends (from its strings_collection / hybrid_strings_collection
+  // metafields), resolved per-racquet by the proxy. Used to badge them "Recommended" and drive the
+  // default filter — the standard set in standard mode, the hybrid set in hybrid mode.
   const recommendedSet = new Set(configurator.recommendedStringProductIds ?? []);
+  const recommendedHybridSet = new Set(configurator.recommendedHybridStringProductIds ?? []);
 
   // Merge every group whose name matches "string" (not just the first) — a merchant may
   // split string sources across multiple groups (e.g. one per collection), and each one
@@ -162,10 +174,12 @@ export function resolveStringCatalog(
       colors: meta.colors?.length ? meta.colors : colors,
       // "Recommended" = this racquet's own recommended-strings collection (per-racquet metafield),
       // or an explicit metafield flag. NOT just first-in-list (which previously mislabeled
-      // whatever led the catalog, e.g. a stringing machine).
+      // whatever led the catalog, e.g. a stringing machine). `recommendedHybrid` is the same for
+      // the racquet's hybrid recommendation, used by the mains/crosses columns.
       recommended:
         (option.productId ? recommendedSet.has(option.productId) : false) ||
         Boolean(meta.recommended),
+      recommendedHybrid: option.productId ? recommendedHybridSet.has(option.productId) : false,
       imageUrl: option.imageUrl ?? option.previewLayer ?? null,
       variantId: option.variantId,
       productId: option.productId,

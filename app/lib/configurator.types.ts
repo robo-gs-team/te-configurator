@@ -39,9 +39,11 @@ export type StorefrontConfigurator = {
   theme: StorefrontTheme;
   tensionRange: TensionRange;
   // Product ids of strings recommended for the specific racquet being viewed (from that
-  // racquet's strings_collection metafield). Drives the default "Recommended" filter; empty
-  // when the racquet has none configured. Set per-request by the proxy, like tensionRange.
+  // racquet's strings_collection / hybrid_strings_collection metafields). Drive the default
+  // "Recommended" filter — the standard set in standard mode, the hybrid set in the mains/crosses
+  // columns. Empty when the racquet has none configured. Set per-request by the proxy.
   recommendedStringProductIds: string[];
+  recommendedHybridStringProductIds: string[];
 };
 
 export type StorefrontStep = {
@@ -131,6 +133,7 @@ export function serializeConfiguratorPayload(
   theme: ThemeSetting | null,
   tensionRange: TensionRange = DEFAULT_TENSION_RANGE,
   recommendedStringProductIds: string[] = [],
+  recommendedHybridStringProductIds: string[] = [],
 ): StorefrontConfigurator {
   const defaultTheme: StorefrontTheme = {
     buttonEnabled: true,
@@ -230,5 +233,6 @@ export function serializeConfiguratorPayload(
       : defaultTheme,
     tensionRange,
     recommendedStringProductIds,
+    recommendedHybridStringProductIds,
   };
 }
