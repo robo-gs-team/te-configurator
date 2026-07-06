@@ -177,12 +177,27 @@ async function postCartItems(
 
 /**
  * Best-effort discovery of the currently selected racquet variant id from the page, used when
- * the caller didn't pass one. Tries, in order: the product form's `id` input/select, a
+ * the caller didn't pass one. Tries, in order: reading `id` from the actual cart-add form via
+ * FormData, the product form's `id` input/select by direct selector, a
  * `[data-selected-variant-id]` element, the `?variant=` URL param, then the embedded product
  * JSON (selected or first variant).
  * @returns The variant id as a string, or null if none could be determined.
  */
 function getProductVariantFromPage(): string | null {
+  // Prefer FormData over querying a specific input/select type directly — themes vary widely in
+  // how they implement variant pickers (radio button groups, custom web components wrapping a
+  // native control, etc.), but ANY of them must ultimately expose a `name="id"` form control for
+  // the theme's own native Add to Cart to work at all. FormData correctly aggregates whichever
+  // control type holds that value (including ones associated via a `form="..."` attribute rather
+  // than DOM nesting), so it captures exactly what the theme's own submission would use.
+  const cartForm =
+    document.querySelector<HTMLFormElement>('form[action*="/cart/add"]') ??
+    document.querySelector<HTMLFormElement>("product-form form");
+  if (cartForm) {
+    const id = new FormData(cartForm).get("id");
+    if (id) return String(id);
+  }
+
   const selectors = [
     'form[action*="/cart/add"] input[name="id"]',
     'form[action*="/cart/add"] select[name="id"]',
