@@ -15,23 +15,34 @@ type ShopifyAdmin = {
 };
 
 // The string-catalog filter chips (storefront/components/StringingConfigurator.tsx) filter by
-// these exact category names. A store's Shopify "Product type" field is often a broad top-level
-// bucket shared by every string (e.g. "Strings", matching the storefront's own nav), so it can't
-// tell polyester from multifilament from gut — but merchants commonly use tags for exactly this
-// kind of finer-grained, faceted categorization instead.
+// these exact category names. Merchants may store this in a purpose-built metafield (the
+// "String Type" / "String Type2" fields this store uses), in tags, or not at all — a store's
+// Shopify "Product type" field is often just a broad top-level bucket shared by every string
+// (e.g. "Strings", matching the storefront's own nav), so it's checked last.
 const STRING_TYPE_CATEGORIES = ["Polyester", "Multifilament", "Natural gut", "Synthetic gut"] as const;
 
-function resolveStringType(tags: string[] | undefined, productType: string | undefined): string {
-  const normalizedTags = (tags ?? []).map((t) => t.toLowerCase());
+/** Case-insensitively match a raw value against the canonical category names, if any. */
+function matchStringTypeCategory(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.toLowerCase();
+  return STRING_TYPE_CATEGORIES.find((category) => normalized.includes(category.toLowerCase()));
+}
+
+function resolveStringType(
+  stringType: string | null | undefined,
+  stringType2: string | null | undefined,
+  tags: string[] | undefined,
+  productType: string | undefined,
+): string {
+  const metafieldMatch = matchStringTypeCategory(stringType) ?? matchStringTypeCategory(stringType2);
+  if (metafieldMatch) return metafieldMatch;
+
   const tagMatch = STRING_TYPE_CATEGORIES.find((category) =>
-    normalizedTags.some((tag) => tag.includes(category.toLowerCase())),
+    (tags ?? []).some((tag) => tag.toLowerCase().includes(category.toLowerCase())),
   );
   if (tagMatch) return tagMatch;
 
-  const typeMatch = STRING_TYPE_CATEGORIES.find(
-    (category) => productType?.toLowerCase() === category.toLowerCase(),
-  );
-  return typeMatch ?? "String";
+  return matchStringTypeCategory(productType) ?? "String";
 }
 
 function shopifyProductToOption(
@@ -40,6 +51,8 @@ function shopifyProductToOption(
     title: string;
     productType?: string;
     tags?: string[];
+    stringType?: string | null;
+    stringType2?: string | null;
     imageUrl: string | null;
     variantId: string | null;
     price: number;
@@ -62,6 +75,8 @@ function shopifyProductToOption(
     isDefault: sortOrder === 0,
     metadata: JSON.stringify({
       type: resolveStringType(
+        "stringType" in product ? product.stringType : undefined,
+        "stringType2" in product ? product.stringType2 : undefined,
         "tags" in product ? product.tags : undefined,
         "productType" in product ? product.productType : undefined,
       ),
