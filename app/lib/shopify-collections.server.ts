@@ -18,6 +18,7 @@ export type CollectionProduct = {
   id: string;
   title: string;
   productType: string;
+  tags: string[];
   imageUrl: string | null;
   variantId: string;
   price: number;
@@ -146,6 +147,7 @@ type CollectionProductsResponse = {
           legacyResourceId?: string;
           title?: string;
           productType?: string;
+          tags?: string[];
           featuredImage?: { url?: string } | null;
           variants?: {
             nodes?: Array<{
@@ -178,6 +180,7 @@ async function fetchCollectionProducts(
                 legacyResourceId
                 title
                 productType
+                tags
                 featuredImage {
                   url
                 }
@@ -222,6 +225,7 @@ async function fetchCollectionProducts(
         id,
         title: node.title ?? "Product",
         productType: node.productType ?? "String",
+        tags: node.tags ?? [],
         imageUrl: resolveProductImageUrl(node),
         variantId: String(variant.legacyResourceId),
         price: parseFloat(String(variant.price ?? "0")) || 0,

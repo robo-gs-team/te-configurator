@@ -14,11 +14,32 @@ type ShopifyAdmin = {
   ) => Promise<Response>;
 };
 
+// The string-catalog filter chips (storefront/components/StringingConfigurator.tsx) filter by
+// these exact category names. A store's Shopify "Product type" field is often a broad top-level
+// bucket shared by every string (e.g. "Strings", matching the storefront's own nav), so it can't
+// tell polyester from multifilament from gut — but merchants commonly use tags for exactly this
+// kind of finer-grained, faceted categorization instead.
+const STRING_TYPE_CATEGORIES = ["Polyester", "Multifilament", "Natural gut", "Synthetic gut"] as const;
+
+function resolveStringType(tags: string[] | undefined, productType: string | undefined): string {
+  const normalizedTags = (tags ?? []).map((t) => t.toLowerCase());
+  const tagMatch = STRING_TYPE_CATEGORIES.find((category) =>
+    normalizedTags.some((tag) => tag.includes(category.toLowerCase())),
+  );
+  if (tagMatch) return tagMatch;
+
+  const typeMatch = STRING_TYPE_CATEGORIES.find(
+    (category) => productType?.toLowerCase() === category.toLowerCase(),
+  );
+  return typeMatch ?? "String";
+}
+
 function shopifyProductToOption(
   product: CollectionProduct | {
     id: string;
     title: string;
     productType?: string;
+    tags?: string[];
     imageUrl: string | null;
     variantId: string | null;
     price: number;
@@ -40,7 +61,10 @@ function shopifyProductToOption(
     sortOrder,
     isDefault: sortOrder === 0,
     metadata: JSON.stringify({
-      type: "productType" in product ? product.productType : "String",
+      type: resolveStringType(
+        "tags" in product ? product.tags : undefined,
+        "productType" in product ? product.productType : undefined,
+      ),
       gauges: ["16", "17"],
       colors: ["Black", "White", "Natural"],
       fromShopify: true,

@@ -12,6 +12,7 @@ export type ProductWithImage = {
   variantId: string | null;
   price: number;
   productType?: string;
+  tags?: string[];
 };
 
 type ShopifyAdmin = {
@@ -90,6 +91,7 @@ type ProductsWithImagesResponse = {
           legacyResourceId?: string;
           title?: string;
           productType?: string;
+          tags?: string[];
           variants?: {
             nodes?: Array<{ legacyResourceId?: string; price?: string }>;
           };
@@ -113,6 +115,7 @@ export async function getProductsDetailedByIds(
             legacyResourceId
             title
             productType
+            tags
             featuredImage {
               url
             }
@@ -155,6 +158,7 @@ export async function getProductsDetailedByIds(
         id: normalizeProductId(String(node.legacyResourceId)),
         title: node.title ?? "Product",
         productType: node.productType ?? undefined,
+        tags: node.tags ?? [],
         imageUrl: resolveProductImageUrl(node),
         variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
         price: parseFloat(String(variant?.price ?? "0")) || 0,

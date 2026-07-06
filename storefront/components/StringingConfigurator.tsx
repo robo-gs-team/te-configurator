@@ -649,7 +649,7 @@ export function StringingConfigurator({
   const tensionRange = configurator.tensionRange ?? DEFAULT_TENSION_RANGE;
 
   return (
-    <div className="proto-desk-shell flex flex-col h-full">
+    <div className="proto-desk-shell flex flex-col flex-1 min-h-0 h-full">
       <div className="proto-desk-header">
         <h2 className="text-[15px] font-bold text-neutral-900 tracking-tight">
           String your racquet
