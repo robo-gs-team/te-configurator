@@ -24,6 +24,7 @@ export type CollectionProduct = {
   imageUrl: string | null;
   variantId: string;
   price: number;
+  availableForSale: boolean;
 };
 
 type ProductCollectionsResponse = {
@@ -157,6 +158,7 @@ type CollectionProductsResponse = {
             nodes?: Array<{
               legacyResourceId?: string;
               price?: string;
+              availableForSale?: boolean;
             }>;
           };
         }>;
@@ -206,6 +208,7 @@ async function fetchCollectionProducts(
                   nodes {
                     legacyResourceId
                     price
+                    availableForSale
                   }
                 }
               }
@@ -237,6 +240,7 @@ async function fetchCollectionProducts(
         imageUrl: resolveProductImageUrl(node),
         variantId: String(variant.legacyResourceId),
         price: parseFloat(String(variant.price ?? "0")) || 0,
+        availableForSale: variant.availableForSale !== false,
       });
     }
 

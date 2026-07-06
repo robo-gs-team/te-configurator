@@ -11,6 +11,7 @@ export type ProductWithImage = {
   imageUrl: string | null;
   variantId: string | null;
   price: number;
+  availableForSale?: boolean;
   productType?: string;
   tags?: string[];
   stringType?: string | null;
@@ -97,7 +98,7 @@ type ProductsWithImagesResponse = {
           stringType?: { value?: string } | null;
           stringType2?: { value?: string } | null;
           variants?: {
-            nodes?: Array<{ legacyResourceId?: string; price?: string }>;
+            nodes?: Array<{ legacyResourceId?: string; price?: string; availableForSale?: boolean }>;
           };
         } & ProductImageNode)
       | null
@@ -141,6 +142,7 @@ export async function getProductsDetailedByIds(
               nodes {
                 legacyResourceId
                 price
+                availableForSale
               }
             }
           }
@@ -170,6 +172,7 @@ export async function getProductsDetailedByIds(
         imageUrl: resolveProductImageUrl(node),
         variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
         price: parseFloat(String(variant?.price ?? "0")) || 0,
+        availableForSale: variant?.availableForSale !== false,
       };
     });
 }

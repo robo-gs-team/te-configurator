@@ -272,31 +272,68 @@ function getProductVariantFromPage(): string | null {
  * so the caller can fall back to the configurator's stored base price.
  */
 export function getProductPriceFromPage(): number | null {
+  const currentVariantId = getProductVariantFromPage();
+
+  // 1. Embedded product JSON (Dawn & many themes). Prices are in cents. Prefer the currently
+  //    selected variant, then selected_or_first_available, then the first variant.
   const productJson = document.querySelector<HTMLScriptElement>(
     'script[type="application/json"][data-product-json], script[type="application/json"][id*="ProductJson"]',
   );
   if (productJson?.textContent) {
     try {
       const data = JSON.parse(productJson.textContent) as {
-        selected_or_first_available_variant?: { price?: number | string };
-        variants?: Array<{ price?: number | string }>;
+        selected_or_first_available_variant?: { id?: number | string; price?: number | string };
+        variants?: Array<{ id?: number | string; price?: number | string }>;
       };
+      const match = currentVariantId
+        ? data.variants?.find((v) => String(v.id) === String(currentVariantId))
+        : undefined;
       const raw =
-        data.selected_or_first_available_variant?.price ?? data.variants?.[0]?.price;
-      if (raw != null) {
-        const cents = Number(raw);
-        if (Number.isFinite(cents)) return cents / 100;
-      }
+        match?.price ??
+        data.selected_or_first_available_variant?.price ??
+        data.variants?.[0]?.price;
+      const cents = Number(raw);
+      if (Number.isFinite(cents) && cents > 0) return cents / 100;
     } catch {
       /* ignore malformed JSON */
     }
   }
 
+  // 2. window.ShopifyAnalytics.meta.product — present on almost every Shopify storefront. Prices
+  //    are in cents; match the selected variant when we know it.
+  try {
+    const meta = (
+      window as unknown as {
+        ShopifyAnalytics?: { meta?: { product?: { variants?: Array<{ id?: number | string; price?: number | string }> } } };
+      }
+    ).ShopifyAnalytics?.meta?.product;
+    const variants = meta?.variants;
+    if (variants?.length) {
+      const match = currentVariantId
+        ? variants.find((v) => String(v.id) === String(currentVariantId))
+        : undefined;
+      const cents = Number((match ?? variants[0])?.price);
+      if (Number.isFinite(cents) && cents > 0) return cents / 100;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  // 3. A data attribute some themes expose (cents).
   const priceEl = document.querySelector<HTMLElement>("[data-selected-variant-price]");
   const attr = priceEl?.dataset.selectedVariantPrice;
   if (attr) {
     const cents = Number(attr);
-    if (Number.isFinite(cents)) return cents / 100;
+    if (Number.isFinite(cents) && cents > 0) return cents / 100;
+  }
+
+  // 4. og:price / itemprop=price meta (usually already in dollars).
+  const metaPrice =
+    document.querySelector<HTMLMetaElement>('meta[property="og:price:amount"]')?.content ??
+    document.querySelector<HTMLMetaElement>('meta[itemprop="price"]')?.content;
+  if (metaPrice) {
+    const dollars = Number(metaPrice);
+    if (Number.isFinite(dollars) && dollars > 0) return dollars;
   }
 
   return null;

@@ -241,13 +241,14 @@ export async function enrichConfiguratorWithShopifyData(
   ]);
 
   // Dedup — a merchant could add the same product both via a collection and individually —
-  // then drop any explicitly-excluded products (e.g. a stringing machine).
+  // then drop excluded products (e.g. a stringing machine) AND any string that's out of stock,
+  // so shoppers never pick a string the cart would then reject as sold out.
   const topLevelStringProducts = [
     ...stringCollectionProducts,
     ...stringIndividualProducts.filter(
       (p) => !stringCollectionProducts.some((cp) => cp.id === p.id),
     ),
-  ].filter((p) => !isExcluded(p.id));
+  ].filter((p) => !isExcluded(p.id) && p.availableForSale !== false);
 
   const enrichedSteps = await Promise.all(
     configurator.steps.map(async (step) => ({
