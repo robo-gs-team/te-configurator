@@ -156,12 +156,28 @@ export async function addToShopifyCart(
     const res = await postCartItems(items);
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      // Read as text first — Shopify's /cart/add.js error body is usually JSON with
+      // description/message, but a proxy/WAF failure can return HTML or an empty body. Falling
+      // back to the raw text (rather than a generic "Cart error") keeps the real reason visible
+      // instead of masking it.
+      const rawText = await res.text().catch(() => "");
+      let parsed: { description?: string; message?: string } = {};
+      try {
+        parsed = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        /* not JSON — fall through to rawText below */
+      }
+      const detail = parsed.description ?? parsed.message;
+      const trimmedText = rawText.trim();
+      // Only surface the raw body as a last resort, and only when it looks like a short plain-text
+      // reason rather than an HTML error page (e.g. from a proxy/WAF), which would be unreadable.
+      const usableRawText =
+        trimmedText.length > 0 && trimmedText.length < 300 && !trimmedText.startsWith("<")
+          ? trimmedText
+          : null;
       return {
         success: false,
-        error: (err as { description?: string; message?: string }).description
-          ?? (err as { message?: string }).message
-          ?? "Cart error",
+        error: detail || usableRawText || `Cart error (${res.status})`,
       };
     }
 

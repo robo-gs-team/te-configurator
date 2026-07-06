@@ -240,21 +240,22 @@ export async function enrichConfiguratorWithShopifyData(
       : Promise.resolve([]),
   ]);
 
-  // When the merchant has enabled the out-of-stock override, the string variants are set to
-  // CONTINUE (sellable OOS), so we keep them all. Otherwise, drop out-of-stock strings so a
-  // shopper can't pick one the cart would then reject as sold out.
-  const allowOutOfStock = Boolean(
-    (configurator as ConfiguratorWithRelations & { allowOutOfStock?: boolean }).allowOutOfStock,
+  // Independent of allowOutOfStock (which only flips the real Shopify inventoryPolicy) — a
+  // merchant can separately opt to just hide out-of-stock strings from the picker so a shopper
+  // never sees, let alone picks, one the cart could reject as sold out.
+  const hideOutOfStockStrings = Boolean(
+    (configurator as ConfiguratorWithRelations & { hideOutOfStockStrings?: boolean })
+      .hideOutOfStockStrings,
   );
   // Dedup — a merchant could add the same product both via a collection and individually — then
-  // drop excluded products (e.g. a stringing machine) and (unless overriding) out-of-stock strings.
+  // drop excluded products (e.g. a stringing machine) and, if the merchant opted in, out-of-stock strings.
   const topLevelStringProducts = [
     ...stringCollectionProducts,
     ...stringIndividualProducts.filter(
       (p) => !stringCollectionProducts.some((cp) => cp.id === p.id),
     ),
   ].filter(
-    (p) => !isExcluded(p.id) && (allowOutOfStock || p.availableForSale !== false),
+    (p) => !isExcluded(p.id) && (!hideOutOfStockStrings || p.availableForSale !== false),
   );
 
   const enrichedSteps = await Promise.all(
