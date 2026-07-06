@@ -1,10 +1,11 @@
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { BlockStack, Button, InlineStack, Tag, Text } from "@shopify/polaris";
+import type { ReactNode } from "react";
 import { toCollectionGid } from "~/lib/collection-id";
 import type { CollectionSummary } from "~/lib/shopify-collections.server";
 
 type Props = {
-  label?: string;
+  label?: ReactNode;
   helpText?: string;
   selected: CollectionSummary[];
   onChange: (collections: CollectionSummary[]) => void;
@@ -48,9 +49,13 @@ export function CollectionPicker({
 
   return (
     <BlockStack gap="200">
-      <Text as="p" variant="bodyMd" fontWeight="semibold">
-        {label}
-      </Text>
+      {typeof label === "string" ? (
+        <Text as="p" variant="bodyMd" fontWeight="semibold">
+          {label}
+        </Text>
+      ) : (
+        label
+      )}
       {helpText ? (
         <Text as="p" variant="bodySm" tone="subdued">
           {helpText}
