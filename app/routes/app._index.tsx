@@ -28,6 +28,11 @@ import {
 } from "~/lib/theme-detection.server";
 import { themeEditorEmbedUrl } from "~/lib/theme-embed";
 import { refreshShopSnapshots } from "~/lib/snapshot.server";
+import {
+  getAllLinkedRacquetProductIds,
+  migrateLegacyRacquetTension,
+  type TensionMigrationResult,
+} from "~/lib/product-metafields.server";
 import { getBuildInfo } from "~/lib/build-info.server";
 import { getDeploymentStatus } from "~/lib/vercel-status.server";
 import { authenticate } from "~/shopify.server";
@@ -73,6 +78,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: true });
   }
 
+  if (intent === "migrate_legacy_tension") {
+    const productIds = await getAllLinkedRacquetProductIds(admin, shop.id);
+    const migration = await migrateLegacyRacquetTension(admin, productIds);
+    // Newly-populated tension fields won't reach shoppers until the snapshot is rebuilt.
+    await refreshShopSnapshots(admin, shop.id, session.shop);
+    return json({ migration });
+  }
+
   return json({ ok: true });
 };
 
@@ -88,6 +101,11 @@ export default function Dashboard() {
   // The badge itself flips On/Off after a toggle; this message just confirms it explicitly.
   const toggleJustSucceeded =
     navigation.state === "idle" && Boolean((actionData as { success?: boolean } | undefined)?.success);
+  const isMigrating =
+    navigation.state !== "idle" &&
+    navigation.formData?.get("intent") === "migrate_legacy_tension";
+  const migrationResult = (actionData as { migration?: TensionMigrationResult } | undefined)
+    ?.migration;
 
   return (
     <Page
@@ -252,6 +270,57 @@ export default function Dashboard() {
               </BlockStack>
             </Card>
           </InlineGrid>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack gap="150" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Tension data migration
+                </Text>
+                <Tooltip content="One-time copy from your prior system's racquet.string_tension_min/max/recommended metafields into this app's own te_stringing.tension_min/max/recommended fields. Only fills in racquets that don't already have a value in the te_stringing fields — never overwrites an existing value. Safe to run more than once.">
+                  <Text as="span" tone="subdued">
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 15,
+                        height: 15,
+                        borderRadius: "50%",
+                        border: "1px solid currentColor",
+                        fontSize: 10,
+                        cursor: "help",
+                      }}
+                    >
+                      ?
+                    </span>
+                  </Text>
+                </Tooltip>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Copies per-racquet tension data from your prior system's metafields into the
+                fields this app reads, for every racquet linked to a configurator. Skips any
+                racquet that already has a value set here — safe to run again later.
+              </Text>
+              {migrationResult && (
+                <Banner tone={migrationResult.updated > 0 ? "success" : "info"}>
+                  <p>
+                    Checked {migrationResult.total} racquet{migrationResult.total === 1 ? "" : "s"}:{" "}
+                    updated {migrationResult.updated}, {migrationResult.skippedAlreadySet} already had
+                    a value, {migrationResult.skippedNoLegacyData} had no legacy data to copy.
+                  </p>
+                </Banner>
+              )}
+              <Form method="post">
+                <input type="hidden" name="intent" value="migrate_legacy_tension" />
+                <Button submit size="slim" loading={isMigrating}>
+                  Copy existing tension data
+                </Button>
+              </Form>
+            </BlockStack>
+          </Card>
         </Layout.Section>
 
         <Layout.Section>
