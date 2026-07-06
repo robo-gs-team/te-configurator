@@ -150,6 +150,18 @@ export function resolveStringCatalog(
     return [];
   }
 
+  // A "recommended" set that covers the entire catalog carries no signal for the shopper (it's
+  // most likely a racquet's recommended-strings metafield pointing at the same collection as the
+  // full string list) — treat it as unset rather than badge every single string "Recommended".
+  const effectiveRecommendedSet =
+    recommendedSet.size > 0 && recommendedSet.size < allOptions.length
+      ? recommendedSet
+      : new Set<string>();
+  const effectiveRecommendedHybridSet =
+    recommendedHybridSet.size > 0 && recommendedHybridSet.size < allOptions.length
+      ? recommendedHybridSet
+      : new Set<string>();
+
   const colorGroup = configurator.steps
     .flatMap((s) => s.optionGroups)
     .find((g) => /color/i.test(g.name));
@@ -177,9 +189,11 @@ export function resolveStringCatalog(
       // whatever led the catalog, e.g. a stringing machine). `recommendedHybrid` is the same for
       // the racquet's hybrid recommendation, used by the mains/crosses columns.
       recommended:
-        (option.productId ? recommendedSet.has(option.productId) : false) ||
+        (option.productId ? effectiveRecommendedSet.has(option.productId) : false) ||
         Boolean(meta.recommended),
-      recommendedHybrid: option.productId ? recommendedHybridSet.has(option.productId) : false,
+      recommendedHybrid: option.productId
+        ? effectiveRecommendedHybridSet.has(option.productId)
+        : false,
       imageUrl: option.imageUrl ?? option.previewLayer ?? null,
       variantId: option.variantId,
       productId: option.productId,

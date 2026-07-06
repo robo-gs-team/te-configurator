@@ -171,6 +171,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const allowOutOfStockChanged =
       allowOutOfStock !==
       Boolean((existing as { allowOutOfStock?: boolean }).allowOutOfStock);
+    const hideOutOfStockStrings = form.get("hideOutOfStockStrings") === "on";
 
     await prisma.configurator.update({
       where: { id: params.id },
@@ -183,6 +184,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         stringProductIds: JSON.stringify(stringProductIds),
         excludedProductIds: JSON.stringify(excludedProductIds),
         allowOutOfStock,
+        hideOutOfStockStrings,
         laborVariantId,
         laborPrice,
         basePrice,
@@ -450,6 +452,9 @@ export default function EditConfigurator() {
   const [allowOutOfStock, setAllowOutOfStock] = useState(
     Boolean((configurator as { allowOutOfStock?: boolean }).allowOutOfStock),
   );
+  const [hideOutOfStockStrings, setHideOutOfStockStrings] = useState(
+    Boolean((configurator as { hideOutOfStockStrings?: boolean }).hideOutOfStockStrings),
+  );
 
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -467,6 +472,7 @@ export default function EditConfigurator() {
     selectedStringProducts,
     excludedProductsSel,
     allowOutOfStock,
+    hideOutOfStockStrings,
     laborProduct,
   });
   const [savedSnapshot, setSavedSnapshot] = useState(buildSnapshot);
@@ -705,10 +711,19 @@ export default function EditConfigurator() {
                     label={<FieldLabel facing="setup">Allow ordering out-of-stock racquets & strings</FieldLabel>}
                     checked={allowOutOfStock}
                     onChange={setAllowOutOfStock}
-                    helpText="Lets shoppers configure and buy even when the racquet OR the chosen string is out of stock (the shop provides the strings). On save this sets those racquet AND string variants' Shopify inventory policy to “Continue selling when out of stock” — a real Shopify setting that applies to ALL sales channels (turning it off reverts them to “Stop selling”). When off, out-of-stock strings are hidden from the picker instead."
+                    helpText="Lets shoppers configure and buy even when the racquet OR the chosen string is out of stock (the shop provides the strings). On save this sets those racquet AND string variants' Shopify inventory policy to “Continue selling when out of stock” — a real Shopify setting that applies to ALL sales channels (turning it off reverts them to “Stop selling”)."
                   />
                   {allowOutOfStock ? (
                     <input type="hidden" name="allowOutOfStock" value="on" />
+                  ) : null}
+                  <Checkbox
+                    label={<FieldLabel facing="setup">Hide out-of-stock strings from the picker</FieldLabel>}
+                    checked={hideOutOfStockStrings}
+                    onChange={setHideOutOfStockStrings}
+                    helpText="Independent of the setting above — removes strings Shopify reports as out of stock from the list entirely, so a shopper can never select one. Useful if you'd rather hide them than rely on the override to make them sellable."
+                  />
+                  {hideOutOfStockStrings ? (
+                    <input type="hidden" name="hideOutOfStockStrings" value="on" />
                   ) : null}
                 </FormLayout>
                 <Button submit variant="primary" loading={navigation.state !== "idle"}>

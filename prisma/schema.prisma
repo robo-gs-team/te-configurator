@@ -59,6 +59,11 @@ model Configurator {
   // to Shopify on save when this toggles; reverts variants to DENY when turned off. Note this is
   // a real per-variant Shopify setting — it affects every sales channel, not just this app.
   allowOutOfStock Boolean @default(false)
+  // Independent of allowOutOfStock: when true, string options Shopify reports as unavailable are
+  // removed from the picker entirely, so a shopper can never select one and hit a sold-out cart
+  // error. Useful for merchants who don't want to flip the real Shopify inventoryPolicy above but
+  // still want to keep out-of-stock strings out of sight.
+  hideOutOfStockStrings Boolean @default(false)
   laborVariantId String?
   laborPrice     Float    @default(0)
   basePrice   Float    @default(0)
