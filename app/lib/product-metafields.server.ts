@@ -1,3 +1,4 @@
+import prisma from "~/db.server";
 import { normalizeProductId, toProductGid } from "~/lib/product-id";
 import { DEFAULT_TENSION_RANGE, parseJson, type TensionRange } from "~/lib/configurator.types";
 import { getProductsInCollections } from "~/lib/shopify-collections.server";
@@ -212,4 +213,151 @@ export async function resolveRacquetTensionMap(
   );
 
   return getRacquetTensionMetafields(admin, allIds);
+}
+
+/**
+ * Every racquet product id linked to ANY configurator in the shop (explicit productIds union'd
+ * with every product in every configurator's collectionIds), deduped. Used to scope the
+ * one-time legacy-tension migration to products that actually matter to this app, rather than
+ * every product in the catalog.
+ */
+export async function getAllLinkedRacquetProductIds(
+  admin: ShopifyAdmin,
+  shopId: string,
+): Promise<string[]> {
+  const configurators = await prisma.configurator.findMany({
+    where: { shopId },
+    select: { productIds: true, collectionIds: true },
+  });
+
+  const explicitIds = configurators.flatMap((c) => parseJson<string[]>(c.productIds ?? "[]", []));
+  const collectionIds = Array.from(
+    new Set(configurators.flatMap((c) => parseJson<string[]>(c.collectionIds ?? "[]", []))),
+  );
+
+  const collectionProducts =
+    collectionIds.length > 0 ? await getProductsInCollections(admin, collectionIds) : [];
+
+  return Array.from(new Set([...explicitIds, ...collectionProducts.map((p) => p.id)]));
+}
+
+/** Legacy per-racquet tension fields from a prior system, already populated across the catalog. */
+const LEGACY_TENSION_NAMESPACE = "racquet";
+const LEGACY_TENSION_KEYS = {
+  min: "string_tension_min",
+  max: "string_tension_max",
+  recommended: "string_tension_recommended",
+};
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+export type TensionMigrationResult = {
+  total: number;
+  updated: number;
+  skippedAlreadySet: number;
+  skippedNoLegacyData: number;
+};
+
+type LegacyMigrationNode = {
+  legacyResourceId?: string;
+  legacyMin?: { value?: string } | null;
+  legacyMax?: { value?: string } | null;
+  legacyRecommended?: { value?: string } | null;
+  currentMin?: { value?: string } | null;
+  currentMax?: { value?: string } | null;
+  currentRecommended?: { value?: string } | null;
+};
+
+/**
+ * One-time migration: copy each racquet's legacy `racquet.string_tension_min/max/recommended`
+ * values (from a prior system) into our own `te_stringing.tension_min/max/recommended` fields.
+ *
+ * Skips any racquet that already has at least one te_stringing tension value set — this never
+ * overwrites a value a merchant (or this tool, on a prior run) already put in the canonical
+ * fields, it only fills in ones that are still blank. Also skips racquets with no legacy data
+ * to copy. Safe to re-run.
+ */
+export async function migrateLegacyRacquetTension(
+  admin: ShopifyAdmin,
+  productIds: string[],
+): Promise<TensionMigrationResult> {
+  const result: TensionMigrationResult = {
+    total: productIds.length,
+    updated: 0,
+    skippedAlreadySet: 0,
+    skippedNoLegacyData: 0,
+  };
+  if (productIds.length === 0) return result;
+
+  const writes: Array<{ ownerId: string; namespace: string; key: string; type: string; value: string }> = [];
+
+  for (const batch of chunk(productIds, 50)) {
+    const response = await admin.graphql(
+      `
+      #graphql
+      query ProtoLegacyTensionMigrationRead($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Product {
+            legacyResourceId
+            legacyMin: metafield(namespace: "${LEGACY_TENSION_NAMESPACE}", key: "${LEGACY_TENSION_KEYS.min}") { value }
+            legacyMax: metafield(namespace: "${LEGACY_TENSION_NAMESPACE}", key: "${LEGACY_TENSION_KEYS.max}") { value }
+            legacyRecommended: metafield(namespace: "${LEGACY_TENSION_NAMESPACE}", key: "${LEGACY_TENSION_KEYS.recommended}") { value }
+            currentMin: metafield(namespace: "${TENSION_NAMESPACE}", key: "${TENSION_KEYS.min}") { value }
+            currentMax: metafield(namespace: "${TENSION_NAMESPACE}", key: "${TENSION_KEYS.max}") { value }
+            currentRecommended: metafield(namespace: "${TENSION_NAMESPACE}", key: "${TENSION_KEYS.recommended}") { value }
+          }
+        }
+      }
+    `,
+      { variables: { ids: batch.map((id) => toProductGid(id)) } },
+    );
+
+    const body = (await response.json()) as { data?: { nodes?: Array<LegacyMigrationNode | null> } };
+
+    for (const node of body.data?.nodes ?? []) {
+      if (!node?.legacyResourceId) continue;
+
+      const alreadySet = Boolean(
+        node.currentMin?.value || node.currentMax?.value || node.currentRecommended?.value,
+      );
+      if (alreadySet) {
+        result.skippedAlreadySet++;
+        continue;
+      }
+
+      const min = node.legacyMin?.value;
+      const max = node.legacyMax?.value;
+      const recommended = node.legacyRecommended?.value;
+      if (!min && !max && !recommended) {
+        result.skippedNoLegacyData++;
+        continue;
+      }
+
+      const productGid = toProductGid(node.legacyResourceId);
+      if (min) writes.push({ ownerId: productGid, namespace: TENSION_NAMESPACE, key: TENSION_KEYS.min, type: "number_integer", value: min });
+      if (max) writes.push({ ownerId: productGid, namespace: TENSION_NAMESPACE, key: TENSION_KEYS.max, type: "number_integer", value: max });
+      if (recommended) writes.push({ ownerId: productGid, namespace: TENSION_NAMESPACE, key: TENSION_KEYS.recommended, type: "number_integer", value: recommended });
+      result.updated++;
+    }
+  }
+
+  for (const batch of chunk(writes, 25)) {
+    await admin.graphql(
+      `
+      #graphql
+      mutation ProtoLegacyTensionMigrationWrite($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          userErrors { field message code }
+        }
+      }
+    `,
+      { variables: { metafields: batch } },
+    );
+  }
+
+  return result;
 }
