@@ -121,7 +121,7 @@ function isStringingLabel(el: Element): boolean {
  * the merchant renames or localizes the label.
  * @returns The theme stringing field container, or null if not found.
  */
-export function findThemeStringingBlock(): HTMLElement | null {
+function scanForThemeStringingBlock(): HTMLElement | null {
   const labels = document.querySelectorAll(
     "label, .form__label, legend, p, span, h3, h4, .label, .product-form__label",
   );
@@ -151,6 +151,28 @@ export function findThemeStringingBlock(): HTMLElement | null {
   }
 
   return null;
+}
+
+// This scan walks every label-ish element in the whole document — the placement pipeline calls
+// it several times per pass (relocation, gate init, gate apply), and nothing mutates the theme's
+// own markup between those calls, so cache the result for the duration of one pass. Invalidated
+// wherever a pass begins (see invalidateThemeBlockCache callers) so a genuinely new pass — a
+// section reload, or the rAF-deferred second relocation attempt — always re-scans fresh.
+let cachedThemeBlock: HTMLElement | null | undefined;
+
+export function findThemeStringingBlock(): HTMLElement | null {
+  if (cachedThemeBlock !== undefined) return cachedThemeBlock;
+  cachedThemeBlock = scanForThemeStringingBlock();
+  return cachedThemeBlock;
+}
+
+/**
+ * Invalidate the cached theme-stringing-block lookup so the next call re-scans the live DOM.
+ * Call this at the start of any placement pass that might see a changed DOM (page boot, a
+ * `shopify:section:load` reload, or before the rAF-deferred relocation retry).
+ */
+export function invalidateThemeBlockCache() {
+  cachedThemeBlock = undefined;
 }
 
 /** Hide a theme element (the native stringing field) and tag it so we know we hid it. */
@@ -280,7 +302,12 @@ export function relocateConfiguratorToProductInfo() {
  */
 export function scheduleConfiguratorRelocation() {
   relocateConfiguratorToProductInfo();
-  requestAnimationFrame(() => relocateConfiguratorToProductInfo());
+  requestAnimationFrame(() => {
+    // A real re-scan, not the first pass's cache — the whole point of the second pass is to
+    // catch themes that finish rendering after the first attempt.
+    invalidateThemeBlockCache();
+    relocateConfiguratorToProductInfo();
+  });
 }
 
 /**

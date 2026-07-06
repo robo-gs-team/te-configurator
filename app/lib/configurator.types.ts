@@ -106,7 +106,6 @@ export type StorefrontTheme = {
 };
 
 export type SelectionState = Record<string, string>;
-export type AddonSelection = Record<string, number>;
 
 // Fallback tension range used when a racquet has no tension metafields set yet.
 export const DEFAULT_TENSION_RANGE: TensionRange = { min: 46, max: 55, recommended: 51 };

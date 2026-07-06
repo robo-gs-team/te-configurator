@@ -96,10 +96,20 @@ export function defaultHybridBeds(
   };
 }
 
+// Resolving the catalog re-flattens every step's option groups and rebuilds the price/gauge/
+// color arrays — cheap once, but this is read from a Zustand selector (getStringingTotal) that
+// re-runs on every store update, including every tick of the tension slider. The configurator
+// object reference is stable for the life of a modal session (only replaced by store.open()),
+// so a WeakMap keyed on it turns repeat calls into a cache hit instead of a full recompute.
+const catalogCache = new WeakMap<StorefrontConfigurator, StringProduct[]>();
+
 export function resolveStringCatalog(
   configurator: StorefrontConfigurator | null,
 ): StringProduct[] {
   if (!configurator) return [];
+
+  const cached = catalogCache.get(configurator);
+  if (cached) return cached;
 
   // Merge every group whose name matches "string" (not just the first) — a merchant may
   // split string sources across multiple groups (e.g. one per collection), and each one
@@ -132,7 +142,7 @@ export function resolveStringCatalog(
     colorGroup?.options.map((o) => o.label) ??
     ["Black", "White", "Natural"];
 
-  return allOptions.map((option) => {
+  const result = allOptions.map((option) => {
     const meta = option.metadata as {
       type?: string;
       gauges?: string[];
@@ -152,6 +162,9 @@ export function resolveStringCatalog(
       productId: option.productId,
     };
   });
+
+  catalogCache.set(configurator, result);
+  return result;
 }
 
 export function usesStringingUi(configurator: StorefrontConfigurator | null): boolean {
@@ -166,14 +179,4 @@ export function bedSummary(
   const product = getStringById(catalog, bed.stringId);
   if (!product) return "";
   return `${product.name} · ${bed.gauge}g · ${bed.color} · ${bed.tension} lbs`;
-}
-
-export function bedShortSummary(
-  catalog: StringProduct[],
-  bed: BedSelection,
-): string {
-  const product = getStringById(catalog, bed.stringId);
-  if (!product) return "";
-  const shortName = product.name.split(" ").slice(-2).join(" ");
-  return `${shortName} · ${bed.gauge}g · ${bed.tension} lbs`;
 }

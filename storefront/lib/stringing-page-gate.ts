@@ -81,17 +81,6 @@ export function isStrungSelection(
 }
 
 /**
- * @returns true if a stringing gate exists on the page — either our own gate wrapper or a
- *   detected theme stringing block.
- */
-export function hasStringingGate(): boolean {
-  return (
-    document.querySelector("[data-proto-stringing-gate]") !== null ||
-    findThemeStringingBlock() !== null
-  );
-}
-
-/**
  * @returns true unless the wrapper explicitly opts out via `data-hide-theme-buybox="false"`.
  *   Controls whether selecting "Strung" also hides the theme's Buy now buttons.
  */

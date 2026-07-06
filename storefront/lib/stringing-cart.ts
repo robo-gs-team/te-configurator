@@ -6,7 +6,7 @@ import {
   getStringById,
   resolveStringCatalog,
 } from "./string-catalog";
-import type { HybridStep, StringingMode } from "../store/configurator-store";
+import type { StringingMode } from "../store/configurator-store";
 
 export function buildStringingProperties(
   configurator: StorefrontConfigurator,
@@ -56,15 +56,4 @@ function appendBedProperties(
   properties[`${prefix}Gauge`] = `${bed.gauge}g`;
   properties[`${prefix}Color`] = bed.color;
   properties[`${prefix}Tension`] = `${bed.tension} lbs`;
-}
-
-export function hybridStepLabel(step: HybridStep): string {
-  switch (step) {
-    case "mains":
-      return "Mains";
-    case "crosses":
-      return "Crosses";
-    case "review":
-      return "Review";
-  }
 }
