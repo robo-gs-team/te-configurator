@@ -198,17 +198,21 @@ export function resolveStringCatalog(
     return [];
   }
 
-  // A "recommended" set that covers the entire catalog carries no signal for the shopper (it's
-  // most likely a racquet's recommended-strings metafield pointing at the same collection as the
-  // full string list) — treat it as unset rather than badge every single string "Recommended".
-  const effectiveRecommendedSet =
-    recommendedSet.size > 0 && recommendedSet.size < allOptions.length
-      ? recommendedSet
-      : new Set<string>();
-  const effectiveRecommendedHybridSet =
-    recommendedHybridSet.size > 0 && recommendedHybridSet.size < allOptions.length
-      ? recommendedHybridSet
-      : new Set<string>();
+  // "Recommended" is only a useful signal when it distinguishes SOME strings from the rest. If a
+  // racquet's recommended-strings metafield points at (essentially) the whole string collection —
+  // covering most of the catalog — badging nearly everything is noise, so treat it as unset. We
+  // require the set to be a clear minority (< 80% of the catalog) to count as real curation; the
+  // 80% (not exact-match) slack absorbs dedup / OOS-hidden / excluded differences between the
+  // recommended collection and the displayed list.
+  const RECOMMENDED_MAX_COVERAGE = 0.8;
+  const isMeaningfulCuration = (set: Set<string>) =>
+    set.size > 0 && set.size < allOptions.length * RECOMMENDED_MAX_COVERAGE;
+  const effectiveRecommendedSet = isMeaningfulCuration(recommendedSet)
+    ? recommendedSet
+    : new Set<string>();
+  const effectiveRecommendedHybridSet = isMeaningfulCuration(recommendedHybridSet)
+    ? recommendedHybridSet
+    : new Set<string>();
 
   const colorGroup = configurator.steps
     .flatMap((s) => s.optionGroups)
