@@ -1150,6 +1150,12 @@ export default function EditConfigurator() {
                     <strong>fresh</strong> snapshot.
                   </Text>
                 )}
+                {!snapshotResult.checkedLive && (
+                  <Text as="p" variant="bodySm" tone="critical">
+                    Couldn't compare against live Shopify (API error) — the stale/fresh counts below
+                    are unverified. Try again in a moment.
+                  </Text>
+                )}
                 <Text as="p" variant="bodySm">
                   Saved snapshot has {snapshotResult.stringOptions} string options,{" "}
                   {snapshotResult.stringVariantsInSnapshot} variant ids.{" "}
