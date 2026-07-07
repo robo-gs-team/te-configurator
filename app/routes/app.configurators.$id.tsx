@@ -639,84 +639,6 @@ export default function EditConfigurator() {
             </Banner>
           </Layout.Section>
         )}
-        {auditResult && (
-          <Layout.Section>
-            <Banner tone="info" title="Current Shopify inventory policy for linked products">
-              <p>
-                Racquets: {auditResult.racquets.continue} “continue selling”,{" "}
-                {auditResult.racquets.deny} “stop selling”. Strings:{" "}
-                {auditResult.strings.continue} “continue selling”,{" "}
-                {auditResult.strings.deny} “stop selling”. The “Reset to Deny” button below sets
-                every “continue selling” one back to “stop selling”.
-              </p>
-            </Banner>
-          </Layout.Section>
-        )}
-        {resetResult && (
-          <Layout.Section>
-            <Banner tone="success" title="Inventory policy reset">
-              <p>
-                Set back to “stop selling when out of stock”:{" "}
-                {formatVariantCount(resetResult.racquets, "racquet")} and{" "}
-                {formatVariantCount(resetResult.strings, "string")}. Both out-of-stock overrides
-                are now off.
-              </p>
-            </Banner>
-          </Layout.Section>
-        )}
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">
-                Inventory policy maintenance
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                One-time tools for the Shopify “continue selling when out of stock” policy on this
-                configurator's linked racquets and strings. <strong>Check</strong> is read-only.
-                <strong> Reset to Deny</strong> sets every currently-“continue selling” linked
-                variant back to “stop selling” (Shopify's default) across all sales channels, and
-                turns both overrides off — use it to undo an earlier bulk change.
-              </Text>
-              <InlineStack gap="300">
-                <Form method="post">
-                  <input type="hidden" name="intent" value="audit_inventory" />
-                  <Button
-                    submit
-                    loading={
-                      navigation.state !== "idle" &&
-                      navigation.formData?.get("intent") === "audit_inventory"
-                    }
-                  >
-                    Check current policy
-                  </Button>
-                </Form>
-                {confirmingReset ? (
-                  <Form method="post" onSubmit={() => setConfirmingReset(false)}>
-                    <input type="hidden" name="intent" value="reset_inventory" />
-                    <InlineStack gap="200">
-                      <Button
-                        submit
-                        variant="primary"
-                        tone="critical"
-                        loading={
-                          navigation.state !== "idle" &&
-                          navigation.formData?.get("intent") === "reset_inventory"
-                        }
-                      >
-                        Yes, reset all to Deny
-                      </Button>
-                      <Button onClick={() => setConfirmingReset(false)}>Cancel</Button>
-                    </InlineStack>
-                  </Form>
-                ) : (
-                  <Button tone="critical" onClick={() => setConfirmingReset(true)}>
-                    Reset to Deny…
-                  </Button>
-                )}
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
         <Layout.Section>
           <Card>
             <BlockStack gap="200">
@@ -1128,6 +1050,85 @@ export default function EditConfigurator() {
             </Card>
           </Layout.Section>
         )}
+        {auditResult && (
+          <Layout.Section>
+            <Banner tone="info" title="Current Shopify inventory policy for linked products">
+              <p>
+                Racquets: {auditResult.racquets.continue} “continue selling”,{" "}
+                {auditResult.racquets.deny} “stop selling”. Strings:{" "}
+                {auditResult.strings.continue} “continue selling”,{" "}
+                {auditResult.strings.deny} “stop selling”. The “Reset to Deny” button below sets
+                every “continue selling” one back to “stop selling”.
+              </p>
+            </Banner>
+          </Layout.Section>
+        )}
+        {resetResult && (
+          <Layout.Section>
+            <Banner tone="success" title="Inventory policy reset">
+              <p>
+                Set back to “stop selling when out of stock”:{" "}
+                {formatVariantCount(resetResult.racquets, "racquet")} and{" "}
+                {formatVariantCount(resetResult.strings, "string")}. Both out-of-stock overrides
+                are now off.
+              </p>
+            </Banner>
+          </Layout.Section>
+        )}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                Inventory policy maintenance (testing only)
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Testing/diagnostic tools — not part of everyday setup. They act on the Shopify
+                “continue selling when out of stock” policy for this configurator's linked racquets
+                and strings. <strong>Check current policy</strong> is read-only.
+                <strong> Reset to Deny</strong> sets every currently-“continue selling” linked
+                variant back to “stop selling” (Shopify's default) across all sales channels, and
+                turns both overrides off — use it to undo an earlier bulk change.
+              </Text>
+              <InlineStack gap="300">
+                <Form method="post">
+                  <input type="hidden" name="intent" value="audit_inventory" />
+                  <Button
+                    submit
+                    loading={
+                      navigation.state !== "idle" &&
+                      navigation.formData?.get("intent") === "audit_inventory"
+                    }
+                  >
+                    Check current policy
+                  </Button>
+                </Form>
+                {confirmingReset ? (
+                  <Form method="post" onSubmit={() => setConfirmingReset(false)}>
+                    <input type="hidden" name="intent" value="reset_inventory" />
+                    <InlineStack gap="200">
+                      <Button
+                        submit
+                        variant="primary"
+                        tone="critical"
+                        loading={
+                          navigation.state !== "idle" &&
+                          navigation.formData?.get("intent") === "reset_inventory"
+                        }
+                      >
+                        Yes, reset all to Deny
+                      </Button>
+                      <Button onClick={() => setConfirmingReset(false)}>Cancel</Button>
+                    </InlineStack>
+                  </Form>
+                ) : (
+                  <Button tone="critical" onClick={() => setConfirmingReset(true)}>
+                    Reset to Deny…
+                  </Button>
+                )}
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
       </Layout>
     </Page>
   );
