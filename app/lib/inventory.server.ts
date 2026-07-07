@@ -15,6 +15,26 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+/** Run `fn` over `items` with at most `limit` in flight at once, preserving result order. */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const idx = next++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+  return results;
+}
+
 /**
  * Set the Shopify `inventoryPolicy` on every variant of every product linked to the configurator
  * — BOTH the racquets (explicit productIds ∪ racquet-collection products) AND the strings
@@ -56,9 +76,10 @@ export async function setConfiguratorInventoryPolicy(
     );
     if (racquetIds.length === 0) return { updated: 0 };
 
-    // Read each racquet's variant ids (batched), then bulk-update inventoryPolicy per product.
-    const productVariants: Array<{ productGid: string; variantIds: string[] }> = [];
-    for (const batch of chunk(racquetIds, 50)) {
+    // Read each product's variants (batched, batches in parallel), fetching the CURRENT
+    // inventoryPolicy so we can skip variants already at the target — the common case on a re-save
+    // (this runs on every save while the override is on), which then costs zero mutations.
+    const readBatches = await mapLimit(chunk(racquetIds, 50), 5, async (batch) => {
       const res = await admin.graphql(
         `
         #graphql
@@ -66,7 +87,7 @@ export async function setConfiguratorInventoryPolicy(
           nodes(ids: $ids) {
             ... on Product {
               id
-              variants(first: 100) { nodes { id } }
+              variants(first: 100) { nodes { id inventoryPolicy } }
             }
           }
         }
@@ -76,21 +97,33 @@ export async function setConfiguratorInventoryPolicy(
       const body = (await res.json()) as {
         data?: {
           nodes?: Array<
-            { id?: string; variants?: { nodes?: Array<{ id?: string }> } } | null
+            | {
+                id?: string;
+                variants?: { nodes?: Array<{ id?: string; inventoryPolicy?: string }> };
+              }
+            | null
           >;
         };
       };
-      for (const node of body.data?.nodes ?? []) {
+      return body.data?.nodes ?? [];
+    });
+
+    // Only mutate products that actually have at least one variant off-target.
+    const productVariants: Array<{ productGid: string; variantIds: string[] }> = [];
+    for (const nodes of readBatches) {
+      for (const node of nodes) {
         const variantIds = (node?.variants?.nodes ?? [])
-          .map((v) => v?.id)
-          .filter((id): id is string => Boolean(id));
+          .filter((v) => v?.id && v.inventoryPolicy !== policy)
+          .map((v) => v!.id as string);
         if (node?.id && variantIds.length > 0) {
           productVariants.push({ productGid: node.id, variantIds });
         }
       }
     }
+    if (productVariants.length === 0) return { updated: 0 };
 
-    for (const { productGid, variantIds } of productVariants) {
+    // Bulk-update inventoryPolicy per product, several products in flight at once.
+    const counts = await mapLimit(productVariants, 8, async ({ productGid, variantIds }) => {
       const res = await admin.graphql(
         `
         #graphql
@@ -112,13 +145,14 @@ export async function setConfiguratorInventoryPolicy(
       };
       const errors = body.data?.productVariantsBulkUpdate?.userErrors ?? [];
       if (errors.length > 0) {
-        console.error("setRacquetInventoryPolicy userErrors:", JSON.stringify(errors));
-      } else {
-        updated += variantIds.length;
+        console.error("setConfiguratorInventoryPolicy userErrors:", JSON.stringify(errors));
+        return 0;
       }
-    }
+      return variantIds.length;
+    });
+    updated = counts.reduce((sum, n) => sum + n, 0);
   } catch (err) {
-    console.error("setRacquetInventoryPolicy failed:", err);
+    console.error("setConfiguratorInventoryPolicy failed:", err);
   }
   return { updated };
 }
