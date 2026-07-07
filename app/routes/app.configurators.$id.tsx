@@ -33,6 +33,9 @@ import {
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
 import {
   applyConfiguratorInventoryPolicy,
+  auditLinkedInventoryPolicy,
+  resetLinkedInventoryPolicyToDeny,
+  type InventoryAudit,
   type InventoryPolicyBackup,
   type InventoryPolicyResult,
 } from "~/lib/inventory.server";
@@ -278,6 +281,41 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }
         : null,
     });
+  }
+
+  // Read-only maintenance: report how many linked variants are currently "continue" vs "deny".
+  if (intent === "audit_inventory") {
+    const linkedIds = {
+      productIds: (existing as { productIds?: string }).productIds ?? "[]",
+      collectionIds: (existing as { collectionIds?: string }).collectionIds ?? "[]",
+      stringProductIds: (existing as { stringProductIds?: string }).stringProductIds ?? "[]",
+      stringCollectionIds: (existing as { stringCollectionIds?: string }).stringCollectionIds ?? "[]",
+    };
+    const audit = await auditLinkedInventoryPolicy(admin, linkedIds);
+    return json({ audit });
+  }
+
+  // Maintenance: force every currently-"continue" linked variant back to "deny" (Shopify's
+  // default), clearing the backup and turning both overrides off. Used to undo a historical
+  // mass-flip whose per-variant originals were never recorded.
+  if (intent === "reset_inventory") {
+    const linkedIds = {
+      productIds: (existing as { productIds?: string }).productIds ?? "[]",
+      collectionIds: (existing as { collectionIds?: string }).collectionIds ?? "[]",
+      stringProductIds: (existing as { stringProductIds?: string }).stringProductIds ?? "[]",
+      stringCollectionIds: (existing as { stringCollectionIds?: string }).stringCollectionIds ?? "[]",
+    };
+    const reset = await resetLinkedInventoryPolicyToDeny(admin, linkedIds);
+    await prisma.configurator.update({
+      where: { id: params.id },
+      data: {
+        allowOutOfStockRacquets: false,
+        allowOutOfStockStrings: false,
+        inventoryPolicyBackup: "{}",
+      } as Parameters<typeof prisma.configurator.update>[0]["data"],
+    });
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
+    return json({ reset });
   }
 
   if (intent === "add_step") {
@@ -532,12 +570,18 @@ export default function EditConfigurator() {
   latestSnapshotRef.current = buildSnapshot();
   const isDirty = JSON.stringify(latestSnapshotRef.current) !== JSON.stringify(savedSnapshot);
 
-  // After a save, surface how many racquet vs string variants the out-of-stock toggle updated.
+  // After a save, surface how many racquet vs string variants the out-of-stock toggle updated,
+  // plus results of the read-only audit and the reset-to-Deny maintenance tools.
   const actionData = useActionData<{
     inventory?: { updated: number; racquets: number; strings: number } | null;
+    audit?: InventoryAudit;
+    reset?: { updated: number; racquets: number; strings: number };
   }>();
   const inventoryResult =
     navigation.state === "idle" ? actionData?.inventory ?? null : null;
+  const auditResult = navigation.state === "idle" ? actionData?.audit ?? null : null;
+  const resetResult = navigation.state === "idle" ? actionData?.reset ?? null : null;
+  const [confirmingReset, setConfirmingReset] = useState(false);
 
   // Once this form's own submission completes, treat the just-submitted values as the new
   // clean baseline so the "Unsaved changes" indicator clears.
@@ -595,6 +639,84 @@ export default function EditConfigurator() {
             </Banner>
           </Layout.Section>
         )}
+        {auditResult && (
+          <Layout.Section>
+            <Banner tone="info" title="Current Shopify inventory policy for linked products">
+              <p>
+                Racquets: {auditResult.racquets.continue} “continue selling”,{" "}
+                {auditResult.racquets.deny} “stop selling”. Strings:{" "}
+                {auditResult.strings.continue} “continue selling”,{" "}
+                {auditResult.strings.deny} “stop selling”. The “Reset to Deny” button below sets
+                every “continue selling” one back to “stop selling”.
+              </p>
+            </Banner>
+          </Layout.Section>
+        )}
+        {resetResult && (
+          <Layout.Section>
+            <Banner tone="success" title="Inventory policy reset">
+              <p>
+                Set back to “stop selling when out of stock”:{" "}
+                {formatVariantCount(resetResult.racquets, "racquet")} and{" "}
+                {formatVariantCount(resetResult.strings, "string")}. Both out-of-stock overrides
+                are now off.
+              </p>
+            </Banner>
+          </Layout.Section>
+        )}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                Inventory policy maintenance
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                One-time tools for the Shopify “continue selling when out of stock” policy on this
+                configurator's linked racquets and strings. <strong>Check</strong> is read-only.
+                <strong> Reset to Deny</strong> sets every currently-“continue selling” linked
+                variant back to “stop selling” (Shopify's default) across all sales channels, and
+                turns both overrides off — use it to undo an earlier bulk change.
+              </Text>
+              <InlineStack gap="300">
+                <Form method="post">
+                  <input type="hidden" name="intent" value="audit_inventory" />
+                  <Button
+                    submit
+                    loading={
+                      navigation.state !== "idle" &&
+                      navigation.formData?.get("intent") === "audit_inventory"
+                    }
+                  >
+                    Check current policy
+                  </Button>
+                </Form>
+                {confirmingReset ? (
+                  <Form method="post" onSubmit={() => setConfirmingReset(false)}>
+                    <input type="hidden" name="intent" value="reset_inventory" />
+                    <InlineStack gap="200">
+                      <Button
+                        submit
+                        variant="primary"
+                        tone="critical"
+                        loading={
+                          navigation.state !== "idle" &&
+                          navigation.formData?.get("intent") === "reset_inventory"
+                        }
+                      >
+                        Yes, reset all to Deny
+                      </Button>
+                      <Button onClick={() => setConfirmingReset(false)}>Cancel</Button>
+                    </InlineStack>
+                  </Form>
+                ) : (
+                  <Button tone="critical" onClick={() => setConfirmingReset(true)}>
+                    Reset to Deny…
+                  </Button>
+                )}
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
         <Layout.Section>
           <Card>
             <BlockStack gap="200">
