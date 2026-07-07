@@ -34,10 +34,12 @@ import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
 import {
   applyConfiguratorInventoryPolicy,
   auditLinkedInventoryPolicy,
+  inspectSnapshotStrings,
   resetLinkedInventoryPolicyToDeny,
   type InventoryAudit,
   type InventoryPolicyBackup,
   type InventoryPolicyResult,
+  type SnapshotStringInspection,
 } from "~/lib/inventory.server";
 import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
 import { parseJson } from "~/lib/configurator.types";
@@ -293,6 +295,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     };
     const audit = await auditLinkedInventoryPolicy(admin, linkedIds);
     return json({ audit });
+  }
+
+  // Read-only diagnostic: compare the saved snapshot's string variant ids against the live
+  // products, to detect stale ids (the cause of an in-stock variant being rejected as "sold out").
+  if (intent === "inspect_snapshot") {
+    const snapshot = await inspectSnapshotStrings(
+      admin,
+      (existing as { enrichedSnapshot?: string | null }).enrichedSnapshot,
+    );
+    return json({ snapshot });
   }
 
   // Maintenance: force every currently-"continue" linked variant back to "deny" (Shopify's
@@ -576,11 +588,13 @@ export default function EditConfigurator() {
     inventory?: { updated: number; racquets: number; strings: number } | null;
     audit?: InventoryAudit;
     reset?: { updated: number; racquets: number; strings: number };
+    snapshot?: SnapshotStringInspection;
   }>();
   const inventoryResult =
     navigation.state === "idle" ? actionData?.inventory ?? null : null;
   const auditResult = navigation.state === "idle" ? actionData?.audit ?? null : null;
   const resetResult = navigation.state === "idle" ? actionData?.reset ?? null : null;
+  const snapshotResult = navigation.state === "idle" ? actionData?.snapshot ?? null : null;
   const [confirmingReset, setConfirmingReset] = useState(false);
 
   // Once this form's own submission completes, treat the just-submitted values as the new
@@ -1105,6 +1119,50 @@ export default function EditConfigurator() {
             </Banner>
           </Layout.Section>
         )}
+        {snapshotResult && (
+          <Layout.Section>
+            <Banner
+              tone={snapshotResult.staleIds > 0 ? "critical" : "success"}
+              title="Snapshot freshness (stored variant ids vs live Shopify)"
+            >
+              <BlockStack gap="150">
+                <Text as="p" variant="bodySm">
+                  Saved snapshot has {snapshotResult.stringOptions} string options,{" "}
+                  {snapshotResult.stringVariantsInSnapshot} variant ids.{" "}
+                  <strong>{snapshotResult.staleIds} stale</strong> (id no longer exists live),{" "}
+                  {snapshotResult.liveUnavailable} live-but-not-sellable,{" "}
+                  {snapshotResult.freshAndSellable} fresh &amp; sellable,{" "}
+                  {snapshotResult.emptyMatrix} options with no variant matrix.
+                </Text>
+                {snapshotResult.staleIds > 0 ? (
+                  <Text as="p" variant="bodySm">
+                    <strong>Stale ids found — this is the bug.</strong> The storefront is sending
+                    variant ids that Shopify no longer has, so it rejects them as “sold out” even
+                    when the real variant is in stock. A fresh <strong>Save changes</strong> should
+                    rebuild the snapshot with current ids; if it persists, the enrichment is
+                    capturing the wrong ids and I'll fix it.
+                  </Text>
+                ) : (
+                  <Text as="p" variant="bodySm">
+                    No stale ids — every stored variant id still exists live. If a variant is still
+                    rejected, it's genuinely unavailable in Shopify, not a stale-id bug.
+                  </Text>
+                )}
+                {snapshotResult.staleExamples.length > 0 && (
+                  <Text as="p" variant="bodySm">
+                    <strong>Stale examples:</strong> {snapshotResult.staleExamples.join(" · ")}
+                  </Text>
+                )}
+                {snapshotResult.emptyMatrixExamples.length > 0 && (
+                  <Text as="p" variant="bodySm">
+                    <strong>No-matrix examples:</strong>{" "}
+                    {snapshotResult.emptyMatrixExamples.join(" · ")}
+                  </Text>
+                )}
+              </BlockStack>
+            </Banner>
+          </Layout.Section>
+        )}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
@@ -1130,6 +1188,18 @@ export default function EditConfigurator() {
                     }
                   >
                     Check current policy
+                  </Button>
+                </Form>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="inspect_snapshot" />
+                  <Button
+                    submit
+                    loading={
+                      navigation.state !== "idle" &&
+                      navigation.formData?.get("intent") === "inspect_snapshot"
+                    }
+                  >
+                    Check snapshot freshness
                   </Button>
                 </Form>
                 {confirmingReset ? (
