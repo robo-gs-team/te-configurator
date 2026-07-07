@@ -382,6 +382,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   return json({ ok: true });
 };
 
+/** "1 racquet variant" / "816 string variants" — singular/plural, for the OOS-apply banner. */
+function formatVariantCount(count: number, noun: "racquet" | "string"): string {
+  return `${count} ${noun} variant${count === 1 ? "" : "s"}`;
+}
+
 function SummaryRow({
   label,
   value,
@@ -483,8 +488,10 @@ export default function EditConfigurator() {
   latestSnapshotRef.current = buildSnapshot();
   const isDirty = JSON.stringify(latestSnapshotRef.current) !== JSON.stringify(savedSnapshot);
 
-  // After a save, surface how many racquet variants the out-of-stock toggle updated in Shopify.
-  const actionData = useActionData<{ inventory?: { updated: number } | null }>();
+  // After a save, surface how many racquet vs string variants the out-of-stock toggle updated.
+  const actionData = useActionData<{
+    inventory?: { updated: number; racquets: number; strings: number } | null;
+  }>();
   const inventoryResult =
     navigation.state === "idle" ? actionData?.inventory ?? null : null;
 
@@ -538,8 +545,8 @@ export default function EditConfigurator() {
             <Banner tone={inventoryResult.updated > 0 ? "success" : "warning"}>
               <p>
                 {inventoryResult.updated > 0
-                  ? `Out-of-stock setting applied: ${inventoryResult.updated} racquet + string variant${inventoryResult.updated === 1 ? "" : "s"} updated in Shopify.`
-                  : "No variants were updated — check that this configurator has racquet or string collections/products linked above."}
+                  ? `Out-of-stock setting applied in Shopify: ${formatVariantCount(inventoryResult.racquets, "racquet")} and ${formatVariantCount(inventoryResult.strings, "string")} updated. String variants cover every product in the linked string collection(s), so that count is usually the large one.`
+                  : "No variants were updated — everything linked was already at the target setting, or no racquet/string collections/products are linked above."}
               </p>
             </Banner>
           </Layout.Section>
@@ -714,7 +721,7 @@ export default function EditConfigurator() {
                     label={<FieldLabel facing="setup">Allow ordering out-of-stock racquets & strings</FieldLabel>}
                     checked={allowOutOfStock}
                     onChange={setAllowOutOfStock}
-                    helpText="Lets shoppers configure and buy even when the racquet OR the chosen string is out of stock (the shop provides the strings). On save this sets those racquet AND string variants' Shopify inventory policy to “Continue selling when out of stock” — a real Shopify setting that applies to ALL sales channels (turning it off reverts them to “Stop selling”)."
+                    helpText="Lets shoppers configure and buy even when the racquet OR the chosen string is out of stock (the shop provides the strings). On save this sets the Shopify inventory policy to “Continue selling when out of stock” on EVERY variant of every linked racquet AND every product in the linked string collection(s) — so this can be hundreds of variants, and it's a real Shopify setting that applies to ALL sales channels (not just this configurator). Turning it off and saving reverts them all to “Stop selling”."
                   />
                   {allowOutOfStock ? (
                     <input type="hidden" name="allowOutOfStock" value="on" />
