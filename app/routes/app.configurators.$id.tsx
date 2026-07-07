@@ -13,6 +13,7 @@ import {
   InlineStack,
   Layout,
   Page,
+  Spinner,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -610,6 +611,22 @@ export default function EditConfigurator() {
   const snapshotResult = navigation.state === "idle" ? actionData?.snapshot ?? null : null;
   const snapshotRebuilt = navigation.state === "idle" ? actionData?.rebuilt ?? false : false;
   const [confirmingReset, setConfirmingReset] = useState(false);
+  // Which maintenance action (if any) is currently running — drives the "Working…" indicator so
+  // the merchant knows to wait (these hit Shopify across the whole catalog and can take a minute).
+  const runningIntent =
+    navigation.state !== "idle" ? String(navigation.formData?.get("intent") ?? "") : "";
+  const maintenanceRunning = [
+    "audit_inventory",
+    "inspect_snapshot",
+    "rebuild_snapshot",
+    "reset_inventory",
+  ].includes(runningIntent);
+  const maintenanceLabel: Record<string, string> = {
+    audit_inventory: "Checking current policy",
+    inspect_snapshot: "Checking snapshot freshness",
+    rebuild_snapshot: "Rebuilding snapshot from live Shopify",
+    reset_inventory: "Resetting inventory policy",
+  };
 
   // Once this form's own submission completes, treat the just-submitted values as the new
   // clean baseline so the "Unsaved changes" indicator clears.
@@ -1269,6 +1286,15 @@ export default function EditConfigurator() {
                   </Button>
                 )}
               </InlineStack>
+              {maintenanceRunning && (
+                <InlineStack gap="200" blockAlign="center">
+                  <Spinner accessibilityLabel="Working" size="small" />
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {maintenanceLabel[runningIntent] ?? "Working"} — please wait. This scans your
+                    whole catalog and can take up to a minute; don't close the page.
+                  </Text>
+                </InlineStack>
+              )}
             </BlockStack>
           </Card>
         </Layout.Section>
