@@ -6,6 +6,7 @@ import {
   getProductsDetailedByIds,
   getProductsWithImages,
   type ProductMeta,
+  type ProductVariantInfo,
 } from "~/lib/shopify-products.server";
 
 type ShopifyAdmin = {
@@ -75,6 +76,52 @@ function resolveStringType(
   return matchStringTypeCategory(productType) ?? "String";
 }
 
+// The gauge/color pickers in the storefront map to REAL Shopify variants — a string product's
+// gauge lives in its "Gauge"/"Size"/"Thickness" option and its color in its "Color" option. Pull
+// the shopper-facing option out of each variant's selectedOptions so we can (a) show only real
+// options and (b) charge the exact variant the shopper picked (not a fixed first variant).
+type NormalizedStringVariant = {
+  variantId: string;
+  price: number;
+  availableForSale: boolean;
+  gauge: string | null;
+  color: string | null;
+};
+
+function normalizeStringVariants(
+  variants: ProductVariantInfo[] | undefined,
+): NormalizedStringVariant[] {
+  return (variants ?? []).map((v) => {
+    let gauge: string | null = null;
+    let color: string | null = null;
+    for (const opt of v.selectedOptions) {
+      const name = opt.name.toLowerCase();
+      if (color === null && /colou?r/.test(name)) color = opt.value;
+      else if (gauge === null && /(gauge|size|thickness)/.test(name)) gauge = opt.value;
+    }
+    return {
+      variantId: v.variantId,
+      price: v.price,
+      availableForSale: v.availableForSale,
+      gauge,
+      color,
+    };
+  });
+}
+
+/** Distinct, order-preserving list of a variant field's non-null values. */
+function distinct(values: Array<string | null>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
 function shopifyProductToOption(
   product: CollectionProduct | {
     id: string;
@@ -86,10 +133,18 @@ function shopifyProductToOption(
     imageUrl: string | null;
     variantId: string | null;
     price: number;
+    variants?: ProductVariantInfo[];
   },
   sortOrder: number,
   idPrefix: string,
 ) {
+  const normalizedVariants = normalizeStringVariants(
+    "variants" in product ? product.variants : undefined,
+  );
+  // Real gauge/color options derived from the actual variants; fall back to sensible defaults for
+  // a product with a single/optionless variant so the pickers still render something.
+  const gauges = distinct(normalizedVariants.map((v) => v.gauge));
+  const colors = distinct(normalizedVariants.map((v) => v.color));
   return {
     id: `${idPrefix}-${product.id}`,
     optionGroupId: "",
@@ -111,8 +166,11 @@ function shopifyProductToOption(
         "tags" in product ? product.tags : undefined,
         "productType" in product ? product.productType : undefined,
       ),
-      gauges: ["16", "17"],
-      colors: ["Black", "White", "Natural"],
+      gauges: gauges.length ? gauges : ["16", "17"],
+      colors: colors.length ? colors : ["Black", "White", "Natural"],
+      // The full variant matrix so the storefront can resolve the exact variant for the chosen
+      // gauge+color at cart time, instead of always charging a single fixed (maybe sold-out) one.
+      variants: normalizedVariants,
       fromShopify: true,
     }),
   };

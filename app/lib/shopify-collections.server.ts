@@ -1,6 +1,11 @@
 import { normalizeCollectionId, toCollectionGid } from "~/lib/collection-id";
 import { normalizeProductId } from "~/lib/product-id";
-import { resolveProductImageUrl } from "~/lib/shopify-products.server";
+import {
+  mapProductVariants,
+  resolveProductImageUrl,
+  summarizeVariants,
+  type ProductVariantInfo,
+} from "~/lib/shopify-products.server";
 
 type ShopifyAdmin = {
   graphql: (
@@ -25,6 +30,7 @@ export type CollectionProduct = {
   variantId: string;
   price: number;
   availableForSale: boolean;
+  variants: ProductVariantInfo[];
 };
 
 type ProductCollectionsResponse = {
@@ -159,6 +165,7 @@ type CollectionProductsResponse = {
               legacyResourceId?: string;
               price?: string;
               availableForSale?: boolean;
+              selectedOptions?: Array<{ name?: string; value?: string }>;
             }>;
           };
         }>;
@@ -204,11 +211,15 @@ async function fetchCollectionProducts(
                     url
                   }
                 }
-                variants(first: 1) {
+                variants(first: 100) {
                   nodes {
                     legacyResourceId
                     price
                     availableForSale
+                    selectedOptions {
+                      name
+                      value
+                    }
                   }
                 }
               }
@@ -228,8 +239,9 @@ async function fetchCollectionProducts(
 
     for (const node of products?.nodes ?? []) {
       const id = normalizeProductId(String(node.legacyResourceId ?? ""));
-      const variant = node.variants?.nodes?.[0];
-      if (!id || !variant?.legacyResourceId) continue;
+      const variants = mapProductVariants(node.variants?.nodes);
+      const summary = summarizeVariants(variants);
+      if (!id || !summary.variantId) continue;
       results.push({
         id,
         title: node.title ?? "Product",
@@ -238,9 +250,10 @@ async function fetchCollectionProducts(
         stringType: node.stringType?.value ?? null,
         stringType2: node.stringType2?.value ?? null,
         imageUrl: resolveProductImageUrl(node),
-        variantId: String(variant.legacyResourceId),
-        price: parseFloat(String(variant.price ?? "0")) || 0,
-        availableForSale: variant.availableForSale !== false,
+        variantId: summary.variantId,
+        price: summary.price,
+        availableForSale: summary.availableForSale,
+        variants,
       });
     }
 

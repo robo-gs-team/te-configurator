@@ -17,7 +17,12 @@ import type {
   StorefrontConfigurator,
 } from "~/lib/configurator.types";
 import type { BedSelection } from "./string-catalog";
-import { getStringById, resolveStringCatalog, usesStringingUi } from "./string-catalog";
+import {
+  getStringById,
+  resolveStringCatalog,
+  resolveStringVariantId,
+  usesStringingUi,
+} from "./string-catalog";
 import { buildStringingProperties } from "./stringing-cart";
 import type { StringingMode } from "../store/configurator-store";
 
@@ -122,7 +127,10 @@ export async function addToShopifyCart(
           ];
     for (const { bed, side } of stringBeds) {
       const stringProduct = getStringById(catalog, bed.stringId);
-      pushVariantLine(items, stringProduct?.variantId, 1, {
+      // Charge the exact variant matching the shopper's gauge+color (falling back sensibly), not a
+      // fixed first variant — that's what caused in-stock strings to fail as "already sold out".
+      const stringVariantId = resolveStringVariantId(stringProduct, bed.gauge, bed.color);
+      pushVariantLine(items, stringVariantId, 1, {
         ...parentTag,
         _line_type: "string",
         ...(side ? { _string_side: side } : {}),
