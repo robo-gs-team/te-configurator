@@ -298,9 +298,9 @@ export async function enrichConfiguratorWithShopifyData(
       : Promise.resolve([]),
   ]);
 
-  // Independent of allowOutOfStock (which only flips the real Shopify inventoryPolicy) — a
-  // merchant can separately opt to just hide out-of-stock strings from the picker so a shopper
-  // never sees, let alone picks, one the cart could reject as sold out.
+  // Independent of the allow-ordering-out-of-stock toggles (which only flip the real Shopify
+  // inventoryPolicy) — a merchant can separately opt to just hide out-of-stock strings from the
+  // picker so a shopper never sees, let alone picks, one the cart could reject as sold out.
   const hideOutOfStockStrings = Boolean(
     (configurator as ConfiguratorWithRelations & { hideOutOfStockStrings?: boolean })
       .hideOutOfStockStrings,

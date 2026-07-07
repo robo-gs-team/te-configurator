@@ -54,11 +54,19 @@ model Configurator {
   // (e.g. a stringing machine that lives in a string collection) and never shown the Configure
   // button, even if a racquet collection/product would otherwise include them.
   excludedProductIds  String   @default("[]")
-  // When true, the linked racquet variants' Shopify inventoryPolicy is set to CONTINUE so they
-  // can be ordered while out of stock (the only way /cart/add.js accepts an OOS variant). Applied
-  // to Shopify on save when this toggles; reverts variants to DENY when turned off. Note this is
-  // a real per-variant Shopify setting — it affects every sales channel, not just this app.
+  // Deprecated: split into allowOutOfStockRacquets / allowOutOfStockStrings below. Kept as the
+  // migration source and to avoid a destructive column drop; no longer read by the app.
   allowOutOfStock Boolean @default(false)
+  // When true, linked RACQUET (resp. STRING) variants' Shopify inventoryPolicy is set to CONTINUE
+  // so they can be ordered while out of stock (the only way /cart/add.js accepts an OOS variant).
+  // Applied to Shopify on save. Real per-variant Shopify setting — affects every sales channel.
+  allowOutOfStockRacquets Boolean @default(false)
+  allowOutOfStockStrings  Boolean @default(false)
+  // Non-destructive revert: JSON map of variantGid -> { product, original } capturing each
+  // variant's inventoryPolicy the FIRST time this configurator flipped it to CONTINUE. Turning a
+  // toggle off restores each affected variant to exactly its recorded original instead of blindly
+  // forcing DENY, so SKUs that were "continue selling" for other reasons aren't clobbered.
+  inventoryPolicyBackup String @default("{}")
   // Independent of allowOutOfStock: when true, string options Shopify reports as unavailable are
   // removed from the picker entirely, so a shopper can never select one and hit a sold-out cart
   // error. Useful for merchants who don't want to flip the real Shopify inventoryPolicy above but

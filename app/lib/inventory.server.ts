@@ -35,21 +35,43 @@ async function mapLimit<T, R>(
   return results;
 }
 
+export type InventoryPolicyValue = "CONTINUE" | "DENY";
+
+// Per-variant record of what a variant's inventoryPolicy was BEFORE this configurator first
+// flipped it to CONTINUE — keyed by variant GID, carrying its product GID (so a restore can be
+// grouped per product) and the original policy to put back. Persisted as JSON on the configurator.
+export type InventoryPolicyBackup = Record<
+  string,
+  { product: string; original: InventoryPolicyValue }
+>;
+
+export type InventoryPolicyResult = {
+  updated: number;
+  racquets: number;
+  strings: number;
+  backup: InventoryPolicyBackup;
+};
+
+function normalizePolicy(value: string | undefined): InventoryPolicyValue {
+  return value === "CONTINUE" ? "CONTINUE" : "DENY";
+}
+
 /**
- * Set the Shopify `inventoryPolicy` on every variant of every product linked to the configurator
- * — BOTH the racquets (explicit productIds ∪ racquet-collection products) AND the strings
- * (stringProductIds ∪ string-collection products), since the shop provides the strings and they
- * shouldn't block checkout. CONTINUE lets a variant be ordered while out of stock (the only way
- * Shopify's /cart/add.js accepts an OOS item); DENY blocks it.
+ * Reconcile the Shopify `inventoryPolicy` of a configurator's linked products with the two
+ * independent overrides (racquets, strings). For each bucket that is ON, every variant is set to
+ * CONTINUE (so an out-of-stock item can be ordered — the only way /cart/add.js accepts one),
+ * recording its ORIGINAL policy the first time we touch it. For each bucket that is OFF, only the
+ * variants THIS configurator previously flipped (present in `backup`) are restored to their exact
+ * recorded original — so a variant that was "continue selling" for other reasons is never clobbered
+ * back to DENY. Variants we never touched are left completely alone.
  *
- * Best-effort — never throws, so a transient Shopify error can't fail the merchant's save. Note
- * this changes the REAL per-variant setting: it affects every sales channel, not just this app.
+ * Racquets = explicit productIds ∪ racquet-collection products; strings = stringProductIds ∪
+ * string-collection products. Best-effort — never throws, so a transient Shopify error can't fail
+ * the merchant's save. Note this changes the REAL per-variant setting across every sales channel.
  *
- * @returns the number of variants updated, split by whether the product is a racquet or a string
- *   (so the UI can report "N racquet + M string variants" honestly — the string count is usually
- *   the large one because it covers every product in the linked string collection(s)).
+ * @returns counts of variants changed (split racquet/string) and the updated backup map to persist.
  */
-export async function setConfiguratorInventoryPolicy(
+export async function applyConfiguratorInventoryPolicy(
   admin: ShopifyAdmin,
   configurator: {
     productIds: string;
@@ -57,20 +79,26 @@ export async function setConfiguratorInventoryPolicy(
     stringProductIds?: string;
     stringCollectionIds?: string;
   },
-  allow: boolean,
-): Promise<{ updated: number; racquets: number; strings: number }> {
-  const policy = allow ? "CONTINUE" : "DENY";
-  const empty = { updated: 0, racquets: 0, strings: 0 };
+  opts: {
+    allowRacquets: boolean;
+    allowStrings: boolean;
+    backup: InventoryPolicyBackup;
+  },
+): Promise<InventoryPolicyResult> {
+  const { allowRacquets, allowStrings } = opts;
+  // Work on a copy so we can return the mutated backup for persistence.
+  const backup: InventoryPolicyBackup = { ...opts.backup };
   let racquets = 0;
   let strings = 0;
+  const result = () => ({ updated: racquets + strings, racquets, strings, backup });
   try {
     const explicitIds = parseJson<string[]>(configurator.productIds ?? "[]", []);
     const collectionIds = parseJson<string[]>(configurator.collectionIds ?? "[]", []);
     const stringProductIds = parseJson<string[]>(configurator.stringProductIds ?? "[]", []);
     const stringCollectionIds = parseJson<string[]>(configurator.stringCollectionIds ?? "[]", []);
 
-    // Resolve racquet-sourced and string-sourced product ids SEPARATELY (collections fetched in
-    // parallel) so each mutated product can be attributed to the right bucket in the count.
+    // Resolve racquet-sourced and string-sourced product ids SEPARATELY (collections in parallel)
+    // so each variant can be attributed to the right bucket and its own toggle.
     const [racquetCollectionProducts, stringCollectionProducts] = await Promise.all([
       collectionIds.length > 0 ? getProductsInCollections(admin, collectionIds) : Promise.resolve([]),
       stringCollectionIds.length > 0
@@ -87,13 +115,13 @@ export async function setConfiguratorInventoryPolicy(
         normalizeProductId(String(id)),
       ),
     );
-    // Union of all product ids to touch (racquet classification wins if somehow in both).
-    const allIds = Array.from(new Set([...racquetIdSet, ...stringIdSet]));
-    if (allIds.length === 0) return empty;
+    // Products to inspect: everything currently linked, PLUS any product referenced by the backup
+    // (so we can still restore variants of a collection the merchant has since unlinked).
+    const backupProductIds = Object.values(backup).map((b) => normalizeProductId(b.product));
+    const allIds = Array.from(new Set([...racquetIdSet, ...stringIdSet, ...backupProductIds]));
+    if (allIds.length === 0) return result();
 
-    // Read each product's variants (batched, batches in parallel), fetching the CURRENT
-    // inventoryPolicy so we can skip variants already at the target — the common case on a re-save
-    // (this runs on every save while the override is on), which then costs zero mutations.
+    // Read each product's variants (batched, batches in parallel) with their CURRENT policy.
     const readBatches = await mapLimit(chunk(allIds, 50), 5, async (batch) => {
       const res = await admin.graphql(
         `
@@ -123,63 +151,87 @@ export async function setConfiguratorInventoryPolicy(
       return body.data?.nodes ?? [];
     });
 
-    // Only mutate products that actually have at least one variant off-target. Tag each with its
-    // bucket (racquet vs string) via the normalized product id so the count can be split.
-    const productVariants: Array<{
-      productGid: string;
-      variantIds: string[];
-      kind: "racquet" | "string";
-    }> = [];
+    // Decide each variant's target policy, updating the backup as we go. Only variants whose
+    // current policy differs from the target are collected for mutation.
+    const productChanges = new Map<
+      string,
+      { kind: "racquet" | "string"; variants: Array<{ id: string; policy: InventoryPolicyValue }> }
+    >();
     for (const nodes of readBatches) {
       for (const node of nodes) {
-        const variantIds = (node?.variants?.nodes ?? [])
-          .filter((v) => v?.id && v.inventoryPolicy !== policy)
-          .map((v) => v!.id as string);
-        if (node?.id && variantIds.length > 0) {
-          const normId = normalizeProductId(node.id);
-          const kind = racquetIdSet.has(normId) ? "racquet" : "string";
-          productVariants.push({ productGid: node.id, variantIds, kind });
+        if (!node?.id) continue;
+        const normId = normalizeProductId(node.id);
+        const isRacquet = racquetIdSet.has(normId);
+        const isString = stringIdSet.has(normId);
+        const kind: "racquet" | "string" = isRacquet ? "racquet" : "string";
+        const allow = isRacquet ? allowRacquets : isString ? allowStrings : false;
+
+        for (const v of node.variants?.nodes ?? []) {
+          if (!v?.id) continue;
+          const current = normalizePolicy(v.inventoryPolicy);
+          let target: InventoryPolicyValue;
+          if (allow) {
+            // Turning (or keeping) the bucket ON: record the original the first time we flip it.
+            if (current !== "CONTINUE" && !backup[v.id]) {
+              backup[v.id] = { product: node.id, original: current };
+            }
+            target = "CONTINUE";
+          } else {
+            // Bucket OFF: only touch variants WE previously flipped; restore their exact original.
+            const recorded = backup[v.id];
+            if (!recorded) continue; // never touched by us → leave alone
+            target = recorded.original;
+            delete backup[v.id];
+          }
+          if (current === target) continue;
+          const entry = productChanges.get(node.id) ?? { kind, variants: [] };
+          entry.variants.push({ id: v.id, policy: target });
+          productChanges.set(node.id, entry);
         }
       }
     }
-    if (productVariants.length === 0) return empty;
+    if (productChanges.size === 0) return result();
 
-    // Bulk-update inventoryPolicy per product, several products in flight at once.
-    const results = await mapLimit(productVariants, 8, async ({ productGid, variantIds, kind }) => {
-      const res = await admin.graphql(
-        `
-        #graphql
-        mutation ProtoSetInventoryPolicy($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-            userErrors { field message }
+    // Bulk-update per product (each variant carries its own target policy), several in flight.
+    const results = await mapLimit(
+      Array.from(productChanges.entries()),
+      8,
+      async ([productGid, { kind, variants }]) => {
+        const res = await admin.graphql(
+          `
+          #graphql
+          mutation ProtoSetInventoryPolicy($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              userErrors { field message }
+            }
           }
-        }
-      `,
-        {
-          variables: {
-            productId: productGid,
-            variants: variantIds.map((id) => ({ id, inventoryPolicy: policy })),
+        `,
+          {
+            variables: {
+              productId: productGid,
+              variants: variants.map((v) => ({ id: v.id, inventoryPolicy: v.policy })),
+            },
           },
-        },
-      );
-      const body = (await res.json()) as {
-        data?: { productVariantsBulkUpdate?: { userErrors?: Array<{ message?: string }> } };
-      };
-      const errors = body.data?.productVariantsBulkUpdate?.userErrors ?? [];
-      if (errors.length > 0) {
-        console.error("setConfiguratorInventoryPolicy userErrors:", JSON.stringify(errors));
-        return { racquet: 0, string: 0 };
-      }
-      return kind === "racquet"
-        ? { racquet: variantIds.length, string: 0 }
-        : { racquet: 0, string: variantIds.length };
-    });
+        );
+        const body = (await res.json()) as {
+          data?: { productVariantsBulkUpdate?: { userErrors?: Array<{ message?: string }> } };
+        };
+        const errors = body.data?.productVariantsBulkUpdate?.userErrors ?? [];
+        if (errors.length > 0) {
+          console.error("applyConfiguratorInventoryPolicy userErrors:", JSON.stringify(errors));
+          return { racquet: 0, string: 0 };
+        }
+        return kind === "racquet"
+          ? { racquet: variants.length, string: 0 }
+          : { racquet: 0, string: variants.length };
+      },
+    );
     for (const r of results) {
       racquets += r.racquet;
       strings += r.string;
     }
   } catch (err) {
-    console.error("setConfiguratorInventoryPolicy failed:", err);
+    console.error("applyConfiguratorInventoryPolicy failed:", err);
   }
-  return { updated: racquets + strings, racquets, strings };
+  return result();
 }
