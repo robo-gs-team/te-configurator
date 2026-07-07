@@ -307,6 +307,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ snapshot });
   }
 
+  // Rebuild the enriched snapshot from live Shopify data NOW (fresh variant ids for every string),
+  // then immediately re-inspect it so the merchant sees the post-rebuild freshness in one click.
+  if (intent === "rebuild_snapshot") {
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
+    const refreshed = await getConfiguratorById(params.id!);
+    const snapshot = await inspectSnapshotStrings(
+      admin,
+      (refreshed as { enrichedSnapshot?: string | null } | null)?.enrichedSnapshot,
+    );
+    return json({ snapshot, rebuilt: true });
+  }
+
   // Maintenance: force every currently-"continue" linked variant back to "deny" (Shopify's
   // default), clearing the backup and turning both overrides off. Used to undo a historical
   // mass-flip whose per-variant originals were never recorded.
@@ -589,12 +601,14 @@ export default function EditConfigurator() {
     audit?: InventoryAudit;
     reset?: { updated: number; racquets: number; strings: number };
     snapshot?: SnapshotStringInspection;
+    rebuilt?: boolean;
   }>();
   const inventoryResult =
     navigation.state === "idle" ? actionData?.inventory ?? null : null;
   const auditResult = navigation.state === "idle" ? actionData?.audit ?? null : null;
   const resetResult = navigation.state === "idle" ? actionData?.reset ?? null : null;
   const snapshotResult = navigation.state === "idle" ? actionData?.snapshot ?? null : null;
+  const snapshotRebuilt = navigation.state === "idle" ? actionData?.rebuilt ?? false : false;
   const [confirmingReset, setConfirmingReset] = useState(false);
 
   // Once this form's own submission completes, treat the just-submitted values as the new
@@ -1123,9 +1137,19 @@ export default function EditConfigurator() {
           <Layout.Section>
             <Banner
               tone={snapshotResult.staleIds > 0 ? "critical" : "success"}
-              title="Snapshot freshness (stored variant ids vs live Shopify)"
+              title={
+                snapshotRebuilt
+                  ? "Snapshot rebuilt — freshness after rebuild"
+                  : "Snapshot freshness (stored variant ids vs live Shopify)"
+              }
             >
               <BlockStack gap="150">
+                {snapshotRebuilt && (
+                  <Text as="p" variant="bodySm">
+                    Rebuilt the snapshot from live Shopify data. Results below are the{" "}
+                    <strong>fresh</strong> snapshot.
+                  </Text>
+                )}
                 <Text as="p" variant="bodySm">
                   Saved snapshot has {snapshotResult.stringOptions} string options,{" "}
                   {snapshotResult.stringVariantsInSnapshot} variant ids.{" "}
@@ -1200,6 +1224,19 @@ export default function EditConfigurator() {
                     }
                   >
                     Check snapshot freshness
+                  </Button>
+                </Form>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="rebuild_snapshot" />
+                  <Button
+                    submit
+                    variant="primary"
+                    loading={
+                      navigation.state !== "idle" &&
+                      navigation.formData?.get("intent") === "rebuild_snapshot"
+                    }
+                  >
+                    Rebuild snapshot now
                   </Button>
                 </Form>
                 {confirmingReset ? (
