@@ -241,6 +241,12 @@ type ClassifiedVariant = {
   productGid: string;
   kind: "racquet" | "string";
   current: InventoryPolicyValue;
+  // Inventory facts straight from Shopify, used by the audit to prove WHY a variant is (or isn't)
+  // sellable: aggregate on-hand quantity, whether inventory is tracked at all, and display names.
+  quantity: number | null;
+  tracked: boolean;
+  productTitle: string;
+  variantTitle: string;
 };
 
 /**
@@ -289,7 +295,16 @@ async function readLinkedClassifiedVariants(
           nodes(ids: $ids) {
             ... on Product {
               id
-              variants(first: 100) { nodes { id inventoryPolicy } }
+              title
+              variants(first: 100) {
+                nodes {
+                  id
+                  title
+                  inventoryPolicy
+                  inventoryQuantity
+                  inventoryItem { tracked }
+                }
+              }
             }
           }
         }
@@ -301,7 +316,16 @@ async function readLinkedClassifiedVariants(
           nodes?: Array<
             | {
                 id?: string;
-                variants?: { nodes?: Array<{ id?: string; inventoryPolicy?: string }> };
+                title?: string;
+                variants?: {
+                  nodes?: Array<{
+                    id?: string;
+                    title?: string;
+                    inventoryPolicy?: string;
+                    inventoryQuantity?: number | null;
+                    inventoryItem?: { tracked?: boolean } | null;
+                  }>;
+                };
               }
             | null
           >;
@@ -324,6 +348,10 @@ async function readLinkedClassifiedVariants(
             productGid: node.id,
             kind,
             current: normalizePolicy(v.inventoryPolicy),
+            quantity: typeof v.inventoryQuantity === "number" ? v.inventoryQuantity : null,
+            tracked: v.inventoryItem?.tracked !== false,
+            productTitle: node.title ?? "Product",
+            variantTitle: v.title ?? "",
           });
         }
       }
@@ -335,14 +363,30 @@ async function readLinkedClassifiedVariants(
   }
 }
 
+export type InventoryAuditBucket = {
+  continue: number;
+  deny: number;
+  // Stock facts straight from Shopify's own inventory data — these decide sellability, not the
+  // app: a tracked variant with quantity <= 0 and policy DENY is what /cart/add.js rejects as
+  // "already sold out".
+  inStock: number; // tracked, quantity > 0
+  zeroStock: number; // tracked, quantity <= 0
+  untracked: number; // inventory not tracked — always sellable regardless of quantity
+};
+
 export type InventoryAudit = {
-  racquets: { continue: number; deny: number };
-  strings: { continue: number; deny: number };
+  racquets: InventoryAuditBucket;
+  strings: InventoryAuditBucket;
+  // A few concrete zero-stock examples ("Product — Variant (qty N)") so the merchant can spot-check
+  // them against Shopify admin directly.
+  zeroStockExamples: string[];
 };
 
 /**
- * Read-only: count how many linked racquet/string variants are currently "continue selling"
- * (CONTINUE) vs "stop selling" (DENY). Lets the merchant see the exact scope before resetting.
+ * Read-only: for every linked racquet/string variant, report the inventory policy split
+ * (CONTINUE vs DENY) AND the real stock facts (tracked+in-stock / tracked+zero / untracked),
+ * plus a few named zero-stock examples. This proves whether "sold out" verdicts come from
+ * Shopify's own inventory data rather than anything this app computes.
  */
 export async function auditLinkedInventoryPolicy(
   admin: ShopifyAdmin,
@@ -353,15 +397,37 @@ export async function auditLinkedInventoryPolicy(
     stringCollectionIds?: string;
   },
 ): Promise<InventoryAudit> {
+  const emptyBucket = (): InventoryAuditBucket => ({
+    continue: 0,
+    deny: 0,
+    inStock: 0,
+    zeroStock: 0,
+    untracked: 0,
+  });
   const audit: InventoryAudit = {
-    racquets: { continue: 0, deny: 0 },
-    strings: { continue: 0, deny: 0 },
+    racquets: emptyBucket(),
+    strings: emptyBucket(),
+    zeroStockExamples: [],
   };
   const variants = await readLinkedClassifiedVariants(admin, configurator);
   for (const v of variants) {
     const bucket = v.kind === "racquet" ? audit.racquets : audit.strings;
     if (v.current === "CONTINUE") bucket.continue += 1;
     else bucket.deny += 1;
+    if (!v.tracked) {
+      bucket.untracked += 1;
+    } else if ((v.quantity ?? 0) > 0) {
+      bucket.inStock += 1;
+    } else {
+      bucket.zeroStock += 1;
+      if (audit.zeroStockExamples.length < 6) {
+        const variantLabel =
+          v.variantTitle && v.variantTitle !== "Default Title" ? ` — ${v.variantTitle}` : "";
+        audit.zeroStockExamples.push(
+          `${v.productTitle}${variantLabel} (qty ${v.quantity ?? 0})`,
+        );
+      }
+    }
   }
   return audit;
 }

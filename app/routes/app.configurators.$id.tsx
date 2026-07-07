@@ -1052,14 +1052,30 @@ export default function EditConfigurator() {
         )}
         {auditResult && (
           <Layout.Section>
-            <Banner tone="info" title="Current Shopify inventory policy for linked products">
-              <p>
-                Racquets: {auditResult.racquets.continue} “continue selling”,{" "}
-                {auditResult.racquets.deny} “stop selling”. Strings:{" "}
-                {auditResult.strings.continue} “continue selling”,{" "}
-                {auditResult.strings.deny} “stop selling”. The “Reset to Deny” button below sets
-                every “continue selling” one back to “stop selling”.
-              </p>
+            <Banner tone="info" title="Shopify inventory audit for linked products">
+              <BlockStack gap="150">
+                <Text as="p" variant="bodySm">
+                  <strong>Policy</strong> — Racquets: {auditResult.racquets.continue} “continue
+                  selling”, {auditResult.racquets.deny} “stop selling”. Strings:{" "}
+                  {auditResult.strings.continue} “continue selling”,{" "}
+                  {auditResult.strings.deny} “stop selling”.
+                </Text>
+                <Text as="p" variant="bodySm">
+                  <strong>Stock (Shopify's own numbers)</strong> — Racquet variants:{" "}
+                  {auditResult.racquets.inStock} in stock, {auditResult.racquets.zeroStock} at
+                  zero, {auditResult.racquets.untracked} untracked. String variants:{" "}
+                  {auditResult.strings.inStock} in stock, {auditResult.strings.zeroStock} at zero,{" "}
+                  {auditResult.strings.untracked} untracked. A tracked variant at zero with “stop
+                  selling” is exactly what the cart rejects as “already sold out”; untracked
+                  variants always sell.
+                </Text>
+                {auditResult.zeroStockExamples.length > 0 && (
+                  <Text as="p" variant="bodySm">
+                    <strong>Zero-stock examples:</strong>{" "}
+                    {auditResult.zeroStockExamples.join(" · ")}
+                  </Text>
+                )}
+              </BlockStack>
             </Banner>
           </Layout.Section>
         )}
