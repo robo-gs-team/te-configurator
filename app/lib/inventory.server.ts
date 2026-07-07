@@ -242,7 +242,10 @@ type ClassifiedVariant = {
   kind: "racquet" | "string";
   current: InventoryPolicyValue;
   // Inventory facts straight from Shopify, used by the audit to prove WHY a variant is (or isn't)
-  // sellable: aggregate on-hand quantity, whether inventory is tracked at all, and display names.
+  // sellable: whether Shopify itself will sell it (availableForSale — the flag the cart actually
+  // checks, which respects location/sales-channel, unlike the raw admin quantity), the aggregate
+  // on-hand quantity, whether inventory is tracked at all, and display names.
+  availableForSale: boolean;
   quantity: number | null;
   tracked: boolean;
   productTitle: string;
@@ -300,6 +303,7 @@ async function readLinkedClassifiedVariants(
                 nodes {
                   id
                   title
+                  availableForSale
                   inventoryPolicy
                   inventoryQuantity
                   inventoryItem { tracked }
@@ -321,6 +325,7 @@ async function readLinkedClassifiedVariants(
                   nodes?: Array<{
                     id?: string;
                     title?: string;
+                    availableForSale?: boolean;
                     inventoryPolicy?: string;
                     inventoryQuantity?: number | null;
                     inventoryItem?: { tracked?: boolean } | null;
@@ -348,6 +353,7 @@ async function readLinkedClassifiedVariants(
             productGid: node.id,
             kind,
             current: normalizePolicy(v.inventoryPolicy),
+            availableForSale: v.availableForSale !== false,
             quantity: typeof v.inventoryQuantity === "number" ? v.inventoryQuantity : null,
             tracked: v.inventoryItem?.tracked !== false,
             productTitle: node.title ?? "Product",
@@ -372,21 +378,31 @@ export type InventoryAuditBucket = {
   inStock: number; // tracked, quantity > 0
   zeroStock: number; // tracked, quantity <= 0
   untracked: number; // inventory not tracked — always sellable regardless of quantity
+  // Shopify's OWN sellability verdict — the flag the cart actually checks (respects location /
+  // sales-channel), independent of the raw admin quantity above.
+  sellable: number; // availableForSale === true
+  notSellable: number; // availableForSale === false → cart rejects as "sold out"
+  // The smoking gun: variants that show stock in admin (quantity > 0) yet Shopify still marks
+  // NOT sellable — i.e. the stock is at a location/channel the online store can't sell from.
+  phantomStock: number;
 };
 
 export type InventoryAudit = {
   racquets: InventoryAuditBucket;
   strings: InventoryAuditBucket;
-  // A few concrete zero-stock examples ("Product — Variant (qty N)") so the merchant can spot-check
-  // them against Shopify admin directly.
+  // Concrete zero-stock examples ("Product — Variant (qty N)").
   zeroStockExamples: string[];
+  // Concrete phantom-stock examples: admin shows stock but Shopify won't sell it
+  // ("Product — Variant (qty N, not sellable)").
+  phantomStockExamples: string[];
 };
 
 /**
  * Read-only: for every linked racquet/string variant, report the inventory policy split
- * (CONTINUE vs DENY) AND the real stock facts (tracked+in-stock / tracked+zero / untracked),
- * plus a few named zero-stock examples. This proves whether "sold out" verdicts come from
- * Shopify's own inventory data rather than anything this app computes.
+ * (CONTINUE vs DENY), the raw stock facts (in-stock / zero / untracked), AND Shopify's own
+ * `availableForSale` verdict (sellable / not) — including "phantom stock" variants that show a
+ * positive admin quantity yet Shopify still refuses to sell (stock at a location/channel the
+ * online store can't reach). Proves exactly why a variant with "100 available" gets rejected.
  */
 export async function auditLinkedInventoryPolicy(
   admin: ShopifyAdmin,
@@ -403,28 +419,46 @@ export async function auditLinkedInventoryPolicy(
     inStock: 0,
     zeroStock: 0,
     untracked: 0,
+    sellable: 0,
+    notSellable: 0,
+    phantomStock: 0,
   });
   const audit: InventoryAudit = {
     racquets: emptyBucket(),
     strings: emptyBucket(),
     zeroStockExamples: [],
+    phantomStockExamples: [],
   };
   const variants = await readLinkedClassifiedVariants(admin, configurator);
   for (const v of variants) {
     const bucket = v.kind === "racquet" ? audit.racquets : audit.strings;
     if (v.current === "CONTINUE") bucket.continue += 1;
     else bucket.deny += 1;
+
+    if (v.availableForSale) bucket.sellable += 1;
+    else bucket.notSellable += 1;
+
+    const qty = v.quantity ?? 0;
+    const variantLabel =
+      v.variantTitle && v.variantTitle !== "Default Title" ? ` — ${v.variantTitle}` : "";
+
     if (!v.tracked) {
       bucket.untracked += 1;
-    } else if ((v.quantity ?? 0) > 0) {
+    } else if (qty > 0) {
       bucket.inStock += 1;
     } else {
       bucket.zeroStock += 1;
       if (audit.zeroStockExamples.length < 6) {
-        const variantLabel =
-          v.variantTitle && v.variantTitle !== "Default Title" ? ` — ${v.variantTitle}` : "";
-        audit.zeroStockExamples.push(
-          `${v.productTitle}${variantLabel} (qty ${v.quantity ?? 0})`,
+        audit.zeroStockExamples.push(`${v.productTitle}${variantLabel} (qty ${qty})`);
+      }
+    }
+
+    // Admin shows stock but Shopify won't sell it — the exact "100 available yet sold out" case.
+    if (qty > 0 && !v.availableForSale) {
+      bucket.phantomStock += 1;
+      if (audit.phantomStockExamples.length < 6) {
+        audit.phantomStockExamples.push(
+          `${v.productTitle}${variantLabel} (qty ${qty}, not sellable)`,
         );
       }
     }

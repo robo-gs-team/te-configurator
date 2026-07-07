@@ -1061,14 +1061,28 @@ export default function EditConfigurator() {
                   {auditResult.strings.deny} “stop selling”.
                 </Text>
                 <Text as="p" variant="bodySm">
-                  <strong>Stock (Shopify's own numbers)</strong> — Racquet variants:{" "}
+                  <strong>Stock (admin quantity)</strong> — Racquet variants:{" "}
                   {auditResult.racquets.inStock} in stock, {auditResult.racquets.zeroStock} at
                   zero, {auditResult.racquets.untracked} untracked. String variants:{" "}
                   {auditResult.strings.inStock} in stock, {auditResult.strings.zeroStock} at zero,{" "}
-                  {auditResult.strings.untracked} untracked. A tracked variant at zero with “stop
-                  selling” is exactly what the cart rejects as “already sold out”; untracked
-                  variants always sell.
+                  {auditResult.strings.untracked} untracked.
                 </Text>
+                <Text as="p" variant="bodySm">
+                  <strong>Sellable per Shopify (availableForSale — what the cart checks)</strong> —
+                  Racquets: {auditResult.racquets.sellable} sellable,{" "}
+                  {auditResult.racquets.notSellable} not. Strings:{" "}
+                  {auditResult.strings.sellable} sellable, {auditResult.strings.notSellable} not.
+                  Of those, <strong>{auditResult.strings.phantomStock} string</strong> and{" "}
+                  {auditResult.racquets.phantomStock} racquet variants show stock in admin yet
+                  Shopify still won't sell them (stock sits at a location/channel the online store
+                  can't reach) — that's the “100 available but sold out” case.
+                </Text>
+                {auditResult.phantomStockExamples.length > 0 && (
+                  <Text as="p" variant="bodySm">
+                    <strong>Phantom-stock examples:</strong>{" "}
+                    {auditResult.phantomStockExamples.join(" · ")}
+                  </Text>
+                )}
                 {auditResult.zeroStockExamples.length > 0 && (
                   <Text as="p" variant="bodySm">
                     <strong>Zero-stock examples:</strong>{" "}
