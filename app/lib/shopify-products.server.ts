@@ -5,6 +5,17 @@ export type ProductSummary = {
   title: string;
 };
 
+// A single sellable variant of a string product, carrying enough to (a) judge availability
+// per-variant, and (b) resolve the exact variant matching the shopper's gauge/color choice at
+// cart time. `selectedOptions` is Shopify's raw option list (e.g. [{name:"Color",value:"Black"},
+// {name:"Size",value:"16"}]).
+export type ProductVariantInfo = {
+  variantId: string;
+  price: number;
+  availableForSale: boolean;
+  selectedOptions: Array<{ name: string; value: string }>;
+};
+
 export type ProductWithImage = {
   id: string;
   title: string;
@@ -12,11 +23,54 @@ export type ProductWithImage = {
   variantId: string | null;
   price: number;
   availableForSale?: boolean;
+  variants?: ProductVariantInfo[];
   productType?: string;
   tags?: string[];
   stringType?: string | null;
   stringType2?: string | null;
 };
+
+/** Map Shopify's raw variant nodes to our ProductVariantInfo[], dropping any without an id. */
+export function mapProductVariants(
+  nodes:
+    | Array<{
+        legacyResourceId?: string;
+        price?: string;
+        availableForSale?: boolean;
+        selectedOptions?: Array<{ name?: string; value?: string }>;
+      }>
+    | undefined,
+): ProductVariantInfo[] {
+  return (nodes ?? [])
+    .filter((v) => Boolean(v?.legacyResourceId))
+    .map((v) => ({
+      variantId: String(v.legacyResourceId),
+      price: parseFloat(String(v.price ?? "0")) || 0,
+      availableForSale: v.availableForSale !== false,
+      selectedOptions: (v.selectedOptions ?? [])
+        .filter((o) => o?.name != null && o?.value != null)
+        .map((o) => ({ name: String(o.name), value: String(o.value) })),
+    }));
+}
+
+/**
+ * Pick the representative default variant + price + product-level availability from a variant
+ * list: the price/id come from the first AVAILABLE variant (so the option's default isn't a
+ * sold-out SKU), and a product counts as available if ANY of its variants is sellable — the whole
+ * point, since a product with a depleted first variant but in-stock others is very much for sale.
+ */
+export function summarizeVariants(variants: ProductVariantInfo[]): {
+  variantId: string | null;
+  price: number;
+  availableForSale: boolean;
+} {
+  const firstAvailable = variants.find((v) => v.availableForSale) ?? variants[0];
+  return {
+    variantId: firstAvailable?.variantId ?? null,
+    price: firstAvailable?.price ?? 0,
+    availableForSale: variants.some((v) => v.availableForSale),
+  };
+}
 
 type ShopifyAdmin = {
   graphql: (
@@ -98,7 +152,12 @@ type ProductsWithImagesResponse = {
           stringType?: { value?: string } | null;
           stringType2?: { value?: string } | null;
           variants?: {
-            nodes?: Array<{ legacyResourceId?: string; price?: string; availableForSale?: boolean }>;
+            nodes?: Array<{
+              legacyResourceId?: string;
+              price?: string;
+              availableForSale?: boolean;
+              selectedOptions?: Array<{ name?: string; value?: string }>;
+            }>;
           };
         } & ProductImageNode)
       | null
@@ -138,11 +197,15 @@ export async function getProductsDetailedByIds(
                 url
               }
             }
-            variants(first: 1) {
+            variants(first: 100) {
               nodes {
                 legacyResourceId
                 price
                 availableForSale
+                selectedOptions {
+                  name
+                  value
+                }
               }
             }
           }
@@ -161,7 +224,8 @@ export async function getProductsDetailedByIds(
   return (body.data?.nodes ?? [])
     .filter((node): node is NonNullable<typeof node> => Boolean(node?.legacyResourceId))
     .map((node) => {
-      const variant = node.variants?.nodes?.[0];
+      const variants = mapProductVariants(node.variants?.nodes);
+      const summary = summarizeVariants(variants);
       return {
         id: normalizeProductId(String(node.legacyResourceId)),
         title: node.title ?? "Product",
@@ -170,9 +234,10 @@ export async function getProductsDetailedByIds(
         stringType: node.stringType?.value ?? null,
         stringType2: node.stringType2?.value ?? null,
         imageUrl: resolveProductImageUrl(node),
-        variantId: variant?.legacyResourceId ? String(variant.legacyResourceId) : null,
-        price: parseFloat(String(variant?.price ?? "0")) || 0,
-        availableForSale: variant?.availableForSale !== false,
+        variantId: summary.variantId,
+        price: summary.price,
+        availableForSale: summary.availableForSale,
+        variants,
       };
     });
 }

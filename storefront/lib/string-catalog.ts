@@ -4,6 +4,16 @@ import { DEFAULT_TENSION_RANGE } from "~/lib/configurator.types";
 export type { TensionRange };
 export { DEFAULT_TENSION_RANGE };
 
+// A single real Shopify variant of a string, with its gauge/color pulled out so the cart can
+// resolve the exact variant matching the shopper's pick (instead of a fixed first variant).
+export type StringVariant = {
+  variantId: string;
+  price: number;
+  availableForSale: boolean;
+  gauge: string | null;
+  color: string | null;
+};
+
 export type StringProduct = {
   id: string;
   name: string;
@@ -16,6 +26,7 @@ export type StringProduct = {
   imageUrl?: string | null;
   variantId?: string | null;
   productId?: string | null;
+  variants?: StringVariant[];
 };
 
 export type BedSelection = {
@@ -53,6 +64,43 @@ export function getStringById(
   id: string,
 ): StringProduct | undefined {
   return catalog.find((s) => s.id === id);
+}
+
+const eqOpt = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+
+/**
+ * Resolve the exact Shopify variant id to charge for a chosen string, given the shopper's gauge
+ * and color. Prefers an in-stock exact gauge+color match, then relaxes: an available same-color
+ * variant, an available same-gauge variant, any available variant, and only then the exact match
+ * (even if flagged unavailable) or the product's default. This makes the cart add the sellable
+ * variant the shopper is really after instead of a fixed first variant that may be sold out.
+ * @returns a variant id string, or null if the product has no variant info at all.
+ */
+export function resolveStringVariantId(
+  product: StringProduct | undefined,
+  gauge: string,
+  color: string,
+): string | null {
+  if (!product) return null;
+  const variants = product.variants ?? [];
+  if (variants.length === 0) return product.variantId ?? null;
+
+  const exact = variants.find((v) => eqOpt(v.gauge, gauge) && eqOpt(v.color, color));
+  if (exact?.availableForSale) return exact.variantId;
+
+  const byColor = variants.find((v) => v.availableForSale && eqOpt(v.color, color));
+  if (byColor) return byColor.variantId;
+
+  const byGauge = variants.find((v) => v.availableForSale && eqOpt(v.gauge, gauge));
+  if (byGauge) return byGauge.variantId;
+
+  const anyAvailable = variants.find((v) => v.availableForSale);
+  if (anyAvailable) return anyAvailable.variantId;
+
+  // Nothing is flagged available (e.g. the OOS override handles sellability at checkout): fall
+  // back to the exact match if we found one, else the product's default variant.
+  return exact?.variantId ?? product.variantId ?? variants[0]?.variantId ?? null;
 }
 
 export function defaultBed(
@@ -176,6 +224,7 @@ export function resolveStringCatalog(
       gauges?: string[];
       colors?: string[];
       recommended?: boolean;
+      variants?: StringVariant[];
     };
     return {
       id: option.id,
@@ -184,6 +233,7 @@ export function resolveStringCatalog(
       price: option.priceAdjust,
       gauges: meta.gauges?.length ? meta.gauges : ["16", "17"],
       colors: meta.colors?.length ? meta.colors : colors,
+      variants: meta.variants ?? [],
       // "Recommended" = this racquet's own recommended-strings collection (per-racquet metafield),
       // or an explicit metafield flag. NOT just first-in-list (which previously mislabeled
       // whatever led the catalog, e.g. a stringing machine). `recommendedHybrid` is the same for
