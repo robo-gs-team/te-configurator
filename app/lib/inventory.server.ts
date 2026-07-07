@@ -235,3 +235,204 @@ export async function applyConfiguratorInventoryPolicy(
   }
   return result();
 }
+
+type ClassifiedVariant = {
+  variantGid: string;
+  productGid: string;
+  kind: "racquet" | "string";
+  current: InventoryPolicyValue;
+};
+
+/**
+ * Read every variant of every product currently linked to the configurator (racquets and strings),
+ * classified by bucket and carrying its current inventoryPolicy. Shared by the audit and reset
+ * maintenance tools. Best-effort — returns [] on error or when nothing is linked.
+ */
+async function readLinkedClassifiedVariants(
+  admin: ShopifyAdmin,
+  configurator: {
+    productIds: string;
+    collectionIds: string;
+    stringProductIds?: string;
+    stringCollectionIds?: string;
+  },
+): Promise<ClassifiedVariant[]> {
+  try {
+    const explicitIds = parseJson<string[]>(configurator.productIds ?? "[]", []);
+    const collectionIds = parseJson<string[]>(configurator.collectionIds ?? "[]", []);
+    const stringProductIds = parseJson<string[]>(configurator.stringProductIds ?? "[]", []);
+    const stringCollectionIds = parseJson<string[]>(configurator.stringCollectionIds ?? "[]", []);
+    const [racquetCollectionProducts, stringCollectionProducts] = await Promise.all([
+      collectionIds.length > 0 ? getProductsInCollections(admin, collectionIds) : Promise.resolve([]),
+      stringCollectionIds.length > 0
+        ? getProductsInCollections(admin, stringCollectionIds)
+        : Promise.resolve([]),
+    ]);
+    const racquetIdSet = new Set(
+      [...explicitIds, ...racquetCollectionProducts.map((p) => p.id)].map((id) =>
+        normalizeProductId(String(id)),
+      ),
+    );
+    const stringIdSet = new Set(
+      [...stringProductIds, ...stringCollectionProducts.map((p) => p.id)].map((id) =>
+        normalizeProductId(String(id)),
+      ),
+    );
+    const allIds = Array.from(new Set([...racquetIdSet, ...stringIdSet]));
+    if (allIds.length === 0) return [];
+
+    const readBatches = await mapLimit(chunk(allIds, 50), 5, async (batch) => {
+      const res = await admin.graphql(
+        `
+        #graphql
+        query ProtoRacquetVariants($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Product {
+              id
+              variants(first: 100) { nodes { id inventoryPolicy } }
+            }
+          }
+        }
+      `,
+        { variables: { ids: batch.map((id) => toProductGid(id)) } },
+      );
+      const body = (await res.json()) as {
+        data?: {
+          nodes?: Array<
+            | {
+                id?: string;
+                variants?: { nodes?: Array<{ id?: string; inventoryPolicy?: string }> };
+              }
+            | null
+          >;
+        };
+      };
+      return body.data?.nodes ?? [];
+    });
+
+    const out: ClassifiedVariant[] = [];
+    for (const nodes of readBatches) {
+      for (const node of nodes) {
+        if (!node?.id) continue;
+        const kind: "racquet" | "string" = racquetIdSet.has(normalizeProductId(node.id))
+          ? "racquet"
+          : "string";
+        for (const v of node.variants?.nodes ?? []) {
+          if (!v?.id) continue;
+          out.push({
+            variantGid: v.id,
+            productGid: node.id,
+            kind,
+            current: normalizePolicy(v.inventoryPolicy),
+          });
+        }
+      }
+    }
+    return out;
+  } catch (err) {
+    console.error("readLinkedClassifiedVariants failed:", err);
+    return [];
+  }
+}
+
+export type InventoryAudit = {
+  racquets: { continue: number; deny: number };
+  strings: { continue: number; deny: number };
+};
+
+/**
+ * Read-only: count how many linked racquet/string variants are currently "continue selling"
+ * (CONTINUE) vs "stop selling" (DENY). Lets the merchant see the exact scope before resetting.
+ */
+export async function auditLinkedInventoryPolicy(
+  admin: ShopifyAdmin,
+  configurator: {
+    productIds: string;
+    collectionIds: string;
+    stringProductIds?: string;
+    stringCollectionIds?: string;
+  },
+): Promise<InventoryAudit> {
+  const audit: InventoryAudit = {
+    racquets: { continue: 0, deny: 0 },
+    strings: { continue: 0, deny: 0 },
+  };
+  const variants = await readLinkedClassifiedVariants(admin, configurator);
+  for (const v of variants) {
+    const bucket = v.kind === "racquet" ? audit.racquets : audit.strings;
+    if (v.current === "CONTINUE") bucket.continue += 1;
+    else bucket.deny += 1;
+  }
+  return audit;
+}
+
+/**
+ * Maintenance: force every currently-"continue selling" linked variant back to "stop selling"
+ * (DENY) — Shopify's default — undoing a historical mass-flip whose per-variant originals were
+ * never recorded. Only touches variants that aren't already DENY. Returns counts by bucket.
+ */
+export async function resetLinkedInventoryPolicyToDeny(
+  admin: ShopifyAdmin,
+  configurator: {
+    productIds: string;
+    collectionIds: string;
+    stringProductIds?: string;
+    stringCollectionIds?: string;
+  },
+): Promise<{ updated: number; racquets: number; strings: number }> {
+  let racquets = 0;
+  let strings = 0;
+  try {
+    const variants = await readLinkedClassifiedVariants(admin, configurator);
+    const toChange = variants.filter((v) => v.current !== "DENY");
+    if (toChange.length === 0) return { updated: 0, racquets: 0, strings: 0 };
+
+    const byProduct = new Map<string, { kind: "racquet" | "string"; ids: string[] }>();
+    for (const v of toChange) {
+      const entry = byProduct.get(v.productGid) ?? { kind: v.kind, ids: [] };
+      entry.ids.push(v.variantGid);
+      byProduct.set(v.productGid, entry);
+    }
+
+    const results = await mapLimit(
+      Array.from(byProduct.entries()),
+      8,
+      async ([productGid, { kind, ids }]) => {
+        const res = await admin.graphql(
+          `
+          #graphql
+          mutation ProtoResetInventoryPolicy($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              userErrors { field message }
+            }
+          }
+        `,
+          {
+            variables: {
+              productId: productGid,
+              variants: ids.map((id) => ({ id, inventoryPolicy: "DENY" })),
+            },
+          },
+        );
+        const body = (await res.json()) as {
+          data?: { productVariantsBulkUpdate?: { userErrors?: Array<{ message?: string }> } };
+        };
+        const errors = body.data?.productVariantsBulkUpdate?.userErrors ?? [];
+        if (errors.length > 0) {
+          console.error("resetLinkedInventoryPolicyToDeny userErrors:", JSON.stringify(errors));
+          return { racquet: 0, string: 0 };
+        }
+        return kind === "racquet"
+          ? { racquet: ids.length, string: 0 }
+          : { racquet: 0, string: ids.length };
+      },
+    );
+    for (const r of results) {
+      racquets += r.racquet;
+      strings += r.string;
+    }
+  } catch (err) {
+    console.error("resetLinkedInventoryPolicyToDeny failed:", err);
+  }
+  return { updated: racquets + strings, racquets, strings };
+}
