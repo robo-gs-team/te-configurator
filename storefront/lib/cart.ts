@@ -130,6 +130,18 @@ export async function addToShopifyCart(
       // Charge the exact variant matching the shopper's gauge+color (falling back sensibly), not a
       // fixed first variant — that's what caused in-stock strings to fail as "already sold out".
       const stringVariantId = resolveStringVariantId(stringProduct, bed.gauge, bed.color);
+      // TEMP DEBUG (remove after diagnosing the "sold out" issue): logs exactly what the storefront
+      // resolves for this string so we can compare the posted id against Shopify's live variant.
+      // eslint-disable-next-line no-console
+      console.log("[PROTO-DEBUG] string resolve", {
+        name: stringProduct?.name,
+        productId: stringProduct?.productId,
+        pickedGauge: bed.gauge,
+        pickedColor: bed.color,
+        resolvedVariantId: stringVariantId,
+        variantCount: stringProduct?.variants?.length ?? 0,
+        variants: stringProduct?.variants,
+      });
       pushVariantLine(items, stringVariantId, 1, {
         ...parentTag,
         _line_type: "string",
@@ -159,6 +171,10 @@ export async function addToShopifyCart(
       });
     }
   }
+
+  // TEMP DEBUG (remove after diagnosing): the full payload posted to /cart/add.js.
+  // eslint-disable-next-line no-console
+  console.log("[PROTO-DEBUG] cart items posted:", JSON.stringify(items));
 
   try {
     const res = await postCartItems(items);
