@@ -1,6 +1,7 @@
 import { parseJson } from "~/lib/configurator.types";
 import { normalizeProductId, toProductGid } from "~/lib/product-id";
 import { getProductsInCollections } from "~/lib/shopify-collections.server";
+import { getProductsDetailedByIds } from "~/lib/shopify-products.server";
 
 type ShopifyAdmin = {
   graphql: (
@@ -535,4 +536,133 @@ export async function resetLinkedInventoryPolicyToDeny(
     console.error("resetLinkedInventoryPolicyToDeny failed:", err);
   }
   return { updated: racquets + strings, racquets, strings };
+}
+
+export type SnapshotStringInspection = {
+  hasSnapshot: boolean;
+  stringOptions: number;
+  stringVariantsInSnapshot: number;
+  emptyMatrix: number; // string options with NO variant matrix (fall back to a single id)
+  staleIds: number; // snapshot variant id no longer exists on the live product
+  liveUnavailable: number; // snapshot id exists live but Shopify marks it unavailable
+  freshAndSellable: number; // snapshot id exists live AND is sellable
+  staleExamples: string[];
+  emptyMatrixExamples: string[];
+};
+
+/**
+ * Compare every string variant id baked into the SAVED snapshot against the live product's
+ * current variants. This is the definitive test for "the storefront sends a stale/wrong variant
+ * id": a snapshot id that no longer exists live is exactly what makes Shopify reject an
+ * in-stock-looking variant as "sold out". Read-only.
+ */
+export async function inspectSnapshotStrings(
+  admin: ShopifyAdmin,
+  snapshotJson: string | null | undefined,
+): Promise<SnapshotStringInspection> {
+  const result: SnapshotStringInspection = {
+    hasSnapshot: false,
+    stringOptions: 0,
+    stringVariantsInSnapshot: 0,
+    emptyMatrix: 0,
+    staleIds: 0,
+    liveUnavailable: 0,
+    freshAndSellable: 0,
+    staleExamples: [],
+    emptyMatrixExamples: [],
+  };
+  if (!snapshotJson) return result;
+
+  let parsed: {
+    configurator?: {
+      steps?: Array<{
+        optionGroups?: Array<{
+          name?: string;
+          options?: Array<{
+            label?: string;
+            productId?: string | null;
+            metadata?: {
+              variants?: Array<{
+                variantId?: string;
+                gauge?: string | null;
+                color?: string | null;
+              }>;
+            };
+          }>;
+        }>;
+      }>;
+    };
+  };
+  try {
+    parsed = JSON.parse(snapshotJson);
+  } catch {
+    return result;
+  }
+  result.hasSnapshot = true;
+
+  type SnapOption = {
+    label: string;
+    productId: string | null;
+    variants: Array<{ variantId: string; gauge: string | null; color: string | null }>;
+  };
+  const stringOptions: SnapOption[] = [];
+  for (const step of parsed.configurator?.steps ?? []) {
+    for (const group of step.optionGroups ?? []) {
+      if (!/string/i.test(group.name ?? "")) continue;
+      for (const opt of group.options ?? []) {
+        stringOptions.push({
+          label: opt.label ?? "String",
+          productId: opt.productId ?? null,
+          variants: (opt.metadata?.variants ?? [])
+            .filter((v) => v?.variantId)
+            .map((v) => ({
+              variantId: String(v.variantId),
+              gauge: v.gauge ?? null,
+              color: v.color ?? null,
+            })),
+        });
+      }
+    }
+  }
+  result.stringOptions = stringOptions.length;
+
+  const productIds = Array.from(
+    new Set(stringOptions.map((o) => o.productId).filter((id): id is string => Boolean(id))),
+  );
+  const live = productIds.length > 0 ? await getProductsDetailedByIds(admin, productIds) : [];
+  // productId -> (live variant id -> availableForSale)
+  const liveByProduct = new Map<string, Map<string, boolean>>(
+    live.map((p) => [
+      normalizeProductId(p.id),
+      new Map((p.variants ?? []).map((v) => [String(v.variantId), v.availableForSale])),
+    ]),
+  );
+
+  for (const opt of stringOptions) {
+    if (opt.variants.length === 0) {
+      result.emptyMatrix += 1;
+      if (result.emptyMatrixExamples.length < 6) result.emptyMatrixExamples.push(opt.label);
+      continue;
+    }
+    const liveVars = opt.productId
+      ? liveByProduct.get(normalizeProductId(opt.productId))
+      : undefined;
+    for (const v of opt.variants) {
+      result.stringVariantsInSnapshot += 1;
+      if (!liveVars || !liveVars.has(v.variantId)) {
+        result.staleIds += 1;
+        if (result.staleExamples.length < 8) {
+          const label = [v.color, v.gauge].filter(Boolean).join(" / ");
+          result.staleExamples.push(
+            `${opt.label}${label ? ` — ${label}` : ""} → snapshot id ${v.variantId} (no longer exists live)`,
+          );
+        }
+      } else if (liveVars.get(v.variantId) === false) {
+        result.liveUnavailable += 1;
+      } else {
+        result.freshAndSellable += 1;
+      }
+    }
+  }
+  return result;
 }
