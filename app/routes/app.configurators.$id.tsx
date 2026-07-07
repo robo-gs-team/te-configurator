@@ -31,7 +31,11 @@ import {
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
-import { setConfiguratorInventoryPolicy } from "~/lib/inventory.server";
+import {
+  applyConfiguratorInventoryPolicy,
+  type InventoryPolicyBackup,
+  type InventoryPolicyResult,
+} from "~/lib/inventory.server";
 import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
 import { parseJson } from "~/lib/configurator.types";
 import { parseCollectionIdsField } from "~/lib/collection-id";
@@ -167,11 +171,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const laborPrice = parseFloat(String(form.get("laborPrice") || "0")) || 0;
     const basePrice = parseFloat(String(form.get("basePrice") || "0")) || 0;
     const isActive = form.get("isActive") === "on";
-    const allowOutOfStock = form.get("allowOutOfStock") === "on";
-    const allowOutOfStockChanged =
-      allowOutOfStock !==
-      Boolean((existing as { allowOutOfStock?: boolean }).allowOutOfStock);
+    const allowOutOfStockRacquets = form.get("allowOutOfStockRacquets") === "on";
+    const allowOutOfStockStrings = form.get("allowOutOfStockStrings") === "on";
     const hideOutOfStockStrings = form.get("hideOutOfStockStrings") === "on";
+    const existingBackup = parseJson<InventoryPolicyBackup>(
+      (existing as { inventoryPolicyBackup?: string }).inventoryPolicyBackup ?? "{}",
+      {},
+    );
+    const wasRacquets = Boolean(
+      (existing as { allowOutOfStockRacquets?: boolean }).allowOutOfStockRacquets,
+    );
+    const wasStrings = Boolean(
+      (existing as { allowOutOfStockStrings?: boolean }).allowOutOfStockStrings,
+    );
 
     await prisma.configurator.update({
       where: { id: params.id },
@@ -183,7 +195,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         stringCollectionIds: JSON.stringify(stringCollectionIds),
         stringProductIds: JSON.stringify(stringProductIds),
         excludedProductIds: JSON.stringify(excludedProductIds),
-        allowOutOfStock,
+        allowOutOfStockRacquets,
+        allowOutOfStockStrings,
         hideOutOfStockStrings,
         laborVariantId,
         laborPrice,
@@ -192,28 +205,36 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       } as Parameters<typeof prisma.configurator.update>[0]["data"],
     });
 
-    // Apply the Shopify inventory policy. When ON we re-apply CONTINUE on every save (idempotent
-    // — this also self-heals if a prior attempt silently failed, e.g. a transient API error). We
-    // only apply DENY when the toggle flips OFF, so we never clobber a merchant's own settings on
-    // unrelated saves. `inventoryResult.updated` lets the UI confirm how many variants changed.
+    // Reconcile the Shopify inventory policy for both buckets. When a bucket is ON we re-apply
+    // CONTINUE on every save (idempotent + self-heals a prior silent failure); when OFF we restore
+    // exactly the variants THIS configurator flipped, back to their recorded originals. We only run
+    // it when there's real work to do: a bucket is ON, or there's a backup to reconcile/restore.
     const linkedIds = {
       productIds: JSON.stringify(productIds),
       collectionIds: JSON.stringify(collectionIds),
       stringProductIds: JSON.stringify(stringProductIds),
       stringCollectionIds: JSON.stringify(stringCollectionIds),
     };
+    const needsInventoryRun =
+      allowOutOfStockRacquets ||
+      allowOutOfStockStrings ||
+      wasRacquets ||
+      wasStrings ||
+      Object.keys(existingBackup).length > 0;
 
     // The inventory-policy call (Shopify) and the per-group source updates (DB) are independent,
-    // so run them concurrently rather than back-to-back. One save covers everything on the page:
-    // general settings above, plus every option group's product sources below (submitted as
-    // groupCollections_<id> / groupProducts_<id> hidden fields — see OptionGroupSourcePicker).
+    // so run them concurrently. One save covers everything on the page: general settings above,
+    // plus every option group's product sources below (submitted as groupCollections_<id> /
+    // groupProducts_<id> hidden fields — see OptionGroupSourcePicker).
     const allGroups = existing.steps.flatMap((step) => step.optionGroups);
     const [inventoryResult] = await Promise.all([
-      allowOutOfStock
-        ? setConfiguratorInventoryPolicy(admin, linkedIds, true)
-        : allowOutOfStockChanged
-          ? setConfiguratorInventoryPolicy(admin, linkedIds, false)
-          : Promise.resolve<{ updated: number } | null>(null),
+      needsInventoryRun
+        ? applyConfiguratorInventoryPolicy(admin, linkedIds, {
+            allowRacquets: allowOutOfStockRacquets,
+            allowStrings: allowOutOfStockStrings,
+            backup: existingBackup,
+          })
+        : Promise.resolve<InventoryPolicyResult | null>(null),
       Promise.all(
         allGroups.map((group) => {
           const groupCollectionIds = form.get(`groupCollections_${group.id}`);
@@ -234,10 +255,29 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       ),
     ]);
 
+    // Persist the updated per-variant backup so a later revert can restore exact originals.
+    if (inventoryResult) {
+      await prisma.configurator.update({
+        where: { id: params.id },
+        data: {
+          inventoryPolicyBackup: JSON.stringify(inventoryResult.backup),
+        } as Parameters<typeof prisma.configurator.update>[0]["data"],
+      });
+    }
+
     // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change.
     // Runs last so the snapshot reflects the just-applied inventory policy (availableForSale).
     await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
-    return json({ success: true, inventory: inventoryResult });
+    return json({
+      success: true,
+      inventory: inventoryResult
+        ? {
+            updated: inventoryResult.updated,
+            racquets: inventoryResult.racquets,
+            strings: inventoryResult.strings,
+          }
+        : null,
+    });
   }
 
   if (intent === "add_step") {
@@ -457,8 +497,11 @@ export default function EditConfigurator() {
   // Kept only as a hidden fallback value; the racquet price is now read live from the page.
   const [basePrice] = useState(String(configurator.basePrice));
   const [isActive, setIsActive] = useState(configurator.isActive);
-  const [allowOutOfStock, setAllowOutOfStock] = useState(
-    Boolean((configurator as { allowOutOfStock?: boolean }).allowOutOfStock),
+  const [allowOutOfStockRacquets, setAllowOutOfStockRacquets] = useState(
+    Boolean((configurator as { allowOutOfStockRacquets?: boolean }).allowOutOfStockRacquets),
+  );
+  const [allowOutOfStockStrings, setAllowOutOfStockStrings] = useState(
+    Boolean((configurator as { allowOutOfStockStrings?: boolean }).allowOutOfStockStrings),
   );
   const [hideOutOfStockStrings, setHideOutOfStockStrings] = useState(
     Boolean((configurator as { hideOutOfStockStrings?: boolean }).hideOutOfStockStrings),
@@ -479,7 +522,8 @@ export default function EditConfigurator() {
     selectedProducts,
     selectedStringProducts,
     excludedProductsSel,
-    allowOutOfStock,
+    allowOutOfStockRacquets,
+    allowOutOfStockStrings,
     hideOutOfStockStrings,
     laborProduct,
   });
@@ -718,13 +762,22 @@ export default function EditConfigurator() {
                     <input type="hidden" name="isActive" value="on" />
                   ) : null}
                   <Checkbox
-                    label={<FieldLabel facing="setup">Allow ordering out-of-stock racquets & strings</FieldLabel>}
-                    checked={allowOutOfStock}
-                    onChange={setAllowOutOfStock}
-                    helpText="Lets shoppers configure and buy even when the racquet OR the chosen string is out of stock (the shop provides the strings). On save this sets the Shopify inventory policy to “Continue selling when out of stock” on EVERY variant of every linked racquet AND every product in the linked string collection(s) — so this can be hundreds of variants, and it's a real Shopify setting that applies to ALL sales channels (not just this configurator). Turning it off and saving reverts them all to “Stop selling”."
+                    label={<FieldLabel facing="setup">Allow ordering out-of-stock racquets</FieldLabel>}
+                    checked={allowOutOfStockRacquets}
+                    onChange={setAllowOutOfStockRacquets}
+                    helpText="Lets shoppers configure and buy even when the racquet is out of stock. On save this sets the Shopify inventory policy to “Continue selling when out of stock” on every variant of every linked racquet — a real Shopify setting that applies to ALL sales channels. Turning it off restores each of THOSE variants to exactly the setting it had before this app changed it (it won't clobber SKUs that were already “continue selling” for other reasons)."
                   />
-                  {allowOutOfStock ? (
-                    <input type="hidden" name="allowOutOfStock" value="on" />
+                  {allowOutOfStockRacquets ? (
+                    <input type="hidden" name="allowOutOfStockRacquets" value="on" />
+                  ) : null}
+                  <Checkbox
+                    label={<FieldLabel facing="setup">Allow ordering out-of-stock strings</FieldLabel>}
+                    checked={allowOutOfStockStrings}
+                    onChange={setAllowOutOfStockStrings}
+                    helpText="Same as above, but for strings (the shop provides them). This covers EVERY variant of every product in the linked string collection(s) — so it can be hundreds of variants across all sales channels. Turning it off restores each variant this app changed back to its exact prior setting."
+                  />
+                  {allowOutOfStockStrings ? (
+                    <input type="hidden" name="allowOutOfStockStrings" value="on" />
                   ) : null}
                   <Checkbox
                     label={<FieldLabel facing="setup">Hide out-of-stock strings from the picker</FieldLabel>}
