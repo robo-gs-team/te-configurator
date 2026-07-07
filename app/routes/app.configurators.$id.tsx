@@ -196,43 +196,46 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // — this also self-heals if a prior attempt silently failed, e.g. a transient API error). We
     // only apply DENY when the toggle flips OFF, so we never clobber a merchant's own settings on
     // unrelated saves. `inventoryResult.updated` lets the UI confirm how many variants changed.
-    let inventoryResult: { updated: number } | null = null;
     const linkedIds = {
       productIds: JSON.stringify(productIds),
       collectionIds: JSON.stringify(collectionIds),
       stringProductIds: JSON.stringify(stringProductIds),
       stringCollectionIds: JSON.stringify(stringCollectionIds),
     };
-    if (allowOutOfStock) {
-      inventoryResult = await setConfiguratorInventoryPolicy(admin, linkedIds, true);
-    } else if (allowOutOfStockChanged) {
-      inventoryResult = await setConfiguratorInventoryPolicy(admin, linkedIds, false);
-    }
 
-    // One save covers everything on the page: general settings above, plus every option
-    // group's product sources below (submitted as groupCollections_<id> / groupProducts_<id>
-    // hidden fields inside this same form — see OptionGroupSourcePicker).
+    // The inventory-policy call (Shopify) and the per-group source updates (DB) are independent,
+    // so run them concurrently rather than back-to-back. One save covers everything on the page:
+    // general settings above, plus every option group's product sources below (submitted as
+    // groupCollections_<id> / groupProducts_<id> hidden fields — see OptionGroupSourcePicker).
     const allGroups = existing.steps.flatMap((step) => step.optionGroups);
-    await Promise.all(
-      allGroups.map((group) => {
-        const groupCollectionIds = form.get(`groupCollections_${group.id}`);
-        const groupProductIds = form.get(`groupProducts_${group.id}`);
-        if (groupCollectionIds === null && groupProductIds === null) return null;
-        return prisma.optionGroup.update({
-          where: { id: group.id },
-          data: {
-            collectionIds: JSON.stringify(
-              parseCollectionIdsField(String(groupCollectionIds ?? "[]")),
-            ),
-            productIds: JSON.stringify(
-              parseProductIdsField(String(groupProductIds ?? "[]")),
-            ),
-          },
-        });
-      }),
-    );
+    const [inventoryResult] = await Promise.all([
+      allowOutOfStock
+        ? setConfiguratorInventoryPolicy(admin, linkedIds, true)
+        : allowOutOfStockChanged
+          ? setConfiguratorInventoryPolicy(admin, linkedIds, false)
+          : Promise.resolve<{ updated: number } | null>(null),
+      Promise.all(
+        allGroups.map((group) => {
+          const groupCollectionIds = form.get(`groupCollections_${group.id}`);
+          const groupProductIds = form.get(`groupProducts_${group.id}`);
+          if (groupCollectionIds === null && groupProductIds === null) return null;
+          return prisma.optionGroup.update({
+            where: { id: group.id },
+            data: {
+              collectionIds: JSON.stringify(
+                parseCollectionIdsField(String(groupCollectionIds ?? "[]")),
+              ),
+              productIds: JSON.stringify(
+                parseProductIdsField(String(groupProductIds ?? "[]")),
+              ),
+            },
+          });
+        }),
+      ),
+    ]);
 
-    // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change
+    // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change.
+    // Runs last so the snapshot reflects the just-applied inventory policy (availableForSale).
     await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
     return json({ success: true, inventory: inventoryResult });
   }
