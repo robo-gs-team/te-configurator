@@ -149,6 +149,30 @@ async function fetchConfigurator(
   }
 }
 
+type ConfiguratorFetch = { configurator: StorefrontConfigurator | null; error?: string };
+
+// Reuse the payload fetched on page load when the shopper clicks Configure,
+// so the modal opens instantly instead of waiting on a second proxy round-trip.
+// Only successful (linked) results are cached; errors always re-fetch.
+const configuratorCache = new Map<string, { data: ConfiguratorFetch; ts: number }>();
+const CONFIGURATOR_CACHE_TTL = 60_000;
+
+async function fetchConfiguratorCached(
+  productId: string,
+): Promise<ConfiguratorFetch> {
+  const key = normalizeProductId(productId);
+  const cached = configuratorCache.get(key);
+  if (cached && Date.now() - cached.ts < CONFIGURATOR_CACHE_TTL) {
+    return cached.data;
+  }
+
+  const data = await fetchConfigurator(productId);
+  if (data.configurator) {
+    configuratorCache.set(key, { data, ts: Date.now() });
+  }
+  return data;
+}
+
 function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
   trigger.toggleAttribute("disabled", loading);
   trigger.setAttribute("aria-busy", loading ? "true" : "false");
@@ -161,7 +185,7 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
   setTriggerLoading(trigger, true);
 
   try {
-    const { configurator, error } = await fetchConfigurator(productId);
+    const { configurator, error } = await fetchConfiguratorCached(productId);
     if (error) {
       showConfigureError(trigger, error);
       return;
@@ -302,7 +326,7 @@ async function initStorefrontUi() {
   }
 
   markProductLinkagePending();
-  const { configurator } = await fetchConfigurator(productId);
+  const { configurator } = await fetchConfiguratorCached(productId);
   if (!configurator) {
     markProductUnlinked();
     return;

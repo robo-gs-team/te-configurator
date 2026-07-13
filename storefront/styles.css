@@ -28,6 +28,12 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   border: 1px solid rgba(0, 0, 0, 0.08);
 }
 
+.proto-scrollbar {
+  /* Keep scroll momentum inside the modal — never chain to the page behind it. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .proto-scrollbar::-webkit-scrollbar {
   width: 6px;
 }

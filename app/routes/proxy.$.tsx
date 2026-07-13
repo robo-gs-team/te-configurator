@@ -9,11 +9,39 @@ import {
   saveConfiguration,
   trackAnalyticsEvent,
 } from "~/lib/configurator.server";
+import type { StorefrontConfigurator } from "~/lib/configurator.types";
 import { serializeConfiguratorPayload } from "~/lib/configurator.types";
 import { sanitizeInput } from "~/lib/conditional-logic";
 import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { normalizeProductId } from "~/lib/product-id";
 import { authenticate, unauthenticated } from "~/shopify.server";
+
+const STOREFRONT_CACHE_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Cache-Control": "public, max-age=120, stale-while-revalidate=600",
+};
+
+// Per-instance cache of the fully enriched storefront payload. The enrich step
+// fans out many Shopify Admin GraphQL calls, so serving warm requests from
+// memory removes most of the per-open latency on Vercel. Keyed by shop+product.
+const PAYLOAD_TTL_MS = 120_000;
+const MAX_PAYLOAD_CACHE_ENTRIES = 500;
+const payloadCache = new Map<
+  string,
+  { payload: StorefrontConfigurator; expires: number }
+>();
+
+function getCachedPayload(key: string): StorefrontConfigurator | null {
+  const hit = payloadCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.payload;
+  if (hit) payloadCache.delete(key);
+  return null;
+}
+
+function setCachedPayload(key: string, payload: StorefrontConfigurator) {
+  if (payloadCache.size >= MAX_PAYLOAD_CACHE_ENTRIES) payloadCache.clear();
+  payloadCache.set(key, { payload, expires: Date.now() + PAYLOAD_TTL_MS });
+}
 
 async function resolveShopDomain(request: Request): Promise<string | null> {
   const url = new URL(request.url);
@@ -40,6 +68,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   if (path.startsWith("product/")) {
     const productId = normalizeProductId(path.replace("product/", ""));
+
+    const cacheKey = `${shopDomain}:${productId}`;
+    const cachedPayload = getCachedPayload(cacheKey);
+    if (cachedPayload) {
+      return json({ configurator: cachedPayload }, { headers: STOREFRONT_CACHE_HEADERS });
+    }
 
     let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
     try {
@@ -80,15 +114,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const shop = await ensureShop(shopDomain);
     const theme = await getShopThemeSettings(shop.id);
 
-    return json(
-      { configurator: serializeConfiguratorPayload(configurator, theme) },
-      {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=60",
-        },
-      },
-    );
+    const payload = serializeConfiguratorPayload(configurator, theme);
+    setCachedPayload(cacheKey, payload);
+
+    return json({ configurator: payload }, { headers: STOREFRONT_CACHE_HEADERS });
   }
 
   if (path.startsWith("share/")) {
