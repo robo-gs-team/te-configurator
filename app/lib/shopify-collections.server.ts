@@ -284,3 +284,64 @@ export async function getProductsInCollections(
 
   return Array.from(seen.values());
 }
+
+/**
+ * Lightweight sibling of `getProductsInCollections`: returns ONLY the (normalized) product ids in
+ * the given collections, deduped. Callers that just need the membership list — not the per-product
+ * variant matrix / metafields / images that `getProductsInCollections` fetches — should use this:
+ * the GraphQL query cost is ~an order of magnitude lower and it pages at 250 (vs 100), so on a
+ * large string collection this is dramatically fewer/cheaper round-trips.
+ */
+export async function getProductIdsInCollections(
+  admin: ShopifyAdmin,
+  collectionIds: string[],
+): Promise<string[]> {
+  if (collectionIds.length === 0) return [];
+  const all = await Promise.all(
+    collectionIds.map((id) => fetchCollectionProductIds(admin, id)),
+  );
+  return Array.from(new Set(all.flat()));
+}
+
+async function fetchCollectionProductIds(
+  admin: ShopifyAdmin,
+  collectionId: string,
+): Promise<string[]> {
+  const ids: string[] = [];
+  let cursor: string | null = null;
+  let hasNextPage = true;
+
+  while (hasNextPage) {
+    const response = await admin.graphql(
+      `#graphql
+        query ProtoCollectionProductIds($id: ID!, $cursor: String) {
+          collection(id: $id) {
+            products(first: 250, after: $cursor) {
+              nodes { legacyResourceId }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      `,
+      { variables: { id: toCollectionGid(collectionId), cursor } },
+    );
+    const body = (await response.json()) as {
+      data?: {
+        collection?: {
+          products?: {
+            nodes?: Array<{ legacyResourceId?: string }>;
+            pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+          };
+        };
+      };
+    };
+    const products = body.data?.collection?.products;
+    for (const node of products?.nodes ?? []) {
+      if (node?.legacyResourceId) ids.push(normalizeProductId(String(node.legacyResourceId)));
+    }
+    hasNextPage = products?.pageInfo?.hasNextPage ?? false;
+    cursor = products?.pageInfo?.endCursor ?? null;
+  }
+
+  return ids;
+}

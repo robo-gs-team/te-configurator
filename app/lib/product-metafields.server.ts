@@ -2,7 +2,7 @@ import prisma from "~/db.server";
 import { normalizeProductId, toProductGid } from "~/lib/product-id";
 import { normalizeCollectionId } from "~/lib/collection-id";
 import { DEFAULT_TENSION_RANGE, parseJson, type TensionRange } from "~/lib/configurator.types";
-import { getProductsInCollections } from "~/lib/shopify-collections.server";
+import { getProductIdsInCollections } from "~/lib/shopify-collections.server";
 
 type ShopifyAdmin = {
   graphql: (
@@ -206,12 +206,10 @@ export async function resolveRacquetTensionMap(
   const explicitIds = parseJson<string[]>(configurator.productIds ?? "[]", []);
   const collectionIds = parseJson<string[]>(configurator.collectionIds ?? "[]", []);
 
-  const collectionProducts =
-    collectionIds.length > 0 ? await getProductsInCollections(admin, collectionIds) : [];
+  const collectionProductIds =
+    collectionIds.length > 0 ? await getProductIdsInCollections(admin, collectionIds) : [];
 
-  const allIds = Array.from(
-    new Set([...explicitIds, ...collectionProducts.map((p) => p.id)]),
-  );
+  const allIds = Array.from(new Set([...explicitIds, ...collectionProductIds]));
 
   return getRacquetTensionMetafields(admin, allIds);
 }
@@ -245,11 +243,9 @@ export async function resolveRecommendedStringsMap(
   const empty: RecommendedStringsMaps = { standard: {}, hybrid: {} };
   const explicitIds = parseJson<string[]>(configurator.productIds ?? "[]", []);
   const collectionIds = parseJson<string[]>(configurator.collectionIds ?? "[]", []);
-  const collectionProducts =
-    collectionIds.length > 0 ? await getProductsInCollections(admin, collectionIds) : [];
-  const racquetIds = Array.from(
-    new Set([...explicitIds, ...collectionProducts.map((p) => p.id)]),
-  );
+  const collectionProductIds =
+    collectionIds.length > 0 ? await getProductIdsInCollections(admin, collectionIds) : [];
+  const racquetIds = Array.from(new Set([...explicitIds, ...collectionProductIds]));
   if (racquetIds.length === 0) return empty;
 
   // racquet product id -> normalized recommended-strings collection id (standard / hybrid)
@@ -301,8 +297,7 @@ export async function resolveRecommendedStringsMap(
   const collectionToProductIds: Record<string, string[]> = {};
   await Promise.all(
     uniqueCollections.map(async (cid) => {
-      const products = await getProductsInCollections(admin, [cid]);
-      collectionToProductIds[cid] = products.map((p) => p.id);
+      collectionToProductIds[cid] = await getProductIdsInCollections(admin, [cid]);
     }),
   );
 
@@ -338,10 +333,10 @@ export async function getAllLinkedRacquetProductIds(
     new Set(configurators.flatMap((c) => parseJson<string[]>(c.collectionIds ?? "[]", []))),
   );
 
-  const collectionProducts =
-    collectionIds.length > 0 ? await getProductsInCollections(admin, collectionIds) : [];
+  const collectionProductIds =
+    collectionIds.length > 0 ? await getProductIdsInCollections(admin, collectionIds) : [];
 
-  return Array.from(new Set([...explicitIds, ...collectionProducts.map((p) => p.id)]));
+  return Array.from(new Set([...explicitIds, ...collectionProductIds]));
 }
 
 /** Legacy per-racquet tension fields from a prior system, already populated across the catalog. */

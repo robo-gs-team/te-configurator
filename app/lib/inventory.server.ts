@@ -1,6 +1,6 @@
 import { parseJson } from "~/lib/configurator.types";
 import { normalizeProductId, toProductGid } from "~/lib/product-id";
-import { getProductsInCollections } from "~/lib/shopify-collections.server";
+import { getProductIdsInCollections } from "~/lib/shopify-collections.server";
 
 type ShopifyAdmin = {
   graphql: (
@@ -99,19 +99,19 @@ export async function applyConfiguratorInventoryPolicy(
 
     // Resolve racquet-sourced and string-sourced product ids SEPARATELY (collections in parallel)
     // so each variant can be attributed to the right bucket and its own toggle.
-    const [racquetCollectionProducts, stringCollectionProducts] = await Promise.all([
-      collectionIds.length > 0 ? getProductsInCollections(admin, collectionIds) : Promise.resolve([]),
+    const [racquetCollectionProductIds, stringCollectionProductIds] = await Promise.all([
+      collectionIds.length > 0 ? getProductIdsInCollections(admin, collectionIds) : Promise.resolve([]),
       stringCollectionIds.length > 0
-        ? getProductsInCollections(admin, stringCollectionIds)
+        ? getProductIdsInCollections(admin, stringCollectionIds)
         : Promise.resolve([]),
     ]);
     const racquetIdSet = new Set(
-      [...explicitIds, ...racquetCollectionProducts.map((p) => p.id)].map((id) =>
+      [...explicitIds, ...racquetCollectionProductIds].map((id) =>
         normalizeProductId(String(id)),
       ),
     );
     const stringIdSet = new Set(
-      [...stringProductIds, ...stringCollectionProducts.map((p) => p.id)].map((id) =>
+      [...stringProductIds, ...stringCollectionProductIds].map((id) =>
         normalizeProductId(String(id)),
       ),
     );
@@ -271,19 +271,19 @@ async function readLinkedClassifiedVariants(
     const collectionIds = parseJson<string[]>(configurator.collectionIds ?? "[]", []);
     const stringProductIds = parseJson<string[]>(configurator.stringProductIds ?? "[]", []);
     const stringCollectionIds = parseJson<string[]>(configurator.stringCollectionIds ?? "[]", []);
-    const [racquetCollectionProducts, stringCollectionProducts] = await Promise.all([
-      collectionIds.length > 0 ? getProductsInCollections(admin, collectionIds) : Promise.resolve([]),
+    const [racquetCollectionProductIds, stringCollectionProductIds] = await Promise.all([
+      collectionIds.length > 0 ? getProductIdsInCollections(admin, collectionIds) : Promise.resolve([]),
       stringCollectionIds.length > 0
-        ? getProductsInCollections(admin, stringCollectionIds)
+        ? getProductIdsInCollections(admin, stringCollectionIds)
         : Promise.resolve([]),
     ]);
     const racquetIdSet = new Set(
-      [...explicitIds, ...racquetCollectionProducts.map((p) => p.id)].map((id) =>
+      [...explicitIds, ...racquetCollectionProductIds].map((id) =>
         normalizeProductId(String(id)),
       ),
     );
     const stringIdSet = new Set(
-      [...stringProductIds, ...stringCollectionProducts.map((p) => p.id)].map((id) =>
+      [...stringProductIds, ...stringCollectionProductIds].map((id) =>
         normalizeProductId(String(id)),
       ),
     );
@@ -535,192 +535,6 @@ export async function resetLinkedInventoryPolicyToDeny(
     console.error("resetLinkedInventoryPolicyToDeny failed:", err);
   }
   return { updated: racquets + strings, racquets, strings };
-}
-
-export type SnapshotStringInspection = {
-  hasSnapshot: boolean;
-  checkedLive: boolean; // false if the live comparison couldn't run (API error) — counts unverified
-  stringOptions: number;
-  stringVariantsInSnapshot: number;
-  emptyMatrix: number; // string options with NO variant matrix (fall back to a single id)
-  staleIds: number; // snapshot variant id no longer exists on the live product
-  liveUnavailable: number; // snapshot id exists live but Shopify marks it unavailable
-  freshAndSellable: number; // snapshot id exists live AND is sellable
-  staleExamples: string[];
-  emptyMatrixExamples: string[];
-};
-
-/**
- * Compare every string variant id baked into the SAVED snapshot against the live product's
- * current variants. This is the definitive test for "the storefront sends a stale/wrong variant
- * id": a snapshot id that no longer exists live is exactly what makes Shopify reject an
- * in-stock-looking variant as "sold out". Read-only.
- */
-export async function inspectSnapshotStrings(
-  admin: ShopifyAdmin,
-  snapshotJson: string | null | undefined,
-): Promise<SnapshotStringInspection> {
-  const result: SnapshotStringInspection = {
-    hasSnapshot: false,
-    checkedLive: false,
-    stringOptions: 0,
-    stringVariantsInSnapshot: 0,
-    emptyMatrix: 0,
-    staleIds: 0,
-    liveUnavailable: 0,
-    freshAndSellable: 0,
-    staleExamples: [],
-    emptyMatrixExamples: [],
-  };
-  if (!snapshotJson) return result;
-
-  let parsed: {
-    configurator?: {
-      steps?: Array<{
-        optionGroups?: Array<{
-          name?: string;
-          options?: Array<{
-            label?: string;
-            productId?: string | null;
-            metadata?: {
-              variants?: Array<{
-                variantId?: string;
-                gauge?: string | null;
-                color?: string | null;
-              }>;
-            };
-          }>;
-        }>;
-      }>;
-    };
-  };
-  try {
-    parsed = JSON.parse(snapshotJson);
-  } catch {
-    return result;
-  }
-  result.hasSnapshot = true;
-
-  type SnapOption = {
-    label: string;
-    productId: string | null;
-    variants: Array<{ variantId: string; gauge: string | null; color: string | null }>;
-  };
-  const stringOptions: SnapOption[] = [];
-  for (const step of parsed.configurator?.steps ?? []) {
-    for (const group of step.optionGroups ?? []) {
-      if (!/string/i.test(group.name ?? "")) continue;
-      for (const opt of group.options ?? []) {
-        stringOptions.push({
-          label: opt.label ?? "String",
-          productId: opt.productId ?? null,
-          variants: (opt.metadata?.variants ?? [])
-            .filter((v) => v?.variantId)
-            .map((v) => ({
-              variantId: String(v.variantId),
-              gauge: v.gauge ?? null,
-              color: v.color ?? null,
-            })),
-        });
-      }
-    }
-  }
-  result.stringOptions = stringOptions.length;
-  // Count total variants + empty-matrix options up front, so these are reported even if the live
-  // comparison below fails.
-  for (const opt of stringOptions) {
-    result.stringVariantsInSnapshot += opt.variants.length;
-    if (opt.variants.length === 0) {
-      result.emptyMatrix += 1;
-      if (result.emptyMatrixExamples.length < 6) result.emptyMatrixExamples.push(opt.label);
-    }
-  }
-
-  const productIds = Array.from(
-    new Set(stringOptions.map((o) => o.productId).filter((id): id is string => Boolean(id))),
-  );
-  if (productIds.length === 0) {
-    result.checkedLive = true;
-    return result;
-  }
-
-  try {
-    // Fetch live variants in BATCHES — a single nodes() call over ~200 products blows past
-    // Shopify's query-cost limit (that's what crashed the page). Batch of 50 with variants(first:
-    // 100), 5 batches in flight, exactly like the audit which is known to work at this scale.
-    const batches = await mapLimit(chunk(productIds, 50), 5, async (batch) => {
-      const res = await admin.graphql(
-        `
-        #graphql
-        query ProtoSnapshotVariants($ids: [ID!]!) {
-          nodes(ids: $ids) {
-            ... on Product {
-              legacyResourceId
-              variants(first: 100) { nodes { legacyResourceId availableForSale } }
-            }
-          }
-        }
-      `,
-        { variables: { ids: batch.map((id) => toProductGid(id)) } },
-      );
-      const body = (await res.json()) as {
-        data?: {
-          nodes?: Array<
-            | {
-                legacyResourceId?: string;
-                variants?: {
-                  nodes?: Array<{ legacyResourceId?: string; availableForSale?: boolean }>;
-                };
-              }
-            | null
-          >;
-        };
-      };
-      return body.data?.nodes ?? [];
-    });
-
-    // productId -> (live variant id -> availableForSale)
-    const liveByProduct = new Map<string, Map<string, boolean>>();
-    for (const nodes of batches) {
-      for (const node of nodes) {
-        if (!node?.legacyResourceId) continue;
-        const vmap = new Map<string, boolean>();
-        for (const v of node.variants?.nodes ?? []) {
-          if (v?.legacyResourceId) {
-            vmap.set(String(v.legacyResourceId), v.availableForSale !== false);
-          }
-        }
-        liveByProduct.set(normalizeProductId(node.legacyResourceId), vmap);
-      }
-    }
-
-    for (const opt of stringOptions) {
-      if (opt.variants.length === 0) continue;
-      const liveVars = opt.productId
-        ? liveByProduct.get(normalizeProductId(opt.productId))
-        : undefined;
-      for (const v of opt.variants) {
-        if (!liveVars || !liveVars.has(v.variantId)) {
-          result.staleIds += 1;
-          if (result.staleExamples.length < 8) {
-            const label = [v.color, v.gauge].filter(Boolean).join(" / ");
-            result.staleExamples.push(
-              `${opt.label}${label ? ` — ${label}` : ""} → snapshot id ${v.variantId} (no longer exists live)`,
-            );
-          }
-        } else if (liveVars.get(v.variantId) === false) {
-          result.liveUnavailable += 1;
-        } else {
-          result.freshAndSellable += 1;
-        }
-      }
-    }
-    result.checkedLive = true;
-  } catch (err) {
-    console.error("inspectSnapshotStrings live check failed:", err);
-    result.checkedLive = false;
-  }
-  return result;
 }
 
 // Must match the "no real curation signal" threshold in storefront/lib/string-catalog.ts
