@@ -32,6 +32,33 @@ export type CartAddResult = {
   error?: string;
 };
 
+const STRUNG_ID_STORAGE_KEY = "proto_strung_id_counter";
+
+/**
+ * Sequential, human-readable id ("A1", "A2", ...) shared by every cart line produced by ONE
+ * add-to-cart call for a stringing job (racquet, string bed(s), labor, addons) — the only thing
+ * that ties a given string back to the racquet it goes with when an order has multiple strung
+ * racquets. Backed by a counter in sessionStorage, scoped to this browser tab's session: NOT
+ * globally unique by design. It survives full-page navigation (so racquet #2 on a different
+ * product page continues the sequence), but resets in a new tab and when the session ends —
+ * accepted, since this is a fulfillment/readability aid, not an id used anywhere programmatically.
+ */
+function generateStrungId(): string {
+  let next = 1;
+  try {
+    const raw = window.sessionStorage.getItem(STRUNG_ID_STORAGE_KEY);
+    const parsed = raw ? parseInt(raw, 10) : 0;
+    next = Number.isFinite(parsed) && parsed > 0 ? parsed + 1 : 1;
+    window.sessionStorage.setItem(STRUNG_ID_STORAGE_KEY, String(next));
+  } catch {
+    // sessionStorage unavailable (privacy mode, storage disabled, etc.) — fall back to a random
+    // 2-digit suffix so pairing still works within this one add-to-cart call, just without
+    // cross-job sequencing across the browsing session.
+    next = Math.floor(Math.random() * 90) + 10;
+  }
+  return `A${next}`;
+}
+
 /**
  * Append a cart line for a variant, if the variant id is present. No-op when variantId is
  * null/undefined (e.g. an unconfigured labor variant), so callers don't need to null-check.
@@ -65,8 +92,10 @@ function pushVariantLine(
  * properties; (2) one line per selected string variant (standard = one, hybrid = mains + crosses),
  * tagged `_line_type: string` — so the cart total matches the modal's racquet + string(s) + labor
  * breakdown; (3) the optional labor/service line, tagged `_line_type: labor`; (4) one line per
- * selected add-on. For the generic UI it's the racquet line + add-ons. Posts all lines in one
- * /cart/add.js request, then fires cart events and opens the drawer.
+ * selected add-on. Every line from a stringing add gets the same "Strung ID" property, so an order
+ * with multiple strung racquets still shows which string belongs to which racquet. For the generic
+ * UI it's the racquet line + add-ons (no Strung ID — there's nothing to disambiguate). Posts all
+ * lines in one /cart/add.js request, then fires cart events and opens the drawer.
  *
  * @param variantId Racquet variant id; falls back to reading it from the page if null.
  * @param stringing Present only when the stringing UI is in use; carries mode + bed selections.
@@ -100,7 +129,13 @@ export async function addToShopifyCart(
     return { success: false, error: "No variant selected" };
   }
 
-  const parentTag = { _parent_configurator: configurator.id };
+  // One id per stringing job, stamped on every line this call produces (racquet, string(s),
+  // labor, addons) so multiple strung racquets in one order stay disambiguated. Not applied to
+  // the generic (non-stringing) flow — a single racquet + addons has nothing to disambiguate.
+  const strungId = isStringing ? generateStrungId() : null;
+  const parentTag: Record<string, string> = { _parent_configurator: configurator.id };
+  if (strungId) parentTag["Strung ID"] = strungId;
+
   const items: Array<{
     id: number;
     quantity: number;
@@ -109,7 +144,7 @@ export async function addToShopifyCart(
     {
       id: Number(mainVariantId),
       quantity,
-      properties,
+      properties: strungId ? { ...properties, "Strung ID": strungId } : properties,
     },
   ];
 
@@ -130,22 +165,13 @@ export async function addToShopifyCart(
       // Charge the exact variant matching the shopper's gauge+color (falling back sensibly), not a
       // fixed first variant — that's what caused in-stock strings to fail as "already sold out".
       const stringVariantId = resolveStringVariantId(stringProduct, bed.gauge, bed.color);
-      // TEMP DEBUG (remove after diagnosing the "sold out" issue): logs exactly what the storefront
-      // resolves for this string so we can compare the posted id against Shopify's live variant.
-      // eslint-disable-next-line no-console
-      console.log("[PROTO-DEBUG] string resolve", {
-        name: stringProduct?.name,
-        productId: stringProduct?.productId,
-        pickedGauge: bed.gauge,
-        pickedColor: bed.color,
-        resolvedVariantId: stringVariantId,
-        variantCount: stringProduct?.variants?.length ?? 0,
-        variants: stringProduct?.variants,
-      });
       pushVariantLine(items, stringVariantId, 1, {
         ...parentTag,
         _line_type: "string",
-        ...(side ? { _string_side: side } : {}),
+        // Visible (not hidden) — matches the racquet line's own Mains/Crosses breakdown, so a
+        // shopper or fulfiller can tell which separate string cart line is which side without
+        // cross-referencing the racquet line. Standard mode has only one string, so no side here.
+        ...(side ? { Position: side } : {}),
         Gauge: `${bed.gauge}g`,
         Color: bed.color,
         Tension: `${bed.tension} lbs`,
@@ -171,10 +197,6 @@ export async function addToShopifyCart(
       });
     }
   }
-
-  // TEMP DEBUG (remove after diagnosing): the full payload posted to /cart/add.js.
-  // eslint-disable-next-line no-console
-  console.log("[PROTO-DEBUG] cart items posted:", JSON.stringify(items));
 
   try {
     const res = await postCartItems(items);
