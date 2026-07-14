@@ -32,6 +32,7 @@ import {
   getConfiguratorById,
 } from "~/lib/configurator.server";
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
+import { runAfterResponse } from "~/lib/after-response.server";
 import {
   applyConfiguratorInventoryPolicy,
   auditLinkedInventoryPolicy,
@@ -143,8 +144,23 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     : null;
 
+  // Strip the two big server-only blobs before sending to the browser: the enriched storefront
+  // snapshot (the full variant matrix for every string — hundreds of KB on a large catalog) and
+  // the per-variant inventory-policy backup. Neither is rendered by this page; they're read only
+  // server-side by the action's diagnostic/maintenance intents (which re-fetch the configurator).
+  const {
+    enrichedSnapshot: _enrichedSnapshot,
+    inventoryPolicyBackup: _inventoryPolicyBackup,
+    ...configuratorForClient
+  } = configurator as typeof configurator & {
+    enrichedSnapshot?: string | null;
+    inventoryPolicyBackup?: string | null;
+  };
+  void _enrichedSnapshot;
+  void _inventoryPolicyBackup;
+
   return json({
-    configurator,
+    configurator: configuratorForClient,
     collections,
     stringCollections,
     products,
@@ -274,8 +290,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change.
-    // Runs last so the snapshot reflects the just-applied inventory policy (availableForSale).
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
+    // Deferred to AFTER the response so the merchant's Save returns immediately instead of blocking
+    // on a full catalog re-enrichment (the biggest source of perceived Save slowness). The DB write
+    // + inventory policy above already ran synchronously, so the admin UI is correct on reload; the
+    // snapshot (shopper-facing only) finishes rebuilding a few seconds later in the background.
+    runAfterResponse(() => refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop));
     return json({
       success: true,
       inventory: inventoryResult
@@ -374,7 +393,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
+    runAfterResponse(() => refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop));
     return json({ success: true, intent });
   }
 
@@ -403,7 +422,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
+    runAfterResponse(() => refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop));
     return json({ success: true, intent });
   }
 
@@ -477,7 +496,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
+    runAfterResponse(() => refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop));
     return json({ success: true, intent });
   }
 
@@ -490,7 +509,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ error: "Step not found", intent }, { status: 404 });
     }
     await prisma.configuratorStep.delete({ where: { id: stepId } });
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
+    runAfterResponse(() => refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop));
     return json({ success: true, intent });
   }
 
