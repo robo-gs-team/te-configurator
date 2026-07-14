@@ -722,3 +722,100 @@ export async function inspectSnapshotStrings(
   }
   return result;
 }
+
+// Must match the "no real curation signal" threshold in storefront/lib/string-catalog.ts
+// (RECOMMENDED_MAX_COVERAGE) — kept as a separate constant here since this file has no import
+// relationship with the storefront bundle, but the two MUST stay numerically in sync.
+const RECOMMENDED_MAX_COVERAGE = 0.8;
+
+export type RecommendedStringsAudit = {
+  hasSnapshot: boolean;
+  totalStringCatalog: number;
+  racquets: Array<{
+    racquetProductId: string;
+    standardCount: number;
+    standardCoveragePct: number;
+    standardWouldShow: boolean;
+    hybridCount: number;
+    hybridCoveragePct: number;
+    hybridWouldShow: boolean;
+  }>;
+};
+
+/**
+ * Read-only: for every racquet that has a recommended-strings entry in the saved snapshot, report
+ * how many strings are in its recommended set vs. the TOTAL string catalog size, and whether the
+ * storefront's 80%-coverage safeguard (storefront/lib/string-catalog.ts) would currently suppress
+ * the "Recommended" badge/tab for it. Answers "is the 80% threshold actually what's hiding this?"
+ * with real numbers from the live saved snapshot, instead of guessing.
+ */
+export function auditRecommendedStringsCoverage(
+  snapshotJson: string | null | undefined,
+): RecommendedStringsAudit {
+  const result: RecommendedStringsAudit = {
+    hasSnapshot: false,
+    totalStringCatalog: 0,
+    racquets: [],
+  };
+  if (!snapshotJson) return result;
+
+  let parsed: {
+    configurator?: {
+      steps?: Array<{
+        optionGroups?: Array<{
+          name?: string;
+          options?: Array<{ id?: string; productId?: string | null }>;
+        }>;
+      }>;
+    };
+    recommendedStringsByRacquet?: Record<string, string[]>;
+    recommendedHybridStringsByRacquet?: Record<string, string[]>;
+  };
+  try {
+    parsed = JSON.parse(snapshotJson);
+  } catch {
+    return result;
+  }
+  result.hasSnapshot = true;
+
+  // Mirror storefront/lib/string-catalog.ts#resolveStringCatalog's exact catalog dedup: every
+  // option group whose name matches "string", options deduped by productId ?? id.
+  const seen = new Set<string>();
+  let totalCatalog = 0;
+  for (const step of parsed.configurator?.steps ?? []) {
+    for (const group of step.optionGroups ?? []) {
+      if (!/string/i.test(group.name ?? "")) continue;
+      for (const opt of group.options ?? []) {
+        const key = opt.productId ?? opt.id ?? "";
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        totalCatalog += 1;
+      }
+    }
+  }
+  result.totalStringCatalog = totalCatalog;
+
+  const standardMap = parsed.recommendedStringsByRacquet ?? {};
+  const hybridMap = parsed.recommendedHybridStringsByRacquet ?? {};
+  const racquetIds = Array.from(new Set([...Object.keys(standardMap), ...Object.keys(hybridMap)]));
+
+  const pct = (n: number) => (totalCatalog > 0 ? Math.round((n / totalCatalog) * 100) : 0);
+  const wouldShow = (n: number) =>
+    n > 0 && totalCatalog > 0 && n < totalCatalog * RECOMMENDED_MAX_COVERAGE;
+
+  for (const racquetProductId of racquetIds) {
+    const standardCount = standardMap[racquetProductId]?.length ?? 0;
+    const hybridCount = hybridMap[racquetProductId]?.length ?? 0;
+    result.racquets.push({
+      racquetProductId,
+      standardCount,
+      standardCoveragePct: pct(standardCount),
+      standardWouldShow: wouldShow(standardCount),
+      hybridCount,
+      hybridCoveragePct: pct(hybridCount),
+      hybridWouldShow: wouldShow(hybridCount),
+    });
+  }
+
+  return result;
+}

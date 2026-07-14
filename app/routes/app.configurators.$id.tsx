@@ -35,11 +35,13 @@ import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
 import {
   applyConfiguratorInventoryPolicy,
   auditLinkedInventoryPolicy,
+  auditRecommendedStringsCoverage,
   inspectSnapshotStrings,
   resetLinkedInventoryPolicyToDeny,
   type InventoryAudit,
   type InventoryPolicyBackup,
   type InventoryPolicyResult,
+  type RecommendedStringsAudit,
   type SnapshotStringInspection,
 } from "~/lib/inventory.server";
 import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
@@ -306,6 +308,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       (existing as { enrichedSnapshot?: string | null }).enrichedSnapshot,
     );
     return json({ snapshot });
+  }
+
+  // Read-only diagnostic: for each racquet, how many strings are in its recommended set vs. the
+  // total catalog, and whether the storefront's 80%-coverage safeguard would suppress the
+  // "Recommended" badge/tab for it. Proves (or disproves) that safeguard with real numbers.
+  if (intent === "audit_recommended") {
+    const recommendedAudit = auditRecommendedStringsCoverage(
+      (existing as { enrichedSnapshot?: string | null }).enrichedSnapshot,
+    );
+    return json({ recommendedAudit });
   }
 
   // Rebuild the enriched snapshot from live Shopify data NOW (fresh variant ids for every string),
@@ -603,6 +615,7 @@ export default function EditConfigurator() {
     reset?: { updated: number; racquets: number; strings: number };
     snapshot?: SnapshotStringInspection;
     rebuilt?: boolean;
+    recommendedAudit?: RecommendedStringsAudit;
   }>();
   const inventoryResult =
     navigation.state === "idle" ? actionData?.inventory ?? null : null;
@@ -610,6 +623,8 @@ export default function EditConfigurator() {
   const resetResult = navigation.state === "idle" ? actionData?.reset ?? null : null;
   const snapshotResult = navigation.state === "idle" ? actionData?.snapshot ?? null : null;
   const snapshotRebuilt = navigation.state === "idle" ? actionData?.rebuilt ?? false : false;
+  const recommendedAudit =
+    navigation.state === "idle" ? actionData?.recommendedAudit ?? null : null;
   const [confirmingReset, setConfirmingReset] = useState(false);
   // Which maintenance action (if any) is currently running — drives the "Working…" indicator so
   // the merchant knows to wait (these hit Shopify across the whole catalog and can take a minute).
@@ -620,12 +635,14 @@ export default function EditConfigurator() {
     "inspect_snapshot",
     "rebuild_snapshot",
     "reset_inventory",
+    "audit_recommended",
   ].includes(runningIntent);
   const maintenanceLabel: Record<string, string> = {
     audit_inventory: "Checking current policy",
     inspect_snapshot: "Checking snapshot freshness",
     rebuild_snapshot: "Rebuilding snapshot from live Shopify",
     reset_inventory: "Resetting inventory policy",
+    audit_recommended: "Checking recommended-strings coverage",
   };
 
   // Once this form's own submission completes, treat the just-submitted values as the new
@@ -1210,6 +1227,48 @@ export default function EditConfigurator() {
             </Banner>
           </Layout.Section>
         )}
+        {recommendedAudit && (
+          <Layout.Section>
+            <Banner
+              tone={recommendedAudit.hasSnapshot ? "info" : "warning"}
+              title="Recommended-strings coverage (why the tab shows or hides)"
+            >
+              <BlockStack gap="150">
+                {!recommendedAudit.hasSnapshot ? (
+                  <Text as="p" variant="bodySm">
+                    No saved snapshot yet — click "Rebuild snapshot now" above first, then check
+                    again.
+                  </Text>
+                ) : recommendedAudit.racquets.length === 0 ? (
+                  <Text as="p" variant="bodySm">
+                    No racquet has a recommended-strings collection set on its
+                    "configurator.strings_collection" / "configurator.hybrid_strings_collection"
+                    metafield — so there's nothing to badge as Recommended for any linked racquet.
+                  </Text>
+                ) : (
+                  <>
+                    <Text as="p" variant="bodySm">
+                      Total string catalog: {recommendedAudit.totalStringCatalog} strings. The
+                      "Recommended" tab/badge only shows when a racquet's recommended set covers
+                      LESS than 80% of that total — otherwise it's treated as "no real curation"
+                      and suppressed.
+                    </Text>
+                    {recommendedAudit.racquets.map((r) => (
+                      <Text as="p" variant="bodySm" key={r.racquetProductId}>
+                        <strong>Racquet {r.racquetProductId}:</strong> standard recommended{" "}
+                        {r.standardCount}/{recommendedAudit.totalStringCatalog} (
+                        {r.standardCoveragePct}% —{" "}
+                        {r.standardWouldShow ? "would show" : "suppressed"}); hybrid recommended{" "}
+                        {r.hybridCount}/{recommendedAudit.totalStringCatalog} ({r.hybridCoveragePct}
+                        % — {r.hybridWouldShow ? "would show" : "suppressed"}).
+                      </Text>
+                    ))}
+                  </>
+                )}
+              </BlockStack>
+            </Banner>
+          </Layout.Section>
+        )}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
@@ -1260,6 +1319,18 @@ export default function EditConfigurator() {
                     }
                   >
                     Rebuild snapshot now
+                  </Button>
+                </Form>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="audit_recommended" />
+                  <Button
+                    submit
+                    loading={
+                      navigation.state !== "idle" &&
+                      navigation.formData?.get("intent") === "audit_recommended"
+                    }
+                  >
+                    Check recommended-strings coverage
                   </Button>
                 </Form>
                 {confirmingReset ? (
