@@ -37,13 +37,11 @@ import {
   applyConfiguratorInventoryPolicy,
   auditLinkedInventoryPolicy,
   auditRecommendedStringsCoverage,
-  inspectSnapshotStrings,
   resetLinkedInventoryPolicyToDeny,
   type InventoryAudit,
   type InventoryPolicyBackup,
   type InventoryPolicyResult,
   type RecommendedStringsAudit,
-  type SnapshotStringInspection,
 } from "~/lib/inventory.server";
 import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
 import { parseJson } from "~/lib/configurator.types";
@@ -319,16 +317,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ audit });
   }
 
-  // Read-only diagnostic: compare the saved snapshot's string variant ids against the live
-  // products, to detect stale ids (the cause of an in-stock variant being rejected as "sold out").
-  if (intent === "inspect_snapshot") {
-    const snapshot = await inspectSnapshotStrings(
-      admin,
-      (existing as { enrichedSnapshot?: string | null }).enrichedSnapshot,
-    );
-    return json({ snapshot });
-  }
-
   // Read-only diagnostic: for each racquet, how many strings are in its recommended set vs. the
   // total catalog, and whether the storefront's 80%-coverage safeguard would suppress the
   // "Recommended" badge/tab for it. Proves (or disproves) that safeguard with real numbers.
@@ -339,16 +327,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ recommendedAudit });
   }
 
-  // Rebuild the enriched snapshot from live Shopify data NOW (fresh variant ids for every string),
-  // then immediately re-inspect it so the merchant sees the post-rebuild freshness in one click.
+  // Rebuild the enriched snapshot from live Shopify data NOW (fresh variant ids/prices/availability
+  // for every string), so the merchant can force-refresh what shoppers see without a full Save.
   if (intent === "rebuild_snapshot") {
     await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
-    const refreshed = await getConfiguratorById(params.id!);
-    const snapshot = await inspectSnapshotStrings(
-      admin,
-      (refreshed as { enrichedSnapshot?: string | null } | null)?.enrichedSnapshot,
-    );
-    return json({ snapshot, rebuilt: true });
+    return json({ rebuilt: true });
   }
 
   // Maintenance: force every currently-"continue" linked variant back to "deny" (Shopify's
@@ -632,7 +615,6 @@ export default function EditConfigurator() {
     inventory?: { updated: number; racquets: number; strings: number } | null;
     audit?: InventoryAudit;
     reset?: { updated: number; racquets: number; strings: number };
-    snapshot?: SnapshotStringInspection;
     rebuilt?: boolean;
     recommendedAudit?: RecommendedStringsAudit;
   }>();
@@ -640,7 +622,6 @@ export default function EditConfigurator() {
     navigation.state === "idle" ? actionData?.inventory ?? null : null;
   const auditResult = navigation.state === "idle" ? actionData?.audit ?? null : null;
   const resetResult = navigation.state === "idle" ? actionData?.reset ?? null : null;
-  const snapshotResult = navigation.state === "idle" ? actionData?.snapshot ?? null : null;
   const snapshotRebuilt = navigation.state === "idle" ? actionData?.rebuilt ?? false : false;
   const recommendedAudit =
     navigation.state === "idle" ? actionData?.recommendedAudit ?? null : null;
@@ -651,14 +632,12 @@ export default function EditConfigurator() {
     navigation.state !== "idle" ? String(navigation.formData?.get("intent") ?? "") : "";
   const maintenanceRunning = [
     "audit_inventory",
-    "inspect_snapshot",
     "rebuild_snapshot",
     "reset_inventory",
     "audit_recommended",
   ].includes(runningIntent);
   const maintenanceLabel: Record<string, string> = {
     audit_inventory: "Checking current policy",
-    inspect_snapshot: "Checking snapshot freshness",
     rebuild_snapshot: "Rebuilding snapshot from live Shopify",
     reset_inventory: "Resetting inventory policy",
     audit_recommended: "Checking recommended-strings coverage",
@@ -1186,63 +1165,13 @@ export default function EditConfigurator() {
             </Banner>
           </Layout.Section>
         )}
-        {snapshotResult && (
+        {snapshotRebuilt && (
           <Layout.Section>
-            <Banner
-              tone={snapshotResult.staleIds > 0 ? "critical" : "success"}
-              title={
-                snapshotRebuilt
-                  ? "Snapshot rebuilt — freshness after rebuild"
-                  : "Snapshot freshness (stored variant ids vs live Shopify)"
-              }
-            >
-              <BlockStack gap="150">
-                {snapshotRebuilt && (
-                  <Text as="p" variant="bodySm">
-                    Rebuilt the snapshot from live Shopify data. Results below are the{" "}
-                    <strong>fresh</strong> snapshot.
-                  </Text>
-                )}
-                {!snapshotResult.checkedLive && (
-                  <Text as="p" variant="bodySm" tone="critical">
-                    Couldn't compare against live Shopify (API error) — the stale/fresh counts below
-                    are unverified. Try again in a moment.
-                  </Text>
-                )}
-                <Text as="p" variant="bodySm">
-                  Saved snapshot has {snapshotResult.stringOptions} string options,{" "}
-                  {snapshotResult.stringVariantsInSnapshot} variant ids.{" "}
-                  <strong>{snapshotResult.staleIds} stale</strong> (id no longer exists live),{" "}
-                  {snapshotResult.liveUnavailable} live-but-not-sellable,{" "}
-                  {snapshotResult.freshAndSellable} fresh &amp; sellable,{" "}
-                  {snapshotResult.emptyMatrix} options with no variant matrix.
-                </Text>
-                {snapshotResult.staleIds > 0 ? (
-                  <Text as="p" variant="bodySm">
-                    <strong>Stale ids found — this is the bug.</strong> The storefront is sending
-                    variant ids that Shopify no longer has, so it rejects them as “sold out” even
-                    when the real variant is in stock. A fresh <strong>Save changes</strong> should
-                    rebuild the snapshot with current ids; if it persists, the enrichment is
-                    capturing the wrong ids and I'll fix it.
-                  </Text>
-                ) : (
-                  <Text as="p" variant="bodySm">
-                    No stale ids — every stored variant id still exists live. If a variant is still
-                    rejected, it's genuinely unavailable in Shopify, not a stale-id bug.
-                  </Text>
-                )}
-                {snapshotResult.staleExamples.length > 0 && (
-                  <Text as="p" variant="bodySm">
-                    <strong>Stale examples:</strong> {snapshotResult.staleExamples.join(" · ")}
-                  </Text>
-                )}
-                {snapshotResult.emptyMatrixExamples.length > 0 && (
-                  <Text as="p" variant="bodySm">
-                    <strong>No-matrix examples:</strong>{" "}
-                    {snapshotResult.emptyMatrixExamples.join(" · ")}
-                  </Text>
-                )}
-              </BlockStack>
+            <Banner tone="success" title="Snapshot rebuilt">
+              <p>
+                Rebuilt the storefront snapshot from live Shopify data — shoppers now see current
+                strings, prices, and availability for every racquet.
+              </p>
             </Banner>
           </Layout.Section>
         )}
@@ -1313,18 +1242,6 @@ export default function EditConfigurator() {
                     }
                   >
                     Check current policy
-                  </Button>
-                </Form>
-                <Form method="post">
-                  <input type="hidden" name="intent" value="inspect_snapshot" />
-                  <Button
-                    submit
-                    loading={
-                      navigation.state !== "idle" &&
-                      navigation.formData?.get("intent") === "inspect_snapshot"
-                    }
-                  >
-                    Check snapshot freshness
                   </Button>
                 </Form>
                 <Form method="post">
