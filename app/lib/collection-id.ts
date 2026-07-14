@@ -12,16 +12,6 @@ export function toCollectionGid(id: string): string {
   return `gid://shopify/Collection/${numeric}`;
 }
 
-export function collectionIdsMatch(
-  storedIds: string[],
-  collectionId: string,
-): boolean {
-  const target = normalizeCollectionId(collectionId);
-  return storedIds.some(
-    (stored) => normalizeCollectionId(String(stored)) === target,
-  );
-}
-
 export function parseCollectionIdsField(raw: string): string[] {
   const trimmed = raw.trim();
   if (!trimmed) return [];

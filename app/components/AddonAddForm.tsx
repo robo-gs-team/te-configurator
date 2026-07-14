@@ -2,7 +2,6 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useFetcher } from "@remix-run/react";
 import {
   BlockStack,
-  Box,
   Button,
   ChoiceList,
   FormLayout,

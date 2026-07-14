@@ -143,8 +143,23 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     : null;
 
+  // Strip the two big server-only blobs before sending to the browser: the enriched storefront
+  // snapshot (the full variant matrix for every string — hundreds of KB on a large catalog) and
+  // the per-variant inventory-policy backup. Neither is rendered by this page; they're read only
+  // server-side by the action's diagnostic/maintenance intents (which re-fetch the configurator).
+  const {
+    enrichedSnapshot: _enrichedSnapshot,
+    inventoryPolicyBackup: _inventoryPolicyBackup,
+    ...configuratorForClient
+  } = configurator as typeof configurator & {
+    enrichedSnapshot?: string | null;
+    inventoryPolicyBackup?: string | null;
+  };
+  void _enrichedSnapshot;
+  void _inventoryPolicyBackup;
+
   return json({
-    configurator,
+    configurator: configuratorForClient,
     collections,
     stringCollections,
     products,
