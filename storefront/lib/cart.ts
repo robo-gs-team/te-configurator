@@ -132,9 +132,12 @@ export async function addToShopifyCart(
   // One id per stringing job, stamped on every line this call produces (racquet, string(s),
   // labor, addons) so multiple strung racquets in one order stay disambiguated. Not applied to
   // the generic (non-stringing) flow — a single racquet + addons has nothing to disambiguate.
+  // Staff-only (leading underscore): this exists to help whoever fulfills a multi-racquet order
+  // pair each string back to its racquet — the shopper never needs to see it themselves. Still
+  // fully visible to staff on the Shopify Admin order page.
   const strungId = isStringing ? generateStrungId() : null;
   const parentTag: Record<string, string> = { _parent_configurator: configurator.id };
-  if (strungId) parentTag["Strung ID"] = strungId;
+  if (strungId) parentTag["_Strung ID"] = strungId;
 
   const items: Array<{
     id: number;
@@ -144,7 +147,7 @@ export async function addToShopifyCart(
     {
       id: Number(mainVariantId),
       quantity,
-      properties: strungId ? { ...properties, "Strung ID": strungId } : properties,
+      properties: strungId ? { ...properties, "_Strung ID": strungId } : properties,
     },
   ];
 
@@ -168,13 +171,13 @@ export async function addToShopifyCart(
       pushVariantLine(items, stringVariantId, 1, {
         ...parentTag,
         _line_type: "string",
-        // Visible (not hidden) — matches the racquet line's own Mains/Crosses breakdown, so a
-        // shopper or fulfiller can tell which separate string cart line is which side without
-        // cross-referencing the racquet line. Standard mode has only one string, so no side here.
-        ...(side ? { Position: side } : {}),
-        Gauge: `${bed.gauge}g`,
-        Color: bed.color,
-        Tension: `${bed.tension} lbs`,
+        // Staff-only — the racquet line's own (customer-visible) Mains/Crosses summary already
+        // tells the shopper which side is which; these are the granular fulfillment specs for
+        // whoever strings it. Standard mode has only one string, so no side here.
+        ...(side ? { _Position: side } : {}),
+        _Gauge: `${bed.gauge}g`,
+        _Color: bed.color,
+        _Tension: `${bed.tension} lbs`,
       });
     }
 

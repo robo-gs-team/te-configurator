@@ -8,6 +8,16 @@ import {
 } from "./string-catalog";
 import type { StringingMode } from "../store/configurator-store";
 
+/**
+ * Customer-visible on the racquet line: just `Stringing mode` + one summary line per bed
+ * (`Setup`, or `Mains`/`Crosses`) — enough for the shopper to recognize their own order at a
+ * glance. Everything else (per-side String/Gauge/Color/Tension breakdown, upgrade price notes,
+ * the Labor note) is staff-only (leading underscore): still fully visible to whoever strings/
+ * fulfills the racquet on the Shopify Admin order page, just not surfaced to the customer in the
+ * cart, checkout, order-status page, or confirmation email. Hiding these loses no pricing
+ * transparency — the string and labor charges are already their own separate cart lines with
+ * their own real Shopify-displayed prices; these were only a duplicate textual restatement.
+ */
 export function buildStringingProperties(
   configurator: StorefrontConfigurator,
   mode: StringingMode,
@@ -24,21 +34,21 @@ export function buildStringingProperties(
   if (mode === "standard") {
     const product = getStringById(catalog, standardBed.stringId);
     properties.Setup = bedSummary(catalog, standardBed);
-    properties["String upgrade"] = formatStringPrice(product?.price ?? 0);
-    appendBedProperties(properties, catalog, standardBed, "");
+    properties["_String upgrade"] = formatStringPrice(product?.price ?? 0);
+    appendBedProperties(properties, catalog, standardBed, "_");
   } else {
     const mainsProduct = getStringById(catalog, hybridBeds.mains.stringId);
     const crossesProduct = getStringById(catalog, hybridBeds.crosses.stringId);
     properties.Mains = bedSummary(catalog, hybridBeds.mains);
     properties.Crosses = bedSummary(catalog, hybridBeds.crosses);
-    properties["Mains upgrade"] = formatStringPrice(mainsProduct?.price ?? 0);
-    properties["Crosses upgrade"] = formatStringPrice(crossesProduct?.price ?? 0);
-    appendBedProperties(properties, catalog, hybridBeds.mains, "Mains ");
-    appendBedProperties(properties, catalog, hybridBeds.crosses, "Crosses ");
+    properties["_Mains upgrade"] = formatStringPrice(mainsProduct?.price ?? 0);
+    properties["_Crosses upgrade"] = formatStringPrice(crossesProduct?.price ?? 0);
+    appendBedProperties(properties, catalog, hybridBeds.mains, "_Mains ");
+    appendBedProperties(properties, catalog, hybridBeds.crosses, "_Crosses ");
   }
 
   if (configurator.laborPrice > 0) {
-    properties.Labor = `$${configurator.laborPrice.toFixed(2)}`;
+    properties._Labor = `$${configurator.laborPrice.toFixed(2)}`;
   }
 
   return properties;
