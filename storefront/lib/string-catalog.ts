@@ -198,15 +198,14 @@ export function resolveStringCatalog(
     return [];
   }
 
-  // "Recommended" is only a useful signal when it distinguishes SOME strings from the rest. If a
-  // racquet's recommended-strings metafield points at (essentially) the whole string collection —
-  // covering most of the catalog — badging nearly everything is noise, so treat it as unset. We
-  // require the set to be a clear minority (< 80% of the catalog) to count as real curation; the
-  // 80% (not exact-match) slack absorbs dedup / OOS-hidden / excluded differences between the
-  // recommended collection and the displayed list.
-  const RECOMMENDED_MAX_COVERAGE = 0.8;
-  const isMeaningfulCuration = (set: Set<string>) =>
-    set.size > 0 && set.size < allOptions.length * RECOMMENDED_MAX_COVERAGE;
+  // Per merchant decision: show the "Recommended" tab whenever the racquet's recommended-strings
+  // metafield has ANY strings — the tab appears (and is the default) as long as the merchant has
+  // curated a recommended collection for that racquet. We intentionally do NOT suppress a set that
+  // covers most of the catalog: the merchant prefers the tab to always show when set, accepting
+  // that a near-total recommended collection will badge most strings. (A previous version hid the
+  // tab when the set covered ≥80% of the catalog to avoid "everything is recommended" noise; that
+  // suppression is what made the tab disappear for racquets whose collection ≈ the whole catalog.)
+  const isMeaningfulCuration = (set: Set<string>) => set.size > 0;
   const effectiveRecommendedSet = isMeaningfulCuration(recommendedSet)
     ? recommendedSet
     : new Set<string>();
