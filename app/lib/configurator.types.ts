@@ -44,6 +44,11 @@ export type StorefrontConfigurator = {
   // columns. Empty when the racquet has none configured. Set per-request by the proxy.
   recommendedStringProductIds: string[];
   recommendedHybridStringProductIds: string[];
+  // Store-wide units sold per string product over the last 60 days, injected by the proxy from the
+  // snapshot. Used to sort the string picker best-seller-first. Optional: absent on the
+  // live-enrichment fallback path and before the merchant grants the read_orders scope — the picker
+  // then falls back to the merchant's default catalog order.
+  stringUnitsSoldByProductId?: Record<string, number>;
 };
 
 export type StorefrontStep = {

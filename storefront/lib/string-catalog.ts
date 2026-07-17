@@ -23,6 +23,9 @@ export type StringProduct = {
   colors: string[];
   recommended?: boolean;
   recommendedHybrid?: boolean;
+  // Units sold store-wide over the last 60 days (from the snapshot's best-seller tally). Drives
+  // best-seller ordering of the picker; 0 when unknown (no sales, or read_orders not yet granted).
+  unitsSold?: number;
   imageUrl?: string | null;
   variantId?: string | null;
   productId?: string | null;
@@ -213,6 +216,11 @@ export function resolveStringCatalog(
     ? recommendedHybridSet
     : new Set<string>();
 
+  // Store-wide best-seller tally injected by the proxy (same for every racquet). Absent before the
+  // merchant grants read_orders or on the fallback path — then every string is 0 and the picker
+  // keeps the merchant's default order.
+  const unitsSoldByProductId = configurator.stringUnitsSoldByProductId ?? {};
+
   const colorGroup = configurator.steps
     .flatMap((s) => s.optionGroups)
     .find((g) => /color/i.test(g.name));
@@ -247,6 +255,7 @@ export function resolveStringCatalog(
       recommendedHybrid: option.productId
         ? effectiveRecommendedHybridSet.has(option.productId)
         : false,
+      unitsSold: option.productId ? (unitsSoldByProductId[option.productId] ?? 0) : 0,
       imageUrl: option.imageUrl ?? option.previewLayer ?? null,
       variantId: option.variantId,
       productId: option.productId,
