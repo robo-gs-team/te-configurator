@@ -57,7 +57,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         batch.map(async (id) => {
           const full = await getConfiguratorById(id);
           if (!full) return;
-          await buildAndStoreSnapshot(admin, full, shopId);
+          // Nightly run: refresh the best-seller (units-sold, last 60d) tally from Shopify orders.
+          // Merchant saves carry the previous tally forward instead, so this daily job is the one
+          // place that actually scans orders.
+          await buildAndStoreSnapshot(admin, full, shopId, { refreshSales: true });
         }),
       );
       for (const r of results) {

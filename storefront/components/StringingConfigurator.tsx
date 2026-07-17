@@ -81,11 +81,14 @@ function filterCatalog(
     if (query && !`${s.name} ${s.type}`.toLowerCase().includes(query)) return false;
     return true;
   });
-  // Array.prototype.sort is stable (ES2019+), so this only moves recommended items to the
-  // front — it doesn't otherwise reorder the merchant's original catalog order.
-  return [...matching].sort(
-    (a, b) => Number(isRecommended(b, useHybrid)) - Number(isRecommended(a, useHybrid)),
-  );
+  // Recommended strings first (unchanged), then best-sellers (units sold, last 60d) within each
+  // group, then the merchant's original catalog order as the final tiebreak. Array.prototype.sort
+  // is stable (ES2019+), so equal-ranked strings keep their catalog order.
+  return [...matching].sort((a, b) => {
+    const rec = Number(isRecommended(b, useHybrid)) - Number(isRecommended(a, useHybrid));
+    if (rec !== 0) return rec;
+    return (b.unitsSold ?? 0) - (a.unitsSold ?? 0);
+  });
 }
 
 function ModeToggle() {

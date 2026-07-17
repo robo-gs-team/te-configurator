@@ -6,7 +6,12 @@ import {
   resolveRacquetTensionMap,
   resolveRecommendedStringsMap,
 } from "~/lib/product-metafields.server";
-import { DEFAULT_TENSION_RANGE, serializeConfiguratorPayload } from "~/lib/configurator.types";
+import { resolveStringUnitsSold } from "~/lib/product-sales.server";
+import {
+  DEFAULT_TENSION_RANGE,
+  parseJson,
+  serializeConfiguratorPayload,
+} from "~/lib/configurator.types";
 import type { ConfiguratorWithRelations, TensionRange } from "~/lib/configurator.types";
 
 type ShopifyAdmin = {
@@ -29,12 +34,48 @@ export type StoredSnapshot = {
   // racquets simply have no recommended set.
   recommendedStringsByRacquet: Record<string, string[]>;
   recommendedHybridStringsByRacquet: Record<string, string[]>;
+  // Store-wide units sold per string product over the last 60 days (from resolveStringUnitsSold),
+  // used by the storefront to sort strings best-seller-first. Identical for every racquet, so the
+  // proxy injects it verbatim. Refreshed by the nightly cron (NOT on every save) — see the
+  // refreshSales gate in buildAndStoreSnapshot. May be absent on snapshots written before this
+  // field existed; readers default to {}.
+  stringUnitsSoldByProductId: Record<string, number>;
 };
+
+/** Product ids of the strings this configurator shows (option groups whose name matches "string"),
+ *  mirroring the storefront's own /string/i group selection so the units-sold keys line up with
+ *  the productIds resolveStringCatalog looks up. */
+function collectStringProductIds(configurator: ConfiguratorWithRelations): string[] {
+  const ids = new Set<string>();
+  for (const step of configurator.steps) {
+    for (const group of step.optionGroups) {
+      if (!/string/i.test(group.name)) continue;
+      for (const option of group.options) {
+        if (option.productId) ids.add(option.productId);
+      }
+    }
+  }
+  return Array.from(ids);
+}
+
+/** Reuse the previous snapshot's best-seller tally so a merchant save doesn't scan 60 days of
+ *  orders — sales only need to refresh on the daily cron. Empty when there's no prior snapshot. */
+function carryForwardUnitsSold(
+  configurator: ConfiguratorWithRelations,
+): Record<string, number> {
+  const snap = (configurator as ConfiguratorWithRelations & {
+    enrichedSnapshot?: string | null;
+  }).enrichedSnapshot;
+  if (!snap) return {};
+  const prev = parseJson<Partial<StoredSnapshot>>(snap, {});
+  return prev.stringUnitsSoldByProductId ?? {};
+}
 
 export async function buildAndStoreSnapshot(
   admin: ShopifyAdmin,
   configurator: ConfiguratorWithRelations,
   shopId: string,
+  opts?: { refreshSales?: boolean },
 ): Promise<void> {
   const [enriched, theme, racquetTensionByProductId, recommended] = await Promise.all([
     enrichConfiguratorWithShopifyData(admin, configurator),
@@ -43,11 +84,19 @@ export async function buildAndStoreSnapshot(
     resolveRecommendedStringsMap(admin, configurator),
   ]);
 
+  // Best-seller data is store-wide and only needs to refresh on the daily cron — NOT on every
+  // merchant save. On save we carry the previous snapshot's tally forward so saves stay fast and
+  // never scan 60 days of orders. The cron passes { refreshSales: true }.
+  const stringUnitsSoldByProductId = opts?.refreshSales
+    ? await resolveStringUnitsSold(admin, collectStringProductIds(enriched), new Date())
+    : carryForwardUnitsSold(configurator);
+
   const payload: StoredSnapshot = {
     configurator: serializeConfiguratorPayload(enriched, theme, DEFAULT_TENSION_RANGE),
     racquetTensionByProductId,
     recommendedStringsByRacquet: recommended.standard,
     recommendedHybridStringsByRacquet: recommended.hybrid,
+    stringUnitsSoldByProductId,
   };
 
   await prisma.configurator.update({

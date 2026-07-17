@@ -116,6 +116,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             tensionRange,
             recommendedStringProductIds,
             recommendedHybridStringProductIds,
+            // Store-wide best-seller tally (same for every racquet) — drives best-seller sorting
+            // of the string picker. Absent on pre-existing snapshots; the storefront defaults to {}.
+            stringUnitsSoldByProductId: stored.stringUnitsSoldByProductId ?? {},
           },
         };
         setCachedProxyResponse(shopDomain, productId, responseData);
