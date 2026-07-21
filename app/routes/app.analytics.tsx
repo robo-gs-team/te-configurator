@@ -3,8 +3,6 @@ import type { LoaderFunctionArgs } from "@vercel/remix";
 import { json } from "@vercel/remix";
 import { useLoaderData } from "@remix-run/react";
 import {
-  Badge,
-  Banner,
   BlockStack,
   Card,
   DataTable,
@@ -48,42 +46,6 @@ const VIZ = {
 
 type TrendPoint = { day: string; opens: number; addToCarts: number; purchases: number };
 
-/* Deterministic sample series (no randomness — must render identically on server and client).
- * A gentle upward month so the preview looks like a healthy configurator. */
-const SAMPLE_TREND: TrendPoint[] = Array.from({ length: 30 }, (_, i) => {
-  const opens = Math.round(6 + i * 0.55 + 4 * Math.sin(i / 3.1) + 3 * Math.sin(i / 1.3));
-  const carts = Math.round(opens * (0.32 + 0.09 * Math.sin(i / 4.7)));
-  const buys = Math.round(carts * (0.3 + 0.08 * Math.sin(i / 3.3)));
-  return {
-    day: `Day ${i + 1}`,
-    opens: Math.max(2, opens),
-    addToCarts: Math.max(1, carts),
-    purchases: Math.max(0, buys),
-  };
-});
-
-const SAMPLE_FUNNEL = { openSessions: 412, cartSessions: 149, purchaseSessions: 47 };
-const SAMPLE_REVENUE = {
-  added: 39764,
-  purchased: 12549,
-  incrementalTotal: 2726,
-  incrementalPerOrder: 58,
-  configAOV: 267,
-  storeAOV: 214,
-  aovLiftPct: 24.8,
-  revenuePerOpen: 30.5,
-};
-const SAMPLE_MODE: Record<string, number> = { standard: 104, hybrid: 45 };
-const SAMPLE_DEVICE = [
-  { device: "mobile", opens: 268, addToCarts: 86, purchases: 24 },
-  { device: "desktop", opens: 144, addToCarts: 63, purchases: 23 },
-];
-const SAMPLE_RACQUETS = [
-  { productId: "Sample — Boom 2026", opens: 96, addToCarts: 41, purchases: 15 },
-  { productId: "Sample — Percept 97", opens: 74, addToCarts: 28, purchases: 9 },
-  { productId: "Sample — Ezone 100", opens: 61, addToCarts: 22, purchases: 8 },
-];
-
 function pct(numerator: number, denominator: number): string {
   if (denominator <= 0) return "—";
   return `${Math.round((numerator / denominator) * 100)}%`;
@@ -95,32 +57,38 @@ function money(value: number): string {
 
 /* ------------------------------------ building blocks ------------------------------------ */
 
-function SampleBadge() {
-  return <Badge tone="info">Sample data</Badge>;
+/** Honest "nothing here yet" placeholder — no invented numbers, ever. Shown only when a section's
+ *  underlying data is genuinely empty; sections with real data (even all-zero real data, which is
+ *  itself meaningful) render their real numbers instead. */
+function EmptyState({ message, height = 120 }: { message: string; height?: number }) {
+  return (
+    <div
+      style={{
+        minHeight: height,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        border: `1px dashed ${VIZ.grid}`,
+        borderRadius: 8,
+        padding: 16,
+      }}
+    >
+      <Text as="p" variant="bodySm" tone="subdued">
+        {message}
+      </Text>
+    </div>
+  );
 }
 
-/** Wraps a section; sample sections are dimmed and badged so preview data can't be mistaken for real. */
-function Section({
-  title,
-  sample,
-  children,
-}: {
-  title: string;
-  sample: boolean;
-  children: ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Card>
       <BlockStack gap="300">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="h2" variant="headingMd">
-            {title}
-          </Text>
-          {sample && <SampleBadge />}
-        </InlineStack>
-        <div style={sample ? { opacity: 0.55, filter: "grayscale(0.25)" } : undefined}>
-          {children}
-        </div>
+        <Text as="h2" variant="headingMd">
+          {title}
+        </Text>
+        {children}
       </BlockStack>
     </Card>
   );
@@ -441,32 +409,20 @@ function TrendChart({ data }: { data: TrendPoint[] }) {
 
 export default function AnalyticsPage() {
   const { analytics } = useLoaderData<typeof loader>();
-  const real = analytics;
+  const { funnel, revenue, byMode, byDevice, byRacquet, trend, counts } = analytics;
 
-  const funnelSample =
-    real.funnel.openSessions === 0 &&
-    real.funnel.cartSessions === 0 &&
-    real.funnel.purchaseSessions === 0;
-  const revenueSample = real.revenue.purchased === 0 && real.revenue.added === 0;
-  const trendSample =
-    real.trend.length === 0 ||
-    real.trend.every((t) => t.opens + t.addToCarts + t.purchases === 0);
-  const modeSample = Object.keys(real.byMode).length === 0;
-  const deviceSample = real.byDevice.length === 0;
-  const racquetSample = real.byRacquet.length === 0;
-  const anySample =
-    funnelSample || revenueSample || trendSample || modeSample || deviceSample || racquetSample;
-
-  const funnel = funnelSample ? SAMPLE_FUNNEL : real.funnel;
-  const revenue = revenueSample ? SAMPLE_REVENUE : real.revenue;
-  const trend = trendSample ? SAMPLE_TREND : real.trend;
-  const byMode = modeSample ? SAMPLE_MODE : real.byMode;
-  const byDevice = deviceSample ? SAMPLE_DEVICE : real.byDevice;
-  const byRacquet = racquetSample ? SAMPLE_RACQUETS : real.byRacquet;
+  // Each of these is genuinely empty (no rows at all for that dimension) vs. real data that
+  // happens to include zeros — the funnel/KPI row always shows real numbers, since "0 opens" or
+  // "0% conversion" is itself a true, meaningful result, not an absence of data.
+  const revenueEmpty = revenue.purchased === 0 && revenue.added === 0;
+  const trendEmpty = trend.length === 0;
+  const modeEmpty = Object.keys(byMode).length === 0;
+  const deviceEmpty = byDevice.length === 0;
+  const racquetEmpty = byRacquet.length === 0;
 
   const liftGood = revenue.aovLiftPct >= 0;
 
-  const eventRows = real.events.slice(0, 50).map((event) => {
+  const eventRows = analytics.events.slice(0, 50).map((event) => {
     const meta = parseJson<Record<string, unknown>>(event.metadata, {});
     return [
       new Date(event.createdAt).toLocaleString(),
@@ -483,51 +439,37 @@ export default function AnalyticsPage() {
       backAction={{ content: "Dashboard", url: "/app" }}
     >
       <Layout>
-        {anySample && (
-          <Layout.Section>
-            <Banner tone="info" title="Some sections show sample data">
-              <p>
-                Dimmed sections marked “Sample data” are a preview of what this page will look
-                like — they switch to live numbers automatically as shoppers use the configurator
-                and orders come in. Everything else is real.
-              </p>
-            </Banner>
-          </Layout.Section>
-        )}
-
-        {/* KPI hero row */}
+        {/* KPI hero row — always real: 0 is a true result, not a placeholder. */}
         <Layout.Section>
-          <div style={funnelSample ? { opacity: 0.55, filter: "grayscale(0.25)" } : undefined}>
-            <InlineGrid columns={{ xs: 2, sm: 4 }} gap="300">
-              <StatTile
-                hero
-                label="Overall conversion"
-                value={pct(funnel.purchaseSessions, funnel.openSessions)}
-                sub="opens → purchase"
-              />
-              <StatTile
-                label="Configurator opens"
-                value={funnel.openSessions.toLocaleString()}
-                sub="unique sessions"
-              />
-              <StatTile
-                label="Cart rate"
-                value={pct(funnel.cartSessions, funnel.openSessions)}
-                sub="opens → add to cart"
-              />
-              <StatTile
-                label="Checkout rate"
-                value={pct(funnel.purchaseSessions, funnel.cartSessions)}
-                sub="add to cart → purchase"
-              />
-            </InlineGrid>
-          </div>
+          <InlineGrid columns={{ xs: 2, sm: 4 }} gap="300">
+            <StatTile
+              hero
+              label="Overall conversion"
+              value={pct(funnel.purchaseSessions, funnel.openSessions)}
+              sub="opens → purchase"
+            />
+            <StatTile
+              label="Configurator opens"
+              value={funnel.openSessions.toLocaleString()}
+              sub="unique sessions"
+            />
+            <StatTile
+              label="Cart rate"
+              value={pct(funnel.cartSessions, funnel.openSessions)}
+              sub="opens → add to cart"
+            />
+            <StatTile
+              label="Checkout rate"
+              value={pct(funnel.purchaseSessions, funnel.cartSessions)}
+              sub="add to cart → purchase"
+            />
+          </InlineGrid>
         </Layout.Section>
 
         {/* Funnel + revenue */}
         <Layout.Section>
           <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
-            <Section title="Session funnel" sample={funnelSample}>
+            <Section title="Session funnel">
               <FunnelViz
                 stages={[
                   { label: "Opened configurator", value: funnel.openSessions, rateFromPrev: null },
@@ -544,74 +486,98 @@ export default function AnalyticsPage() {
                 ]}
               />
             </Section>
-            <Section title="Revenue" sample={revenueSample}>
-              <InlineGrid columns={2} gap="300">
-                <StatTile label="Purchased" value={money(revenue.purchased)} />
-                <StatTile
-                  label="Avg configurator order"
-                  value={money(revenue.configAOV)}
-                  sub={`${liftGood ? "↑" : "↓"} ${Math.abs(Math.round(revenue.aovLiftPct))}% vs store AOV ${money(revenue.storeAOV)}`}
-                  subTone={liftGood ? "good" : "bad"}
-                />
-                <StatTile
-                  label="Incremental added"
-                  value={money(revenue.incrementalTotal)}
-                  sub="strings + labor + add-ons"
-                />
-                <StatTile
-                  label="Revenue per open"
-                  value={money(revenue.revenuePerOpen)}
-                  sub={`incremental ${money(revenue.incrementalPerOrder)}/order`}
-                />
-              </InlineGrid>
+            <Section title="Revenue">
+              {revenueEmpty ? (
+                <EmptyState message="No add-to-carts or purchases yet — revenue metrics appear once shoppers configure and buy." />
+              ) : (
+                <InlineGrid columns={2} gap="300">
+                  <StatTile label="Purchased" value={money(revenue.purchased)} />
+                  <StatTile
+                    label="Avg configurator order"
+                    value={money(revenue.configAOV)}
+                    sub={
+                      revenue.configAOV > 0 && revenue.storeAOV > 0
+                        ? `${liftGood ? "↑" : "↓"} ${Math.abs(Math.round(revenue.aovLiftPct))}% vs store AOV ${money(revenue.storeAOV)}`
+                        : undefined
+                    }
+                    subTone={liftGood ? "good" : "bad"}
+                  />
+                  <StatTile
+                    label="Incremental added"
+                    value={money(revenue.incrementalTotal)}
+                    sub="strings + labor + add-ons"
+                  />
+                  <StatTile
+                    label="Revenue per open"
+                    value={money(revenue.revenuePerOpen)}
+                    sub={`incremental ${money(revenue.incrementalPerOrder)}/order`}
+                  />
+                </InlineGrid>
+              )}
             </Section>
           </InlineGrid>
         </Layout.Section>
 
         {/* Trend */}
         <Layout.Section>
-          <Section title="Daily activity" sample={trendSample}>
-            <TrendChart data={trend} />
+          <Section title="Daily activity">
+            {trendEmpty ? (
+              <EmptyState message="No activity yet — this chart fills in as shoppers open the configurator." height={200} />
+            ) : (
+              <TrendChart data={trend} />
+            )}
           </Section>
         </Layout.Section>
 
         {/* Mode + device */}
         <Layout.Section>
           <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
-            <Section title="Add-to-cart by mode" sample={modeSample}>
-              <ModeBars modes={byMode} />
+            <Section title="Add-to-cart by mode">
+              {modeEmpty ? (
+                <EmptyState message="No add-to-carts yet." />
+              ) : (
+                <ModeBars modes={byMode} />
+              )}
             </Section>
-            <Section title="By device" sample={deviceSample}>
-              <DataTable
-                columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric"]}
-                headings={["Device", "Opens", "Cart", "Buy", "Cart rate"]}
-                rows={byDevice.map((d) => [
-                  d.device,
-                  String(d.opens),
-                  String(d.addToCarts),
-                  String(d.purchases),
-                  pct(d.addToCarts, d.opens),
-                ])}
-              />
+            <Section title="By device">
+              {deviceEmpty ? (
+                <EmptyState message="No sessions yet." />
+              ) : (
+                <DataTable
+                  columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric"]}
+                  headings={["Device", "Opens", "Cart", "Buy", "Cart rate"]}
+                  rows={byDevice.map((d) => [
+                    d.device,
+                    String(d.opens),
+                    String(d.addToCarts),
+                    String(d.purchases),
+                    pct(d.addToCarts, d.opens),
+                  ])}
+                />
+              )}
             </Section>
           </InlineGrid>
         </Layout.Section>
 
         {/* Top racquets */}
         <Layout.Section>
-          <Section title="Top racquets" sample={racquetSample}>
-            <DataTable
-              columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
-              headings={["Product", "Opens", "Cart", "Buy", "Cart rate", "Conv."]}
-              rows={byRacquet.map((r) => [
-                r.productId,
-                String(r.opens),
-                String(r.addToCarts),
-                String(r.purchases),
-                pct(r.addToCarts, r.opens),
-                pct(r.purchases, r.opens),
-              ])}
-            />
+          <Section title="Top racquets">
+            {racquetEmpty ? (
+              <EmptyState message="No racquet-level activity yet." />
+            ) : (
+              <DataTable
+                columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
+                headings={["Product", "Opens", "Cart", "Buy", "Cart rate", "Conv."]}
+                rows={byRacquet.map((r) => [
+                  r.productId,
+                  String(r.opens),
+                  String(r.addToCarts),
+                  String(r.purchases),
+                  pct(r.addToCarts, r.opens),
+                  pct(r.purchases, r.opens),
+                ])}
+              />
+            )}
           </Section>
         </Layout.Section>
 
@@ -624,7 +590,7 @@ export default function AnalyticsPage() {
               </summary>
               <BlockStack gap="300">
                 <div style={{ marginTop: 12 }}>
-                  {Object.entries(real.counts).map(([type, count]) => (
+                  {Object.entries(counts).map(([type, count]) => (
                     <Text as="p" key={type}>
                       {type}: {count}
                     </Text>
