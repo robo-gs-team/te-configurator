@@ -462,9 +462,19 @@ export async function saveConfiguration(
   }
 }
 
+/** Coarse device bucket for the analytics device split — matches the modal's own 768px breakpoint. */
+function getDevice(): "mobile" | "desktop" {
+  try {
+    return window.matchMedia("(max-width: 767px)").matches ? "mobile" : "desktop";
+  } catch {
+    return "desktop";
+  }
+}
+
 /**
  * Fire-and-forget analytics event to the App Proxy (`POST /analytics`). Never throws and never
- * blocks the UI — failures are swallowed. In v1 only `modal_open` and `add_to_cart` are sent.
+ * blocks the UI — failures are swallowed. Events: modal_open, add_to_cart, share (purchase is
+ * recorded server-side by the orders/create webhook). Every event carries sessionId + device.
  */
 export async function trackEvent(
   appProxyUrl: string,
@@ -479,7 +489,7 @@ export async function trackEvent(
       // count unique sessions per funnel stage and join to purchases from the orders webhook.
       body: JSON.stringify({
         eventType,
-        metadata: { sessionId: getOrCreateSessionId(), ...metadata },
+        metadata: { sessionId: getOrCreateSessionId(), device: getDevice(), ...metadata },
       }),
     });
   } catch {

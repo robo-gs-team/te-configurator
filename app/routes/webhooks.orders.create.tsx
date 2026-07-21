@@ -15,8 +15,15 @@ type WebhookLineItem = {
 type OrderWebhookPayload = {
   id?: number | string;
   currency?: string;
+  total_price?: string | number;
   line_items?: WebhookLineItem[];
 };
+
+function lineTotal(li: WebhookLineItem): number {
+  const price = Number(li.price ?? 0);
+  const qty = Number(li.quantity ?? 1);
+  return Number.isFinite(price) ? price * qty : 0;
+}
 
 function propMap(props?: WebhookLineItemProperty[] | null): Record<string, string> {
   const map: Record<string, string> = {};
@@ -45,13 +52,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const order = payload as OrderWebhookPayload;
   const lineItems = order.line_items ?? [];
+  const orderId = order.id != null ? String(order.id) : undefined;
+  const orderTotal = Number(order.total_price ?? 0) || 0;
+
+  const shopRecord = await ensureShop(shop);
+
+  // Idempotency: skip if this order was already recorded, whether as a configurator purchase or a
+  // baseline order_other (orders/create can be delivered more than once).
+  if (orderId) {
+    const existing = await prisma.analytics.findFirst({
+      where: {
+        shopId: shopRecord.id,
+        eventType: { in: ["purchase", "order_other"] },
+        metadata: { contains: `"orderId":"${orderId}"` },
+      },
+      select: { id: true },
+    });
+    if (existing) return new Response();
+  }
 
   const configuratorLines = lineItems.filter((li) => {
     const m = propMap(li.properties);
     return "_configurator_id" in m || "_parent_configurator" in m;
   });
+
   if (configuratorLines.length === 0) {
-    // Not a configurator order — nothing to record.
+    // Non-configurator order — record only its total, so the dashboard can compute a store-wide
+    // AOV baseline to compare configurator orders against.
+    await trackAnalyticsEvent({
+      shopId: shopRecord.id,
+      eventType: "order_other",
+      metadata: { orderId, value: orderTotal },
+    });
     return new Response();
   }
 
@@ -67,28 +99,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const sessionId = racquetProps["_proto_session"] || undefined;
   const mode = racquetProps["Stringing mode"]?.toLowerCase() || undefined;
 
-  const value = configuratorLines.reduce((sum, li) => {
-    const price = Number(li.price ?? 0);
-    const qty = Number(li.quantity ?? 1);
-    return sum + (Number.isFinite(price) ? price * qty : 0);
-  }, 0);
-
-  const orderId = order.id != null ? String(order.id) : undefined;
-
-  const shopRecord = await ensureShop(shop);
-
-  // Idempotency: skip if this order was already recorded (webhook re-delivery).
-  if (orderId) {
-    const existing = await prisma.analytics.findFirst({
-      where: {
-        shopId: shopRecord.id,
-        eventType: "purchase",
-        metadata: { contains: `"orderId":"${orderId}"` },
-      },
-      select: { id: true },
-    });
-    if (existing) return new Response();
-  }
+  // value = the whole configured bundle (racquet + strings + labor + addons). incremental = what
+  // the configurator ADDED on top of the bare racquet frame (strings + labor + addons) — the app's
+  // direct revenue contribution.
+  const value = configuratorLines.reduce((sum, li) => sum + lineTotal(li), 0);
+  const racquetFrame = lineTotal(racquetLine);
+  const incremental = Math.max(0, value - racquetFrame);
 
   await trackAnalyticsEvent({
     shopId: shopRecord.id,
@@ -96,7 +112,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     eventType: "purchase",
     productId,
     sessionId,
-    metadata: { orderId, value, mode, currency: order.currency },
+    metadata: { orderId, value, incremental, orderTotal, mode, currency: order.currency },
   });
 
   return new Response();
