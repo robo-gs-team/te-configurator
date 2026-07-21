@@ -58,9 +58,32 @@ function normalizeBed(product: StringProduct, bed: BedSelection): BedSelection {
   };
 }
 
-// Page size for the string list's "Show more" pagination — keeps the initial render short even
-// when a merchant's catalog has dozens of strings, without hiding anything behind a filter.
-const STRING_PAGE_SIZE = 20;
+// Strings shown before "Show more" on desktop. On mobile the count is the merchant-controlled
+// theme.mobileStringCount (default 6) — a phone can't comfortably show 20.
+const DESKTOP_PAGE_SIZE = 20;
+
+/** True on phones (≤767px) — the same breakpoint the modal's CSS stacks at. Reactive to resize. */
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(() => {
+    try {
+      return window.matchMedia("(max-width: 767px)").matches;
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    let mq: MediaQueryList;
+    try {
+      mq = window.matchMedia("(max-width: 767px)");
+    } catch {
+      return;
+    }
+    const handler = () => setIsMobile(mq.matches);
+    mq.addEventListener?.("change", handler);
+    return () => mq.removeEventListener?.("change", handler);
+  }, []);
+  return isMobile;
+}
 
 // Which recommendation applies depends on the column: the standard catalog uses the racquet's
 // standard recommendation, the mains/crosses columns use its hybrid recommendation.
@@ -120,17 +143,21 @@ function StringCatalog({
   selectedId,
   accent,
   search,
+  mobilePageSize,
   onSelect,
 }: {
   catalog: StringProduct[];
   selectedId: string;
   accent: "standard" | "mains" | "crosses";
   search: string;
+  mobilePageSize: number;
   onSelect: (id: string) => void;
 }) {
   // The mains/crosses columns use the racquet's hybrid recommendation; the standard column its
   // standard one.
   const useHybrid = accent !== "standard";
+  // Fewer strings up front on phones (merchant-controlled) than on desktop.
+  const pageSize = useIsMobile() ? mobilePageSize : DESKTOP_PAGE_SIZE;
   // Show a "Recommended" chip (and default to it) only when this racquet actually recommends
   // some of the available strings — otherwise start on "All".
   const hasRecommended = useMemo(
@@ -145,7 +172,7 @@ function StringCatalog({
     [hasRecommended],
   );
   const [filter, setFilter] = useState<string>(hasRecommended ? "recommended" : "all");
-  const [visibleCount, setVisibleCount] = useState(STRING_PAGE_SIZE);
+  const [visibleCount, setVisibleCount] = useState(pageSize);
   const filtered = filterCatalog(catalog, filter, search, useHybrid);
   const visible = filtered.slice(0, visibleCount);
   const remaining = filtered.length - visible.length;
@@ -156,15 +183,15 @@ function StringCatalog({
         ? "proto-desk-string-row--c"
         : "proto-desk-string-row--selected";
 
-  // Reset pagination whenever the (parent-owned) search text changes, so a narrowed result
-  // set always starts at the top of its first page.
+  // Reset pagination whenever the (parent-owned) search text or the page size changes, so a
+  // narrowed result set (or a viewport that crossed the mobile breakpoint) starts at page one.
   useEffect(() => {
-    setVisibleCount(STRING_PAGE_SIZE);
-  }, [search]);
+    setVisibleCount(pageSize);
+  }, [search, pageSize]);
 
   const selectFilter = (id: string) => {
     setFilter(id);
-    setVisibleCount(STRING_PAGE_SIZE);
+    setVisibleCount(pageSize);
   };
 
   return (
@@ -231,9 +258,9 @@ function StringCatalog({
         <button
           type="button"
           className="proto-desk-load-more"
-          onClick={() => setVisibleCount((count) => count + STRING_PAGE_SIZE)}
+          onClick={() => setVisibleCount((count) => count + pageSize)}
         >
-          Show {Math.min(remaining, STRING_PAGE_SIZE)} more ({remaining} left)
+          Show {Math.min(remaining, pageSize)} more ({remaining} left)
         </button>
       )}
     </>
@@ -500,6 +527,7 @@ function StandardDesktop({
   laborPrice,
   tensionRange,
   search,
+  mobilePageSize,
   onAddToCart,
   isAddingToCart,
 }: {
@@ -508,6 +536,7 @@ function StandardDesktop({
   laborPrice: number;
   tensionRange: TensionRange;
   search: string;
+  mobilePageSize: number;
   onAddToCart: () => void;
   isAddingToCart: boolean;
 }) {
@@ -534,6 +563,7 @@ function StandardDesktop({
           selectedId={normalized.stringId}
           accent="standard"
           search={search}
+          mobilePageSize={mobilePageSize}
           onSelect={setString}
         />
         <div className="proto-desk-hybrid-cta-row">
@@ -629,6 +659,7 @@ function HybridDesktop({
   laborPrice,
   tensionRange,
   search,
+  mobilePageSize,
   onAddToCart,
   isAddingToCart,
 }: {
@@ -637,6 +668,7 @@ function HybridDesktop({
   laborPrice: number;
   tensionRange: TensionRange;
   search: string;
+  mobilePageSize: number;
   onAddToCart: () => void;
   isAddingToCart: boolean;
 }) {
@@ -672,6 +704,7 @@ function HybridDesktop({
             selectedId={mainsNorm.stringId}
             accent="mains"
             search={search}
+            mobilePageSize={mobilePageSize}
             onSelect={(id) => {
               const p = getStringById(catalog, id);
               if (p) update("mains", normalizeBed(p, mainsNorm));
@@ -686,6 +719,7 @@ function HybridDesktop({
             selectedId={crossesNorm.stringId}
             accent="crosses"
             search={search}
+            mobilePageSize={mobilePageSize}
             onSelect={(id) => {
               const p = getStringById(catalog, id);
               if (p) update("crosses", normalizeBed(p, crossesNorm));
@@ -798,6 +832,8 @@ export function StringingConfigurator({
   const basePrice = racquetPrice ?? configurator.basePrice;
   const laborPrice = configurator.laborPrice ?? 0;
   const tensionRange = configurator.tensionRange ?? DEFAULT_TENSION_RANGE;
+  // Merchant-set number of strings to show before "Show more" on phones (default 6).
+  const mobilePageSize = configurator.theme?.mobileStringCount ?? 6;
 
   return (
     <div className="proto-desk-shell flex flex-col flex-1 min-h-0 h-full">
@@ -860,6 +896,7 @@ export function StringingConfigurator({
             laborPrice={laborPrice}
             tensionRange={tensionRange}
             search={search}
+            mobilePageSize={mobilePageSize}
             onAddToCart={onAddToCart}
             isAddingToCart={isAddingToCart}
           />
@@ -870,6 +907,7 @@ export function StringingConfigurator({
             laborPrice={laborPrice}
             tensionRange={tensionRange}
             search={search}
+            mobilePageSize={mobilePageSize}
             onAddToCart={onAddToCart}
             isAddingToCart={isAddingToCart}
           />

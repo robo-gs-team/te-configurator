@@ -191,6 +191,9 @@ model ThemeSetting {
   modalAccent     String  @default("#6366f1")
   overlayBlur     Int     @default(12)
   fontFamily      String  @default("system-ui")
+  // How many strings the picker shows before "Show more" on mobile (phones ≤767px). The desktop
+  // count stays fixed at 20; a long list is fine on desktop but overwhelming on a phone.
+  mobileStringCount Int   @default(6)
   customCss       String?
 
   shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
