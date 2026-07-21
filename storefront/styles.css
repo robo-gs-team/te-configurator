@@ -672,7 +672,7 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
 /* Hybrid: 3-column desktop layout */
 .proto-desk-hybrid-headers {
   display: grid;
-  grid-template-columns: 1fr 1fr 260px;
+  grid-template-columns: 1fr 1fr 300px;
   border-bottom: 1px solid #e5e5e5;
 }
 
@@ -704,7 +704,7 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
 
 .proto-desk-hybrid-body {
   display: grid;
-  grid-template-columns: 1fr 1fr 260px;
+  grid-template-columns: 1fr 1fr 300px;
   min-height: 480px;
 }
 
@@ -735,6 +735,50 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   position: sticky;
   top: 0;
   align-self: start;
+}
+
+/* Collapsible "Configure" control that sits under each Mains/Crosses selected-string card in the
+   hybrid summary column. Collapsed by default so the Add to Cart button stays above the fold; one
+   side open at a time keeps the sticky column short enough to never push Add to Cart out of view. */
+.proto-desk-config-acc {
+  margin-top: -4px;
+}
+
+.proto-desk-config-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.proto-desk-config-toggle--open {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.proto-desk-config-chevron {
+  font-size: 13px;
+  line-height: 1;
+  color: #6b7280;
+  transition: transform 0.15s;
+}
+
+.proto-desk-config-chevron--open {
+  transform: rotate(180deg);
+}
+
+.proto-desk-config-body {
+  border: 1px solid #e5e5e5;
+  border-top: none;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  padding: 10px;
+  background: #fff;
 }
 
 @media (max-width: 767px) {

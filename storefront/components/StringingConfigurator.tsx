@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useConfiguratorStore } from "../store/configurator-store";
 import type { BedSelection, StringProduct, TensionRange } from "../lib/string-catalog";
 import {
@@ -576,6 +576,53 @@ function StandardDesktop({
   );
 }
 
+/**
+ * Collapsible "Configure" control shown under each Mains/Crosses selected-string card in the hybrid
+ * summary column. Hybrid used to render these gauge/color/tension fields at the very bottom of each
+ * (long) string-list column, where shoppers never scrolled to — so hybrid looked like it lacked the
+ * per-string customization that Standard has. Moving them here, right under the selected string and
+ * collapsed by default, makes them discoverable without pushing the Add to Cart button off-screen.
+ */
+function ConfigureAccordion({
+  accent,
+  open,
+  onToggle,
+  children,
+}: {
+  accent: Accent;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const labelColor =
+    accent === "mains"
+      ? "text-[#185FA5]"
+      : accent === "crosses"
+        ? "text-[#6D28D9]"
+        : "text-[#C8102E]";
+  return (
+    <div className="proto-desk-config-acc">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`proto-desk-config-toggle ${open ? "proto-desk-config-toggle--open" : ""}`}
+        aria-expanded={open}
+      >
+        <span className={`text-[10px] font-bold uppercase tracking-wide ${labelColor}`}>
+          {open ? "Hide options" : "Configure gauge · color · tension"}
+        </span>
+        <span
+          className={`proto-desk-config-chevron ${open ? "proto-desk-config-chevron--open" : ""}`}
+          aria-hidden
+        >
+          ⌄
+        </span>
+      </button>
+      {open && <div className="proto-desk-config-body">{children}</div>}
+    </div>
+  );
+}
+
 function HybridDesktop({
   catalog,
   basePrice,
@@ -596,6 +643,10 @@ function HybridDesktop({
   const beds = useConfiguratorStore((s) => s.hybridBeds);
   const update = useConfiguratorStore((s) => s.updateHybridBed);
   const total = useConfiguratorStore((s) => s.getStringingTotal());
+
+  // One side's config open at a time, both collapsed on open — keeps the sticky summary column
+  // short so Add to Cart never scrolls out of view.
+  const [openSide, setOpenSide] = useState<"mains" | "crosses" | null>(null);
 
   const mainsProduct = getStringById(catalog, beds.mains.stringId) ?? catalog[0];
   const crossesProduct = getStringById(catalog, beds.crosses.stringId) ?? catalog[0];
@@ -625,18 +676,6 @@ function HybridDesktop({
               if (p) update("mains", normalizeBed(p, mainsNorm));
             }}
           />
-          <div className="proto-desk-hcol-config">
-            <BedConfigFields
-              bed={mainsNorm}
-              product={mainsProduct}
-              accent="mains"
-              tensionTitle="Mains tension"
-              tensionRange={tensionRange}
-              recommendedTension={tensionRange.recommended}
-              recommendedGauge="16"
-              onChange={(b) => update("mains", b)}
-            />
-          </div>
         </div>
 
         <div className="proto-desk-hcol">
@@ -650,7 +689,42 @@ function HybridDesktop({
               if (p) update("crosses", normalizeBed(p, crossesNorm));
             }}
           />
-          <div className="proto-desk-hcol-config">
+        </div>
+
+        <div className="proto-desk-hcol-sum">
+          <SelectedCard
+            accent="mains"
+            eyebrow="Mains"
+            name={mainsProduct.name}
+            sub={`${mainsNorm.gauge}g · ${mainsNorm.color} · ${mainsNorm.tension} lbs · ${formatStringPrice(mainsProduct.price)}`}
+          />
+          <ConfigureAccordion
+            accent="mains"
+            open={openSide === "mains"}
+            onToggle={() => setOpenSide((cur) => (cur === "mains" ? null : "mains"))}
+          >
+            <BedConfigFields
+              bed={mainsNorm}
+              product={mainsProduct}
+              accent="mains"
+              tensionTitle="Mains tension"
+              tensionRange={tensionRange}
+              recommendedTension={tensionRange.recommended}
+              recommendedGauge="16"
+              onChange={(b) => update("mains", b)}
+            />
+          </ConfigureAccordion>
+          <SelectedCard
+            accent="crosses"
+            eyebrow="Crosses"
+            name={crossesProduct.name}
+            sub={`${crossesNorm.gauge}g · ${crossesNorm.color} · ${crossesNorm.tension} lbs · ${formatStringPrice(crossesProduct.price)}`}
+          />
+          <ConfigureAccordion
+            accent="crosses"
+            open={openSide === "crosses"}
+            onToggle={() => setOpenSide((cur) => (cur === "crosses" ? null : "crosses"))}
+          >
             <BedConfigFields
               bed={crossesNorm}
               product={crossesProduct}
@@ -661,22 +735,7 @@ function HybridDesktop({
               recommendedGauge="16"
               onChange={(b) => update("crosses", b)}
             />
-          </div>
-        </div>
-
-        <div className="proto-desk-hcol-sum">
-          <SelectedCard
-            accent="mains"
-            eyebrow="Mains"
-            name={mainsProduct.name}
-            sub={`${mainsNorm.gauge}g · ${mainsNorm.color} · ${mainsNorm.tension} lbs · ${formatStringPrice(mainsProduct.price)}`}
-          />
-          <SelectedCard
-            accent="crosses"
-            eyebrow="Crosses"
-            name={crossesProduct.name}
-            sub={`${crossesNorm.gauge}g · ${crossesNorm.color} · ${crossesNorm.tension} lbs · ${formatStringPrice(crossesProduct.price)}`}
-          />
+          </ConfigureAccordion>
           <div className="proto-desk-divider" />
           <OrderSummary
             basePrice={basePrice}
