@@ -33,6 +33,27 @@ export type CartAddResult = {
 };
 
 const STRUNG_ID_STORAGE_KEY = "proto_strung_id_counter";
+const SESSION_ID_STORAGE_KEY = "proto_session_id";
+
+/**
+ * Stable id for this browsing session, created once and reused for every analytics event AND
+ * stamped onto the order (as the hidden `_proto_session` line-item property) so the orders/create
+ * webhook can tie a placed order back to the same session that opened the modal and added to cart —
+ * giving a real open → add-to-cart → purchase funnel. sessionStorage-scoped (per tab/session);
+ * falls back to an ephemeral id if storage is unavailable.
+ */
+function getOrCreateSessionId(): string {
+  try {
+    let id = window.sessionStorage.getItem(SESSION_ID_STORAGE_KEY);
+    if (!id) {
+      id = `s_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+      window.sessionStorage.setItem(SESSION_ID_STORAGE_KEY, id);
+    }
+    return id;
+  } catch {
+    return `s_${Math.random().toString(36).slice(2, 12)}`;
+  }
+}
 
 /**
  * Sequential, human-readable id ("A1", "A2", ...) shared by every cart line produced by ONE
@@ -135,9 +156,18 @@ export async function addToShopifyCart(
   // Staff-only (leading underscore): this exists to help whoever fulfills a multi-racquet order
   // pair each string back to its racquet — the shopper never needs to see it themselves. Still
   // fully visible to staff on the Shopify Admin order page.
+  const sessionId = getOrCreateSessionId();
   const strungId = isStringing ? generateStrungId() : null;
-  const parentTag: Record<string, string> = { _parent_configurator: configurator.id };
+  // Staff-only session stamp (leading underscore) so the orders/create webhook can attribute the
+  // placed order back to this browsing session for the analytics funnel.
+  const parentTag: Record<string, string> = {
+    _parent_configurator: configurator.id,
+    _proto_session: sessionId,
+  };
   if (strungId) parentTag["_Strung ID"] = strungId;
+
+  const racquetProps: Record<string, string> = { ...properties, _proto_session: sessionId };
+  if (strungId) racquetProps["_Strung ID"] = strungId;
 
   const items: Array<{
     id: number;
@@ -147,7 +177,7 @@ export async function addToShopifyCart(
     {
       id: Number(mainVariantId),
       quantity,
-      properties: strungId ? { ...properties, "_Strung ID": strungId } : properties,
+      properties: racquetProps,
     },
   ];
 
@@ -445,7 +475,12 @@ export async function trackEvent(
     await fetch(`${appProxyUrl}/analytics`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventType, metadata }),
+      // Stamp the session id on every event (unless a caller already set one) so the dashboard can
+      // count unique sessions per funnel stage and join to purchases from the orders webhook.
+      body: JSON.stringify({
+        eventType,
+        metadata: { sessionId: getOrCreateSessionId(), ...metadata },
+      }),
     });
   } catch {
     /* non-blocking */

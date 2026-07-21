@@ -48,6 +48,7 @@ export function ConfiguratorModal() {
   const setCartError = useConfiguratorStore((s) => s.setCartError);
   const setShareUrl = useConfiguratorStore((s) => s.setShareUrl);
   const getPrice = useConfiguratorStore((s) => s.getPrice);
+  const getStringingTotal = useConfiguratorStore((s) => s.getStringingTotal);
   const getVariantId = useConfiguratorStore((s) => s.getVariantId);
   const stringingMode = useConfiguratorStore((s) => s.stringingMode);
   const standardBed = useConfiguratorStore((s) => s.standardBed);
@@ -115,9 +116,14 @@ export function ConfiguratorModal() {
     setAddingToCart(false);
 
     if (result.success) {
+      const isStringing = usesStringingUi(configurator);
       trackEvent(appProxyUrl, "add_to_cart", {
         configuratorId: configurator.id,
-        total: getPrice().total,
+        productId,
+        mode: isStringing ? stringingMode : "generic",
+        // Revenue added to cart. The orders/create webhook records the real purchased revenue;
+        // this is the top-of-funnel "added" figure.
+        value: isStringing ? getStringingTotal() : getPrice().total,
       });
       close();
     } else {
@@ -130,6 +136,7 @@ export function ConfiguratorModal() {
     addonSelections,
     getVariantId,
     getPrice,
+    getStringingTotal,
     stringingMode,
     standardBed,
     hybridBeds,

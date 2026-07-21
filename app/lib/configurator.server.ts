@@ -201,8 +201,73 @@ export async function getAnalyticsSummary(
     total += g._count._all;
   }
 
-  // Only the analytics table needs actual rows (and only shows 50). The dashboard uses
-  // counts only, so it skips this query entirely.
+  // Unique sessions per funnel stage (sessionId is a real column, stamped by the storefront on
+  // every event). Distinct-count per stage → open → add-to-cart → purchase conversion.
+  const uniqueSessions = async (eventType: string) => {
+    const rows = await prisma.analytics.findMany({
+      where: { ...where, eventType, NOT: { sessionId: null } },
+      distinct: ["sessionId"],
+      select: { sessionId: true },
+    });
+    return rows.length;
+  };
+  const [openSessions, cartSessions, purchaseSessions] = await Promise.all([
+    uniqueSessions("modal_open"),
+    uniqueSessions("add_to_cart"),
+    uniqueSessions("purchase"),
+  ]);
+
+  // Revenue + standard/hybrid split come from the lower-volume add_to_cart / purchase rows, whose
+  // metadata carries the numeric `value` and (for carts) the `mode`.
+  const valueRows = await prisma.analytics.findMany({
+    where: { ...where, eventType: { in: ["add_to_cart", "purchase"] } },
+    select: { eventType: true, metadata: true },
+  });
+  let revenueAdded = 0;
+  let revenuePurchased = 0;
+  const byMode: Record<string, number> = {};
+  for (const row of valueRows) {
+    const meta = parseJson<{ value?: number; mode?: string }>(row.metadata, {});
+    const val = Number(meta.value) || 0;
+    if (row.eventType === "add_to_cart") {
+      revenueAdded += val;
+      const mode = meta.mode ?? "unknown";
+      byMode[mode] = (byMode[mode] ?? 0) + 1;
+    } else if (row.eventType === "purchase") {
+      revenuePurchased += val;
+    }
+  }
+
+  // Top racquets by add-to-cart (productId is a column).
+  const racquetGroups = await prisma.analytics.groupBy({
+    by: ["productId", "eventType"],
+    where: {
+      ...where,
+      eventType: { in: ["modal_open", "add_to_cart", "purchase"] },
+      NOT: { productId: null },
+    },
+    _count: { _all: true },
+  });
+  const byRacquetMap = new Map<
+    string,
+    { productId: string; opens: number; addToCarts: number; purchases: number }
+  >();
+  for (const g of racquetGroups) {
+    if (!g.productId) continue;
+    const entry =
+      byRacquetMap.get(g.productId) ??
+      { productId: g.productId, opens: 0, addToCarts: 0, purchases: 0 };
+    if (g.eventType === "modal_open") entry.opens = g._count._all;
+    else if (g.eventType === "add_to_cart") entry.addToCarts = g._count._all;
+    else if (g.eventType === "purchase") entry.purchases = g._count._all;
+    byRacquetMap.set(g.productId, entry);
+  }
+  const byRacquet = Array.from(byRacquetMap.values())
+    .sort((a, b) => b.addToCarts - a.addToCarts)
+    .slice(0, 15);
+
+  // Only the analytics table needs actual rows (and only shows 50). The dashboard uses the
+  // aggregates above, so it skips this query entirely.
   const events = options.includeEvents
     ? await prisma.analytics.findMany({
         where,
@@ -211,5 +276,13 @@ export async function getAnalyticsSummary(
       })
     : [];
 
-  return { events, counts, total };
+  return {
+    events,
+    counts,
+    total,
+    funnel: { openSessions, cartSessions, purchaseSessions },
+    revenue: { added: revenueAdded, purchased: revenuePurchased },
+    byMode,
+    byRacquet,
+  };
 }
