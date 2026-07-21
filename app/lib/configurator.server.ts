@@ -217,26 +217,124 @@ export async function getAnalyticsSummary(
     uniqueSessions("purchase"),
   ]);
 
-  // Revenue + standard/hybrid split come from the lower-volume add_to_cart / purchase rows, whose
-  // metadata carries the numeric `value` and (for carts) the `mode`.
-  const valueRows = await prisma.analytics.findMany({
-    where: { ...where, eventType: { in: ["add_to_cart", "purchase"] } },
-    select: { eventType: true, metadata: true },
-  });
-  let revenueAdded = 0;
-  let revenuePurchased = 0;
-  const byMode: Record<string, number> = {};
-  for (const row of valueRows) {
-    const meta = parseJson<{ value?: number; mode?: string }>(row.metadata, {});
-    const val = Number(meta.value) || 0;
-    if (row.eventType === "add_to_cart") {
-      revenueAdded += val;
-      const mode = meta.mode ?? "unknown";
-      byMode[mode] = (byMode[mode] ?? 0) + 1;
-    } else if (row.eventType === "purchase") {
-      revenuePurchased += val;
-    }
+  // Revenue / AOV / incremental aggregates in the DB (SUM over metadata JSON) so we never fetch the
+  // potentially high-volume order_other rows into JS. `value` is the numeric revenue on each event;
+  // `incremental` (purchases only) is what the configurator added beyond the bare racquet frame.
+  // Raw aggregates read numbers out of the metadata JSON. Wrapped defensively: any unexpected
+  // value should degrade this section to zeros, never 500 the analytics page.
+  let valueAgg: Array<{
+    eventType: string;
+    cnt: number;
+    sum_value: number;
+    sum_incremental: number;
+  }> = [];
+  try {
+    valueAgg = await prisma.$queryRaw<
+      Array<{ eventType: string; cnt: number; sum_value: number; sum_incremental: number }>
+    >`
+      SELECT "eventType",
+             count(*)::int AS cnt,
+             COALESCE(SUM((metadata::jsonb ->> 'value')::numeric), 0)::float8 AS sum_value,
+             COALESCE(SUM((metadata::jsonb ->> 'incremental')::numeric), 0)::float8 AS sum_incremental
+      FROM "Analytics"
+      WHERE "shopId" = ${shopId}
+        AND "createdAt" >= ${since}
+        AND "eventType" IN ('add_to_cart', 'purchase', 'order_other')
+      GROUP BY "eventType"
+    `;
+  } catch (err) {
+    console.error("getAnalyticsSummary: valueAgg query failed:", err);
   }
+  const agg = (t: string) =>
+    valueAgg.find((r) => r.eventType === t) ?? { cnt: 0, sum_value: 0, sum_incremental: 0 };
+  const cart = agg("add_to_cart");
+  const purch = agg("purchase");
+  const other = agg("order_other");
+
+  const configOrders = purch.cnt;
+  const otherOrders = other.cnt;
+  const storeOrders = configOrders + otherOrders;
+  const configAOV = configOrders > 0 ? purch.sum_value / configOrders : 0;
+  const storeRevenue = purch.sum_value + other.sum_value;
+  const storeAOV = storeOrders > 0 ? storeRevenue / storeOrders : 0;
+
+  const revenue = {
+    added: cart.sum_value,
+    purchased: purch.sum_value,
+    incrementalTotal: purch.sum_incremental,
+    incrementalPerOrder: configOrders > 0 ? purch.sum_incremental / configOrders : 0,
+    configAOV,
+    storeAOV,
+    aovLiftPct: storeAOV > 0 ? ((configAOV - storeAOV) / storeAOV) * 100 : 0,
+    revenuePerOpen: openSessions > 0 ? purch.sum_value / openSessions : 0,
+  };
+
+  // Standard/hybrid split of add-to-carts (mode lives in metadata).
+  let modeAgg: Array<{ mode: string | null; count: number }> = [];
+  try {
+    modeAgg = await prisma.$queryRaw<Array<{ mode: string | null; count: number }>>`
+      SELECT (metadata::jsonb ->> 'mode') AS mode, count(*)::int AS count
+      FROM "Analytics"
+      WHERE "shopId" = ${shopId} AND "createdAt" >= ${since} AND "eventType" = 'add_to_cart'
+      GROUP BY mode
+    `;
+  } catch (err) {
+    console.error("getAnalyticsSummary: modeAgg query failed:", err);
+  }
+  const byMode: Record<string, number> = {};
+  for (const r of modeAgg) byMode[r.mode ?? "unknown"] = r.count;
+
+  // Device split per funnel stage (device lives in metadata; aggregated in the DB).
+  let deviceAgg: Array<{ eventType: string; device: string | null; count: number }> = [];
+  try {
+    deviceAgg = await prisma.$queryRaw<
+      Array<{ eventType: string; device: string | null; count: number }>
+    >`
+      SELECT "eventType", (metadata::jsonb ->> 'device') AS device, count(*)::int AS count
+      FROM "Analytics"
+      WHERE "shopId" = ${shopId} AND "createdAt" >= ${since}
+        AND "eventType" IN ('modal_open', 'add_to_cart', 'purchase')
+      GROUP BY "eventType", device
+    `;
+  } catch (err) {
+    console.error("getAnalyticsSummary: deviceAgg query failed:", err);
+  }
+  const byDeviceMap = new Map<string, { device: string; opens: number; addToCarts: number; purchases: number }>();
+  for (const r of deviceAgg) {
+    const d = r.device ?? "unknown";
+    const entry = byDeviceMap.get(d) ?? { device: d, opens: 0, addToCarts: 0, purchases: 0 };
+    if (r.eventType === "modal_open") entry.opens = r.count;
+    else if (r.eventType === "add_to_cart") entry.addToCarts = r.count;
+    else if (r.eventType === "purchase") entry.purchases = r.count;
+    byDeviceMap.set(d, entry);
+  }
+  const byDevice = Array.from(byDeviceMap.values());
+
+  // Daily trend (opens / add-to-carts / purchases per day) for the growth view.
+  let trendRows: Array<{ day: string; eventType: string; count: number }> = [];
+  try {
+    trendRows = await prisma.$queryRaw<Array<{ day: string; eventType: string; count: number }>>`
+      SELECT to_char(date_trunc('day', "createdAt"), 'YYYY-MM-DD') AS day,
+             "eventType",
+             count(*)::int AS count
+      FROM "Analytics"
+      WHERE "shopId" = ${shopId} AND "createdAt" >= ${since}
+        AND "eventType" IN ('modal_open', 'add_to_cart', 'purchase')
+      GROUP BY day, "eventType"
+      ORDER BY day ASC
+    `;
+  } catch (err) {
+    console.error("getAnalyticsSummary: trend query failed:", err);
+  }
+  const trendMap = new Map<string, { day: string; opens: number; addToCarts: number; purchases: number }>();
+  for (const r of trendRows) {
+    const entry = trendMap.get(r.day) ?? { day: r.day, opens: 0, addToCarts: 0, purchases: 0 };
+    if (r.eventType === "modal_open") entry.opens = r.count;
+    else if (r.eventType === "add_to_cart") entry.addToCarts = r.count;
+    else if (r.eventType === "purchase") entry.purchases = r.count;
+    trendMap.set(r.day, entry);
+  }
+  const trend = Array.from(trendMap.values());
 
   // Top racquets by add-to-cart (productId is a column).
   const racquetGroups = await prisma.analytics.groupBy({
@@ -280,9 +378,18 @@ export async function getAnalyticsSummary(
     events,
     counts,
     total,
-    funnel: { openSessions, cartSessions, purchaseSessions },
-    revenue: { added: revenueAdded, purchased: revenuePurchased },
+    funnel: {
+      openSessions,
+      cartSessions,
+      purchaseSessions,
+      configOrders,
+      otherOrders,
+      storeOrders,
+    },
+    revenue,
     byMode,
+    byDevice,
     byRacquet,
+    trend,
   };
 }
