@@ -781,11 +781,81 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   background: #fff;
 }
 
+/* Mobile-only elements — hidden at desktop widths. The section heading replaces the desktop
+   hybrid header row (which stacks into disconnected bars on phones), and the action bar keeps
+   Total + Add to Cart permanently visible at the bottom of the full-screen modal. */
+.proto-desk-hcol-mhead {
+  display: none;
+}
+
+.proto-desk-mobile-atcbar {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid #e5e5e5;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.proto-desk-mobile-atcbar-total {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.proto-desk-mobile-atcbar-total span {
+  font-size: 10px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.proto-desk-mobile-atcbar-total strong {
+  font-size: 17px;
+  color: #1a1a1a;
+}
+
+.proto-desk-mobile-atcbar .proto-desk-atc-btn {
+  flex: 1;
+  margin-top: 0;
+}
+
 @media (max-width: 767px) {
   .proto-desk-std-body,
-  .proto-desk-hybrid-headers,
   .proto-desk-hybrid-body {
     grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  /* The desktop hybrid header row is three column captions; stacked on a phone they become three
+     disconnected full-width bars sitting above ALL the content, attached to nothing. Hide the row —
+     each stacked section carries its own inline heading instead. */
+  .proto-desk-hybrid-headers {
+    display: none;
+  }
+
+  .proto-desk-hcol-mhead {
+    display: block;
+    align-self: flex-start;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    padding-bottom: 3px;
+    border-bottom: 2px solid currentColor;
+  }
+
+  .proto-desk-hcol-mhead--m {
+    color: #185fa5;
+  }
+
+  .proto-desk-hcol-mhead--c {
+    color: #6d28d9;
+  }
+
+  .proto-desk-hcol-mhead--sum {
+    color: #6b7280;
   }
 
   .proto-desk-catalog,
@@ -794,9 +864,36 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
     border-bottom: 1px solid #e5e5e5;
   }
 
-  .proto-desk-hcol-head--sum {
-    border-top: none;
-    border-bottom: 1px solid #e5e5e5;
+  /* Compact chrome — the modal is full-screen on phones, so vertical pixels are the budget. */
+  .proto-desk-header {
+    padding: 10px 14px;
+    gap: 10px;
+  }
+
+  .proto-desk-header h2 {
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .proto-desk-mode-btn {
+    padding: 5px 12px;
+    font-size: 11px;
+  }
+
+  /* Racquet strip: the product name gets its own row, then search stretches beside the price on
+     the second row — instead of all three fighting for one cramped line. */
+  .proto-desk-rq-strip {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+
+  .proto-desk-rq-strip > div:first-child {
+    flex-basis: 100%;
+  }
+
+  .proto-desk-search-wrap {
+    flex: 1 1 auto;
   }
 
   /* Below the grid breakpoint everything stacks in one column, so the sidebar is no longer a
@@ -804,6 +901,17 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   .proto-desk-config-panel,
   .proto-desk-hcol-sum {
     position: static;
+  }
+
+  /* The bottom action bar owns Add to Cart on mobile — hide the in-panel button, which otherwise
+     sits at the very end of a long scroll (and would render the action twice). */
+  .proto-desk-config-panel .proto-desk-atc-btn,
+  .proto-desk-hcol-sum .proto-desk-atc-btn {
+    display: none;
+  }
+
+  .proto-desk-mobile-atcbar {
+    display: flex;
   }
 }
 

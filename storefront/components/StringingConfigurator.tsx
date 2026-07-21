@@ -666,6 +666,7 @@ function HybridDesktop({
 
       <div className="proto-desk-hybrid-body">
         <div className="proto-desk-hcol">
+          <div className="proto-desk-hcol-mhead proto-desk-hcol-mhead--m">Mains string</div>
           <StringCatalog
             catalog={catalog}
             selectedId={mainsNorm.stringId}
@@ -679,6 +680,7 @@ function HybridDesktop({
         </div>
 
         <div className="proto-desk-hcol">
+          <div className="proto-desk-hcol-mhead proto-desk-hcol-mhead--c">Crosses string</div>
           <StringCatalog
             catalog={catalog}
             selectedId={crossesNorm.stringId}
@@ -692,6 +694,7 @@ function HybridDesktop({
         </div>
 
         <div className="proto-desk-hcol-sum">
+          <div className="proto-desk-hcol-mhead proto-desk-hcol-mhead--sum">Order summary</div>
           <SelectedCard
             accent="mains"
             eyebrow="Mains"
@@ -772,6 +775,7 @@ export function StringingConfigurator({
   const mode = useConfiguratorStore((s) => s.stringingMode);
   const cartError = useConfiguratorStore((s) => s.cartError);
   const racquetPrice = useConfiguratorStore((s) => s.racquetPrice);
+  const total = useConfiguratorStore((s) => s.getStringingTotal());
   const [search, setSearch] = useState("");
 
   const catalog = useMemo(
@@ -877,6 +881,25 @@ export function StringingConfigurator({
           {cartError}
         </div>
       )}
+
+      {/* Mobile-only bottom action bar (hidden ≥768px via CSS): keeps Total + Add to Cart
+          permanently visible in the full-screen phone modal, where the in-panel button would
+          otherwise sit at the very end of a long scroll. Works for both modes — the store total
+          covers standard and hybrid. */}
+      <div className="proto-desk-mobile-atcbar">
+        <div className="proto-desk-mobile-atcbar-total">
+          <span>Total</span>
+          <strong>${total.toFixed(2)}</strong>
+        </div>
+        <button
+          type="button"
+          onClick={onAddToCart}
+          disabled={isAddingToCart}
+          className="proto-desk-atc-btn disabled:opacity-60"
+        >
+          {isAddingToCart ? "Adding..." : "Add to Cart"}
+        </button>
+      </div>
     </div>
   );
 }
