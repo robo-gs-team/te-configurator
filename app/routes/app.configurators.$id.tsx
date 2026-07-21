@@ -34,6 +34,10 @@ import {
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
 import { runAfterResponse } from "~/lib/after-response.server";
 import {
+  detectConfiguratorOverlap,
+  type ConfiguratorOverlap,
+} from "~/lib/configurator-overlap.server";
+import {
   applyConfiguratorInventoryPolicy,
   auditLinkedInventoryPolicy,
   auditRecommendedStringsCoverage,
@@ -249,7 +253,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // plus every option group's product sources below (submitted as groupCollections_<id> /
     // groupProducts_<id> hidden fields — see OptionGroupSourcePicker).
     const allGroups = existing.steps.flatMap((step) => step.optionGroups);
-    const [inventoryResult] = await Promise.all([
+    const [inventoryResult, , overlapWarnings] = await Promise.all([
       needsInventoryRun
         ? applyConfiguratorInventoryPolicy(admin, linkedIds, {
             allowRacquets: allowOutOfStockRacquets,
@@ -275,6 +279,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           });
         }),
       ),
+      // Read-only, best-effort: does this racquet assignment now overlap with another
+      // configurator's? Never blocks the save (see detectConfiguratorOverlap's own try/catch);
+      // just surfaces a warning banner so an ambiguous Configure-button collision is visible
+      // immediately instead of discovered later on the storefront.
+      detectConfiguratorOverlap(admin, shop.id, params.id!, {
+        productIds,
+        collectionIds,
+        excludedProductIds,
+      }),
     ]);
 
     // Persist the updated per-variant backup so a later revert can restore exact originals.
@@ -302,6 +315,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             strings: inventoryResult.strings,
           }
         : null,
+      overlapWarnings: overlapWarnings.length > 0 ? overlapWarnings : null,
     });
   }
 
@@ -617,6 +631,7 @@ export default function EditConfigurator() {
     reset?: { updated: number; racquets: number; strings: number };
     rebuilt?: boolean;
     recommendedAudit?: RecommendedStringsAudit;
+    overlapWarnings?: ConfiguratorOverlap[] | null;
   }>();
   const inventoryResult =
     navigation.state === "idle" ? actionData?.inventory ?? null : null;
@@ -625,6 +640,8 @@ export default function EditConfigurator() {
   const snapshotRebuilt = navigation.state === "idle" ? actionData?.rebuilt ?? false : false;
   const recommendedAudit =
     navigation.state === "idle" ? actionData?.recommendedAudit ?? null : null;
+  const overlapWarnings =
+    navigation.state === "idle" ? actionData?.overlapWarnings ?? null : null;
   const [confirmingReset, setConfirmingReset] = useState(false);
   // Which maintenance action (if any) is currently running — drives the "Working…" indicator so
   // the merchant knows to wait (these hit Shopify across the whole catalog and can take a minute).
@@ -1162,6 +1179,26 @@ export default function EditConfigurator() {
                 {formatVariantCount(resetResult.strings, "string")}. Both out-of-stock overrides
                 are now off.
               </p>
+            </Banner>
+          </Layout.Section>
+        )}
+        {overlapWarnings && overlapWarnings.length > 0 && (
+          <Layout.Section>
+            <Banner tone="warning" title="Racquet(s) also assigned to another configurator">
+              <BlockStack gap="200">
+                <Text as="p">
+                  Saved — but the Configure button on the racquet(s) below may not show
+                  reliably, since more than one configurator now claims them and only one can
+                  win. Use each configurator's "Excluded products" field to remove the overlap,
+                  or adjust the collections/products assigned above.
+                </Text>
+                {overlapWarnings.map((overlap) => (
+                  <Text as="p" key={overlap.configuratorId}>
+                    Shared with <strong>{overlap.configuratorName}</strong>:{" "}
+                    {overlap.products.map((p) => p.title).join(", ")}
+                  </Text>
+                ))}
+              </BlockStack>
             </Banner>
           </Layout.Section>
         )}

@@ -12,7 +12,7 @@ type ShopifyAdmin = {
   ) => Promise<Response>;
 };
 
-const configuratorInclude = {
+export const configuratorInclude = {
   steps: {
     orderBy: { sortOrder: "asc" as const },
     include: {
