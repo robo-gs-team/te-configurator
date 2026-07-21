@@ -29,6 +29,10 @@ api_version = "2025-01"
   topics = ["app/scopes_update"]
   uri = "/webhooks/app/scopes_update"
 
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/webhooks/orders/create"
+
 [app_proxy]
 url = "https://te-configurator.vercel.app/proxy"
 subpath = "proto-configurator"
