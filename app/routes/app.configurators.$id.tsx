@@ -44,7 +44,6 @@ import {
   resetLinkedInventoryPolicyToDeny,
   type InventoryAudit,
   type InventoryPolicyBackup,
-  type InventoryPolicyResult,
   type RecommendedStringsAudit,
 } from "~/lib/inventory.server";
 import { ensureTensionMetafieldDefinitions } from "~/lib/product-metafields.server";
@@ -248,65 +247,60 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       wasStrings ||
       Object.keys(existingBackup).length > 0;
 
-    // The inventory-policy call (Shopify) and the per-group source updates (DB) are independent,
-    // so run them concurrently. One save covers everything on the page: general settings above,
-    // plus every option group's product sources below (submitted as groupCollections_<id> /
-    // groupProducts_<id> hidden fields — see OptionGroupSourcePicker).
+    // Per-group source updates (DB-only, fast) still run synchronously — one save covers general
+    // settings above plus every option group's product sources below (submitted as
+    // groupCollections_<id> / groupProducts_<id> hidden fields — see OptionGroupSourcePicker).
     const allGroups = existing.steps.flatMap((step) => step.optionGroups);
-    const [inventoryResult] = await Promise.all([
-      needsInventoryRun
-        ? applyConfiguratorInventoryPolicy(admin, linkedIds, {
-            allowRacquets: allowOutOfStockRacquets,
-            allowStrings: allowOutOfStockStrings,
-            backup: existingBackup,
-          })
-        : Promise.resolve<InventoryPolicyResult | null>(null),
-      Promise.all(
-        allGroups.map((group) => {
-          const groupCollectionIds = form.get(`groupCollections_${group.id}`);
-          const groupProductIds = form.get(`groupProducts_${group.id}`);
-          if (groupCollectionIds === null && groupProductIds === null) return null;
-          return prisma.optionGroup.update({
-            where: { id: group.id },
-            data: {
-              collectionIds: JSON.stringify(
-                parseCollectionIdsField(String(groupCollectionIds ?? "[]")),
-              ),
-              productIds: JSON.stringify(
-                parseProductIdsField(String(groupProductIds ?? "[]")),
-              ),
-            },
-          });
-        }),
-      ),
-    ]);
+    await Promise.all(
+      allGroups.map((group) => {
+        const groupCollectionIds = form.get(`groupCollections_${group.id}`);
+        const groupProductIds = form.get(`groupProducts_${group.id}`);
+        if (groupCollectionIds === null && groupProductIds === null) return null;
+        return prisma.optionGroup.update({
+          where: { id: group.id },
+          data: {
+            collectionIds: JSON.stringify(
+              parseCollectionIdsField(String(groupCollectionIds ?? "[]")),
+            ),
+            productIds: JSON.stringify(
+              parseProductIdsField(String(groupProductIds ?? "[]")),
+            ),
+          },
+        });
+      }),
+    );
 
-    // Persist the updated per-variant backup so a later revert can restore exact originals.
-    if (inventoryResult) {
-      await prisma.configurator.update({
-        where: { id: params.id },
-        data: {
-          inventoryPolicyBackup: JSON.stringify(inventoryResult.backup),
-        } as Parameters<typeof prisma.configurator.update>[0]["data"],
+    // Deferred to AFTER the response — this reads + writes Shopify inventoryPolicy across every
+    // variant of every linked racquet AND every product in the linked string collection(s), which
+    // can be hundreds of variants and has always run synchronously here. For a configurator with a
+    // large string catalog this was long enough to blow past the function's execution limit,
+    // making Save fail outright (reported live). Same deferred pattern as the snapshot rebuild
+    // below; "Check current policy" (audit_inventory) remains the on-demand way to confirm it
+    // landed instead of the old inline confirmation banner.
+    if (needsInventoryRun) {
+      runAfterResponse(async () => {
+        const inventoryResult = await applyConfiguratorInventoryPolicy(admin, linkedIds, {
+          allowRacquets: allowOutOfStockRacquets,
+          allowStrings: allowOutOfStockStrings,
+          backup: existingBackup,
+        });
+        await prisma.configurator.update({
+          where: { id: params.id },
+          data: {
+            inventoryPolicyBackup: JSON.stringify(inventoryResult.backup),
+          } as Parameters<typeof prisma.configurator.update>[0]["data"],
+        });
       });
     }
 
     // B1: rebuild the enriched snapshot (best-effort) + bust the cache so shoppers see the change.
     // Deferred to AFTER the response so the merchant's Save returns immediately instead of blocking
     // on a full catalog re-enrichment (the biggest source of perceived Save slowness). The DB write
-    // + inventory policy above already ran synchronously, so the admin UI is correct on reload; the
-    // snapshot (shopper-facing only) finishes rebuilding a few seconds later in the background.
+    // above already ran synchronously, so the admin UI is correct on reload; the snapshot
+    // (shopper-facing only) and the inventory-policy reconciliation above both finish a few seconds
+    // later in the background.
     runAfterResponse(() => refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop));
-    return json({
-      success: true,
-      inventory: inventoryResult
-        ? {
-            updated: inventoryResult.updated,
-            racquets: inventoryResult.racquets,
-            strings: inventoryResult.strings,
-          }
-        : null,
-    });
+    return json({ success: true });
   }
 
   // Read-only, on-demand maintenance: does this configurator's racquet assignment overlap with
@@ -634,18 +628,17 @@ export default function EditConfigurator() {
   latestSnapshotRef.current = buildSnapshot();
   const isDirty = JSON.stringify(latestSnapshotRef.current) !== JSON.stringify(savedSnapshot);
 
-  // After a save, surface how many racquet vs string variants the out-of-stock toggle updated,
-  // plus results of the read-only audit and the reset-to-Deny maintenance tools.
+  // After a save, surface results of the read-only audit and the reset-to-Deny maintenance tools.
+  // The out-of-stock toggle's own inventory-policy reconciliation now runs in the background after
+  // Save returns (it can touch hundreds of variants), so it has no immediate inline result anymore
+  // — use "Check current policy" below to confirm it landed.
   const actionData = useActionData<{
-    inventory?: { updated: number; racquets: number; strings: number } | null;
     audit?: InventoryAudit;
     reset?: { updated: number; racquets: number; strings: number };
     rebuilt?: boolean;
     recommendedAudit?: RecommendedStringsAudit;
     overlapWarnings?: ConfiguratorOverlap[] | null;
   }>();
-  const inventoryResult =
-    navigation.state === "idle" ? actionData?.inventory ?? null : null;
   const auditResult = navigation.state === "idle" ? actionData?.audit ?? null : null;
   const resetResult = navigation.state === "idle" ? actionData?.reset ?? null : null;
   const snapshotRebuilt = navigation.state === "idle" ? actionData?.rebuilt ?? false : false;
@@ -714,17 +707,6 @@ export default function EditConfigurator() {
               <p>
                 The storefront will not load this configurator until <strong>Active</strong> is
                 enabled and you click <strong>Save changes</strong> below.
-              </p>
-            </Banner>
-          </Layout.Section>
-        )}
-        {inventoryResult && (
-          <Layout.Section>
-            <Banner tone={inventoryResult.updated > 0 ? "success" : "warning"}>
-              <p>
-                {inventoryResult.updated > 0
-                  ? `Out-of-stock setting applied in Shopify: ${formatVariantCount(inventoryResult.racquets, "racquet")} and ${formatVariantCount(inventoryResult.strings, "string")} updated. String variants cover every product in the linked string collection(s), so that count is usually the large one.`
-                  : "No variants were updated — everything linked was already at the target setting, or no racquet/string collections/products are linked above."}
               </p>
             </Banner>
           </Layout.Section>
@@ -899,7 +881,7 @@ export default function EditConfigurator() {
                     label={<FieldLabel facing="setup">Allow ordering out-of-stock racquets</FieldLabel>}
                     checked={allowOutOfStockRacquets}
                     onChange={setAllowOutOfStockRacquets}
-                    helpText="Lets shoppers configure and buy even when the racquet is out of stock. On save this sets the Shopify inventory policy to “Continue selling when out of stock” on every variant of every linked racquet — a real Shopify setting that applies to ALL sales channels. Turning it off restores each of THOSE variants to exactly the setting it had before this app changed it (it won't clobber SKUs that were already “continue selling” for other reasons)."
+                    helpText="Lets shoppers configure and buy even when the racquet is out of stock. On save this sets the Shopify inventory policy to “Continue selling when out of stock” on every variant of every linked racquet — a real Shopify setting that applies to ALL sales channels. Turning it off restores each of THOSE variants to exactly the setting it had before this app changed it (it won't clobber SKUs that were already “continue selling” for other reasons). Applies in the background a few seconds after Save — use “Check current policy” below to confirm."
                   />
                   {allowOutOfStockRacquets ? (
                     <input type="hidden" name="allowOutOfStockRacquets" value="on" />
@@ -908,7 +890,7 @@ export default function EditConfigurator() {
                     label={<FieldLabel facing="setup">Allow ordering out-of-stock strings</FieldLabel>}
                     checked={allowOutOfStockStrings}
                     onChange={setAllowOutOfStockStrings}
-                    helpText="Same as above, but for strings (the shop provides them). This covers EVERY variant of every product in the linked string collection(s) — so it can be hundreds of variants across all sales channels. Turning it off restores each variant this app changed back to its exact prior setting."
+                    helpText="Same as above, but for strings (the shop provides them). This covers EVERY variant of every product in the linked string collection(s) — so it can be hundreds of variants across all sales channels. Turning it off restores each variant this app changed back to its exact prior setting. Applies in the background a few seconds after Save — use “Check current policy” below to confirm."
                   />
                   {allowOutOfStockStrings ? (
                     <input type="hidden" name="allowOutOfStockStrings" value="on" />
