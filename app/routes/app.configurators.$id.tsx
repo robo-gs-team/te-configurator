@@ -253,7 +253,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // plus every option group's product sources below (submitted as groupCollections_<id> /
     // groupProducts_<id> hidden fields — see OptionGroupSourcePicker).
     const allGroups = existing.steps.flatMap((step) => step.optionGroups);
-    const [inventoryResult, , overlapWarnings] = await Promise.all([
+    const [inventoryResult] = await Promise.all([
       needsInventoryRun
         ? applyConfiguratorInventoryPolicy(admin, linkedIds, {
             allowRacquets: allowOutOfStockRacquets,
@@ -279,15 +279,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           });
         }),
       ),
-      // Read-only, best-effort: does this racquet assignment now overlap with another
-      // configurator's? Never blocks the save (see detectConfiguratorOverlap's own try/catch);
-      // just surfaces a warning banner so an ambiguous Configure-button collision is visible
-      // immediately instead of discovered later on the storefront.
-      detectConfiguratorOverlap(admin, shop.id, params.id!, {
-        productIds,
-        collectionIds,
-        excludedProductIds,
-      }),
     ]);
 
     // Persist the updated per-variant backup so a later revert can restore exact originals.
@@ -315,8 +306,28 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             strings: inventoryResult.strings,
           }
         : null,
-      overlapWarnings: overlapWarnings.length > 0 ? overlapWarnings : null,
     });
+  }
+
+  // Read-only, on-demand maintenance: does this configurator's racquet assignment overlap with
+  // another configurator's? Moved off the regular Save path (where it briefly lived) — resolving
+  // collection membership for every configurator in the shop is real synchronous Shopify API work,
+  // and Save must never be blocked by that (this app's Save-speed work earlier deliberately kept
+  // Shopify calls off this exact path). Triggered explicitly via its own button instead.
+  if (intent === "check_overlap") {
+    const productIds = parseProductIdsField((existing as { productIds?: string }).productIds ?? "[]");
+    const collectionIds = parseCollectionIdsField(
+      (existing as { collectionIds?: string }).collectionIds ?? "[]",
+    );
+    const excludedProductIds = parseProductIdsField(
+      (existing as { excludedProductIds?: string }).excludedProductIds ?? "[]",
+    );
+    const overlapWarnings = await detectConfiguratorOverlap(admin, shop.id, params.id!, {
+      productIds,
+      collectionIds,
+      excludedProductIds,
+    });
+    return json({ overlapWarnings: overlapWarnings.length > 0 ? overlapWarnings : null });
   }
 
   // Read-only maintenance: report how many linked variants are currently "continue" vs "deny".
@@ -652,12 +663,14 @@ export default function EditConfigurator() {
     "rebuild_snapshot",
     "reset_inventory",
     "audit_recommended",
+    "check_overlap",
   ].includes(runningIntent);
   const maintenanceLabel: Record<string, string> = {
     audit_inventory: "Checking current policy",
     rebuild_snapshot: "Rebuilding snapshot from live Shopify",
     reset_inventory: "Resetting inventory policy",
     audit_recommended: "Checking recommended-strings coverage",
+    check_overlap: "Checking for racquet overlaps with other configurators",
   };
 
   // Once this form's own submission completes, treat the just-submitted values as the new
@@ -1187,10 +1200,10 @@ export default function EditConfigurator() {
             <Banner tone="warning" title="Racquet(s) also assigned to another configurator">
               <BlockStack gap="200">
                 <Text as="p">
-                  Saved — but the Configure button on the racquet(s) below may not show
-                  reliably, since more than one configurator now claims them and only one can
-                  win. Use each configurator's "Excluded products" field to remove the overlap,
-                  or adjust the collections/products assigned above.
+                  The Configure button on the racquet(s) below may not show reliably, since
+                  more than one configurator now claims them and only one can win. Use each
+                  configurator's "Excluded products" field to remove the overlap, or adjust
+                  the collections/products assigned above.
                 </Text>
                 {overlapWarnings.map((overlap) => (
                   <Text as="p" key={overlap.configuratorId}>
@@ -1304,6 +1317,18 @@ export default function EditConfigurator() {
                     }
                   >
                     Check recommended-strings coverage
+                  </Button>
+                </Form>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="check_overlap" />
+                  <Button
+                    submit
+                    loading={
+                      navigation.state !== "idle" &&
+                      navigation.formData?.get("intent") === "check_overlap"
+                    }
+                  >
+                    Check for racquet overlaps with other configurators
                   </Button>
                 </Form>
                 {confirmingReset ? (
