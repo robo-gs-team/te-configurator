@@ -24,6 +24,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({ theme });
 };
 
+/** Mobile string count: a small positive integer. Clamp to 1–20 (20 = the desktop count, the
+ *  sensible ceiling) and fall back to the 6 default on junk input. */
+function clampMobileCount(raw: FormDataEntryValue | null): number {
+  const n = parseInt(String(raw ?? ""), 10);
+  if (!Number.isFinite(n)) return 6;
+  return Math.min(20, Math.max(1, n));
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
@@ -43,6 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       modalAccent: String(form.get("modalAccent") || "#6366f1"),
       overlayBlur: parseInt(String(form.get("overlayBlur") || "12"), 10) || 12,
       fontFamily: String(form.get("fontFamily") || "system-ui"),
+      mobileStringCount: clampMobileCount(form.get("mobileStringCount")),
     },
     update: {
       buttonEnabled: form.get("buttonEnabled") === "on",
@@ -55,6 +64,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       modalAccent: String(form.get("modalAccent") || "#6366f1"),
       overlayBlur: parseInt(String(form.get("overlayBlur") || "12"), 10) || 12,
       fontFamily: String(form.get("fontFamily") || "system-ui"),
+      mobileStringCount: clampMobileCount(form.get("mobileStringCount")),
     },
   });
 
@@ -78,6 +88,9 @@ export default function ThemeSettings() {
   const [modalAccent, setModalAccent] = useState(theme.modalAccent);
   const [overlayBlur, setOverlayBlur] = useState(String(theme.overlayBlur));
   const [fontFamily, setFontFamily] = useState(theme.fontFamily);
+  const [mobileStringCount, setMobileStringCount] = useState(
+    String((theme as { mobileStringCount?: number }).mobileStringCount ?? 6),
+  );
 
   return (
     <Page title="Theme settings" backAction={{ content: "Dashboard", url: "/app" }}>
@@ -151,6 +164,17 @@ export default function ThemeSettings() {
                     name="fontFamily"
                     value={fontFamily}
                     onChange={setFontFamily}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label="Strings shown on mobile"
+                    name="mobileStringCount"
+                    value={mobileStringCount}
+                    onChange={setMobileStringCount}
+                    type="number"
+                    min={1}
+                    max={20}
+                    helpText="How many strings the picker shows before “Show more” on phones (1–20). Desktop always shows 20."
                     autoComplete="off"
                   />
                 </FormLayout>

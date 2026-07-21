@@ -118,6 +118,8 @@ export type StorefrontTheme = {
   modalAccent: string;
   overlayBlur: number;
   fontFamily: string;
+  // Strings shown before "Show more" on mobile (≤767px). Desktop is always 20.
+  mobileStringCount: number;
 };
 
 export type SelectionState = Record<string, string>;
@@ -151,6 +153,7 @@ export function serializeConfiguratorPayload(
     modalAccent: "#6366f1",
     overlayBlur: 12,
     fontFamily: "system-ui",
+    mobileStringCount: 6,
   };
 
   return {
@@ -234,6 +237,8 @@ export function serializeConfiguratorPayload(
           modalAccent: theme.modalAccent,
           overlayBlur: theme.overlayBlur,
           fontFamily: theme.fontFamily,
+          mobileStringCount:
+            (theme as { mobileStringCount?: number }).mobileStringCount ?? 6,
         }
       : defaultTheme,
     tensionRange,
