@@ -24,7 +24,6 @@ import {
 } from "./configure-placement";
 import { findThemeStringingBlock } from "./theme-placement";
 import { refreshThemeBuyBoxHidden, setThemeBuyBoxHidden } from "./theme-buybox";
-import { refreshLegacyConfiguratorHidden } from "./legacy-configurator";
 
 /** Default dropdown value that means "show the configurator", used when none is configured. */
 const DEFAULT_TRIGGER = "Strung";
@@ -232,15 +231,6 @@ export function applyStringingPageGate(wrapper?: HTMLElement) {
   document.documentElement.dataset.protoStringingState = showConfigure
     ? "strung"
     : "unstrung";
-
-  // The legacy Liquid configurator's own script re-shows itself on "Strung" (its original
-  // behaviour, predating this app) by setting its own inline style — which clobbers our earlier
-  // hide rather than merely fighting it. Re-assert the hide on every gate application (i.e. every
-  // Strung/Unstrung change), not just once at page load. Only for products this app actually
-  // owns (`proto-configurator-linked`) — never touches a page this app isn't assigned to.
-  if (showConfigure && document.documentElement.classList.contains("proto-configurator-linked")) {
-    refreshLegacyConfiguratorHidden();
-  }
 
   for (const gateWrapper of wrappers) {
     const actions = getConfiguratorActions(gateWrapper);

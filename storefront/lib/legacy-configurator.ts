@@ -11,6 +11,15 @@
  * Same "record original inline display, hide with !important, restore exactly" approach as
  * theme-buybox.ts, for the same reason: non-destructive and safely reversible if the app is ever
  * disabled or the assignment changes.
+ *
+ * SELF-HEALING: the legacy widget has its OWN logic that reveals itself when "Strung" is
+ * selected (its original designed behaviour, predating this app), and does so by setting its
+ * own inline `style.display` directly — which REPLACES our `!important`-flagged value rather
+ * than merely fighting it. Re-hiding only in response to a `change` event lost this race
+ * whenever the widget's own reveal ran asynchronously (a framework reactivity tick, a timeout,
+ * etc.) after our re-hide already fired. A MutationObserver watching the hidden element(s)
+ * catches the ACTUAL DOM mutation the instant it happens, regardless of what triggered it or
+ * how it's timed, and immediately clobbers it back — so the widget can never win.
  */
 
 type HiddenRecord = {
@@ -20,8 +29,44 @@ type HiddenRecord = {
 
 let hiddenRecords: HiddenRecord[] = [];
 let isHidden = false;
+let observer: MutationObserver | null = null;
 
 const LEGACY_SELECTOR = "product-configurator, .product-configurator";
+
+/** Force `el` fully hidden, recording its pre-hide inline display exactly once. */
+function forceHide(el: HTMLElement) {
+  if (!hiddenRecords.some((r) => r.el === el)) {
+    hiddenRecords.push({ el, display: el.style.display });
+  }
+  if (el.style.display === "none") return;
+  el.style.setProperty("display", "none", "important");
+  el.setAttribute("aria-hidden", "true");
+  el.dataset.protoLegacyHidden = "true";
+}
+
+/** Re-hide every currently-matching legacy element that isn't already hidden. */
+function reapplyHideToAllMatches() {
+  document.querySelectorAll<HTMLElement>(LEGACY_SELECTOR).forEach(forceHide);
+}
+
+/** Start watching for the legacy widget re-showing itself (attribute change or re-render). */
+function startObserving() {
+  if (observer) return;
+  observer = new MutationObserver(() => {
+    if (isHidden) reapplyHideToAllMatches();
+  });
+  observer.observe(document.body, {
+    attributes: true,
+    attributeFilter: ["style", "class", "hidden"],
+    childList: true,
+    subtree: true,
+  });
+}
+
+function stopObserving() {
+  observer?.disconnect();
+  observer = null;
+}
 
 /**
  * Hide or restore the legacy Liquid configurator on the current page.
@@ -33,18 +78,13 @@ export function setLegacyConfiguratorHidden(hidden: boolean) {
   isHidden = hidden;
 
   if (hidden) {
-    hiddenRecords = Array.from(document.querySelectorAll<HTMLElement>(LEGACY_SELECTOR)).map(
-      (el) => {
-        const display = el.style.display;
-        el.style.setProperty("display", "none", "important");
-        el.setAttribute("aria-hidden", "true");
-        el.dataset.protoLegacyHidden = "true";
-        return { el, display };
-      },
-    );
+    hiddenRecords = [];
+    reapplyHideToAllMatches();
+    startObserving();
     return;
   }
 
+  stopObserving();
   hiddenRecords.forEach(({ el, display }) => {
     if (display) {
       el.style.display = display;
@@ -55,21 +95,4 @@ export function setLegacyConfiguratorHidden(hidden: boolean) {
     delete el.dataset.protoLegacyHidden;
   });
   hiddenRecords = [];
-}
-
-/**
- * Force-reassert the hide against the CURRENT DOM, even if `setLegacyConfiguratorHidden(true)`
- * was already called.
- *
- * The legacy `<product-configurator>` widget has its own internal logic that reveals itself when
- * the shopper selects "Strung" (its original designed behaviour, from before this app existed).
- * When it does, it sets its own inline `style.display` directly — which clears our previously
- * `!important`-flagged value rather than merely fighting it — silently undoing our hide. Because
- * `setLegacyConfiguratorHidden(true)` no-ops once `isHidden` is already true, nothing normally
- * catches this. Call this instead whenever the shopper's Strung/Unstrung selection changes (i.e.
- * whenever the widget has had a chance to re-show itself) to force our hide back on every time.
- */
-export function refreshLegacyConfiguratorHidden() {
-  isHidden = false;
-  setLegacyConfiguratorHidden(true);
 }
