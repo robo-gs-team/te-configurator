@@ -22,6 +22,12 @@
     data-proto-v2-standalone
     {{ block.shopify_attributes }}
   >
+    {%- comment -%}
+      Wrapped in the theme's own .add_to_cart_holder so it inherits the exact spacing/context of
+      the buy-box buttons (the old Configure button used this same holder), which makes it sit
+      flush with the native Add to Cart when the merchant places this block directly under it.
+    {%- endcomment -%}
+    <div class="add_to_cart_holder proto-v2-holder">
     <button
       type="button"
       class="proto-v2-configure-trigger button accent single-add-to-cart-button"
@@ -52,6 +58,7 @@
       {% endif %}
       <span class="single-add-to-cart-button--text proto-v2-label">{{ button_label }}</span>
     </button>
+    </div>
 
     {% if block.settings.subtext != blank %}
       <p class="proto-v2-standalone-subtext">{{ block.settings.subtext }}</p>
@@ -63,6 +70,13 @@
       margin: 12px 0;
       width: 100%;
       max-width: 100%;
+    }
+
+    /* Keep the theme's holder full-width and reset any inherited top margin so our wrapper
+       controls the spacing (avoids a double gap from both .add_to_cart_holder and the wrapper). */
+    .proto-v2-holder {
+      width: 100%;
+      margin: 0;
     }
 
     /* Inherit the theme's button look; only enforce full width + icon layout. */
