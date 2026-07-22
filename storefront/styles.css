@@ -1,6 +1,26 @@
+/* Bind this stylesheet to the storefront-scoped Tailwind config (storefront/** only, Preflight
+   disabled, utilities scoped to #proto-configurator-root). This @config directive is authoritative
+   — Tailwind honors it over whatever postcss.config points at — which is why it's the reliable way
+   to keep the admin app's Tailwind (global Preflight + app-wide content) out of this public bundle. */
+@config "../tailwind.storefront.config.ts";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Modal-scoped replacement for Tailwind Preflight (which we disable globally). Applies the resets
+   the modal's utility classes assume — box-sizing + zeroed borders with a solid default style so
+   `border`/`border-*` utilities render — but ONLY inside the configurator's own React root, so the
+   merchant's storefront is never touched. */
+#proto-configurator-root,
+#proto-configurator-root *,
+#proto-configurator-root *::before,
+#proto-configurator-root *::after {
+  box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
+  border-color: currentColor;
+}
 
 .proto-configurator-root {
   font-family: Inter, system-ui, -apple-system, sans-serif;

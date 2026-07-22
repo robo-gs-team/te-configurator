@@ -32,6 +32,10 @@ export default defineConfig({
     sourcemap: false,
   },
   css: {
+    // The storefront Tailwind scoping (storefront/** content, Preflight OFF, utilities scoped to
+    // #proto-configurator-root) is bound via the `@config` directive at the top of
+    // storefront/styles.css — which Tailwind honors over this postcss config — so the standard
+    // root postcss.config.js is fine here. See tailwind.storefront.config.ts for the full why.
     postcss: "./postcss.config.js",
   },
 });
