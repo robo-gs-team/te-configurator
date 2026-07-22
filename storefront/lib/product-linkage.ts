@@ -18,7 +18,6 @@
 import { normalizeProductId } from "./product-id";
 import { restoreAddToCartButtons } from "./configure-placement";
 import { setThemeBuyBoxHidden } from "./theme-buybox";
-import { setLegacyConfiguratorHidden } from "./legacy-configurator";
 
 /**
  * Resolve the current page's Shopify product id from the most reliable source available.
@@ -59,9 +58,13 @@ export function markProductLinkagePending() {
 
 /**
  * Mark the product as linked to an active configurator: the Configure button is allowed
- * to show. Called when the proxy returns a configurator for this product. Also hides the
- * merchant's legacy Liquid stringing configurator on this product, if present, so shoppers
- * never see two competing stringing UIs on the same racquet.
+ * to show. Called when the proxy returns a configurator for this product.
+ *
+ * Deliberately does NOT touch the merchant's legacy configurator. The legacy configurator
+ * rewrites its own buy-button container from scratch on every stringing change, so any attempt
+ * to suppress it reactively is an unwinnable DOM tug-of-war (and risks breaking the merchant's
+ * live checkout). The v2 experience is instead surfaced as its own separate, additive
+ * "Configure Racquet" button that never interferes with the existing configurator.
  */
 export function markProductLinked() {
   document.documentElement.classList.remove(
@@ -69,7 +72,6 @@ export function markProductLinked() {
     "proto-configurator-unlinked",
   );
   document.documentElement.classList.add("proto-configurator-linked");
-  setLegacyConfiguratorHidden(true);
 }
 
 /**
@@ -77,8 +79,7 @@ export function markProductLinked() {
  * is hidden via `display:none`. Also undoes any buy-box suppression — since there's no
  * configurator here, the theme's native Add to Cart / Buy Now must be restored so the
  * product remains purchasable normally — and restores the merchant's legacy Liquid stringing
- * configurator, in case a prior init on this same page (e.g. a `shopify:section:load` re-run)
- * had hidden it.
+ * configurator.
  */
 export function markProductUnlinked() {
   document.documentElement.classList.remove(
@@ -88,5 +89,4 @@ export function markProductUnlinked() {
   document.documentElement.classList.add("proto-configurator-unlinked");
   setThemeBuyBoxHidden(false);
   restoreAddToCartButtons();
-  setLegacyConfiguratorHidden(false);
 }

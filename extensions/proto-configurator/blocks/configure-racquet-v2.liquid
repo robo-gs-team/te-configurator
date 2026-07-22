@@ -1,0 +1,141 @@
+{% comment %}
+  Proto Configurator — v2 standalone "Configure Racquet" button.
+
+  Additive and fully self-contained. This block:
+    - renders its own button (in whatever position the merchant places it via Theme Editor),
+    - stays hidden until the app confirms this racquet is assigned to a v2 configurator
+      (via the html.proto-configurator-linked / -unlinked / -pending classes the app toggles),
+    - opens the v2 configurator modal on click (through the app's global click handler).
+
+  It NEVER relocates into the buy box, hides the native Add to Cart, participates in the
+  Strung/Unstrung gate, or touches the merchant's existing (legacy) configurator. That legacy
+  configurator rewrites its own buy-button container on every stringing change, so the only safe
+  way to run v2 alongside it during testing is to stay completely out of its way — which is
+  exactly what this block does. Presence of [data-proto-v2-standalone] also tells the app's JS to
+  skip all of its DOM surgery for the page (see entry.tsx#isStandaloneV2Mode).
+{% endcomment %}
+
+{% if block.settings.show_button %}
+  <div
+    class="proto-configurator-button-wrapper proto-v2-standalone-wrapper"
+    data-proto-v2-standalone
+    {{ block.shopify_attributes }}
+  >
+    <button
+      type="button"
+      class="proto-v2-configure-trigger"
+      data-proto-configurator-trigger
+      data-proto-v2-standalone
+      data-product-id="{{ product.id }}"
+      style="
+        background-color: {{ block.settings.button_bg | default: '#c8102e' }};
+        color: {{ block.settings.button_text | default: '#ffffff' }};
+        border-radius: {{ block.settings.button_radius | default: 6 }}px;
+      "
+    >
+      {{ block.settings.button_label | default: 'Configure Racquet' }}
+    </button>
+    {% if block.settings.subtext != blank %}
+      <p class="proto-v2-standalone-subtext">{{ block.settings.subtext }}</p>
+    {% endif %}
+  </div>
+
+  <style>
+    .proto-v2-standalone-wrapper {
+      margin: 12px 0;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .proto-v2-configure-trigger {
+      width: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      padding: 14px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 48px;
+      letter-spacing: 0.01em;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .proto-v2-configure-trigger:hover {
+      transform: scale(1.01);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    }
+
+    .proto-v2-standalone-subtext {
+      margin: 6px 0 0;
+      font-size: 12px;
+      line-height: 1.4;
+      text-align: center;
+      opacity: 0.7;
+    }
+
+    /* Hidden until the app confirms this racquet is assigned to a v2 configurator. Mirrors the
+       app embed's linkage rules so the button never flashes before the linkage check resolves. */
+    html.proto-configurator-pending .proto-v2-standalone-wrapper {
+      visibility: hidden;
+    }
+
+    html.proto-configurator-unlinked .proto-v2-standalone-wrapper {
+      display: none !important;
+    }
+  </style>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Configure Racquet (v2)",
+  "target": "section",
+  "enabled_on": {
+    "templates": ["product"]
+  },
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "show_button",
+      "label": "Show Configure Racquet button",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "button_label",
+      "label": "Button label",
+      "default": "Configure Racquet"
+    },
+    {
+      "type": "text",
+      "id": "subtext",
+      "label": "Subtext under button",
+      "default": "v2.0 experience — try it out",
+      "info": "Small line shown under the button. Leave blank to hide it."
+    },
+    {
+      "type": "color",
+      "id": "button_bg",
+      "label": "Button background",
+      "default": "#c8102e"
+    },
+    {
+      "type": "color",
+      "id": "button_text",
+      "label": "Button text color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "range",
+      "id": "button_radius",
+      "label": "Button border radius",
+      "min": 0,
+      "max": 32,
+      "step": 2,
+      "default": 6,
+      "unit": "px"
+    }
+  ]
+}
+{% endschema %}
