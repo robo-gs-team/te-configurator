@@ -2,6 +2,7 @@ import { clearConfigureError, showConfigureError } from "./lib/configure-feedbac
 import { normalizeProductId } from "./lib/product-id";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import { initStringingPageGate } from "./lib/stringing-page-gate";
+import { initV2StandaloneGate } from "./lib/v2-standalone-gate";
 import {
   getPageProductId,
   markProductLinked,
@@ -436,6 +437,7 @@ async function initStorefrontUi() {
   // renders in its own place and only needs the linkage class (applied above) to become visible,
   // plus the global click handler to open the modal.
   if (isStandaloneV2Mode()) {
+    initV2StandaloneGate();
     initButtons();
     return;
   }
@@ -456,8 +458,9 @@ async function initStorefrontUi() {
 function boot() {
   invalidateThemeBlockCache();
   initConfigureClickDelegation();
-  // In standalone v2 mode the gate must never run — it reads/writes global stringing state and
-  // can restore the buy box, and we want zero interaction with the merchant's existing page.
+  // In standalone v2 mode the invasive gate must never run — it reads/writes global stringing
+  // state and can restore the buy box. initV2StandaloneGate is the safe, read-only replacement
+  // (see initStorefrontUi, called once linkage confirms the button should exist at all).
   if (!isStandaloneV2Mode()) initStringingPageGate();
   void initStorefrontUi();
   initShareRestore();

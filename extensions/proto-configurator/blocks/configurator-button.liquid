@@ -119,6 +119,13 @@
     html.proto-configurator-unlinked .proto-v2-standalone-wrapper {
       display: none !important;
     }
+
+    /* Applied by v2-standalone-gate.ts: hidden while the shopper's Strung/Unstrung choice is on
+       Unstrung, since there's nothing to configure for an unstrung racquet. Read-only against
+       that control — never written to, never relocated, never hidden. */
+    .proto-v2-standalone-wrapper.proto-v2-hide-unstrung {
+      display: none !important;
+    }
   </style>
 {% endif %}
 
