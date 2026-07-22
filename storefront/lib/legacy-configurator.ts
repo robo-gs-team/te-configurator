@@ -56,3 +56,20 @@ export function setLegacyConfiguratorHidden(hidden: boolean) {
   });
   hiddenRecords = [];
 }
+
+/**
+ * Force-reassert the hide against the CURRENT DOM, even if `setLegacyConfiguratorHidden(true)`
+ * was already called.
+ *
+ * The legacy `<product-configurator>` widget has its own internal logic that reveals itself when
+ * the shopper selects "Strung" (its original designed behaviour, from before this app existed).
+ * When it does, it sets its own inline `style.display` directly — which clears our previously
+ * `!important`-flagged value rather than merely fighting it — silently undoing our hide. Because
+ * `setLegacyConfiguratorHidden(true)` no-ops once `isHidden` is already true, nothing normally
+ * catches this. Call this instead whenever the shopper's Strung/Unstrung selection changes (i.e.
+ * whenever the widget has had a chance to re-show itself) to force our hide back on every time.
+ */
+export function refreshLegacyConfiguratorHidden() {
+  isHidden = false;
+  setLegacyConfiguratorHidden(true);
+}

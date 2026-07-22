@@ -24,6 +24,7 @@ import {
 } from "./configure-placement";
 import { findThemeStringingBlock } from "./theme-placement";
 import { refreshThemeBuyBoxHidden, setThemeBuyBoxHidden } from "./theme-buybox";
+import { refreshLegacyConfiguratorHidden } from "./legacy-configurator";
 
 /** Default dropdown value that means "show the configurator", used when none is configured. */
 const DEFAULT_TRIGGER = "Strung";
@@ -100,36 +101,23 @@ function getStringingVocabulary(wrapper?: HTMLElement | null): Set<string> {
   return vocab;
 }
 
-/** The product form that carries the theme's real variant controls (Strung/Unstrung radios or select). */
-function findProductForm(): ParentNode {
+/** The product form that carries the theme's real variant controls, when it has them. */
+function findProductForm(): ParentNode | null {
   return (
     document.querySelector("product-form form") ??
     document.querySelector('form[action*="/cart/add"]') ??
-    document
+    null
   );
 }
 
 /**
- * Read the shopper's ACTUAL Strung/Unstrung choice from the theme's real variant control, rather
- * than the app's own decorative dropdown.
- *
- * The Strung/Unstrung choice is a real Shopify variant, so the theme renders a native control for
- * it (a `<select>` of variant options, or a radio group). We locate that control WITHOUT relying
- * on fragile label text: any control whose option values include this configurator's stringing
- * vocabulary (e.g. "strung"/"unstrung") IS the stringing control. We then read its current value.
- * The app's own `[data-proto-stringing-select]` is deliberately skipped so we never read it here.
- *
- * @returns The normalized current stringing value ("strung"/"unstrung"), or null if no real
- *   variant control was found (in which case the caller falls back to the app dropdown).
+ * Scan `root` for a Strung/Unstrung control (a `<select>` of variant options, or a radio group)
+ * identified by vocabulary, and return its current normalized value.
+ * @returns The normalized current value, or null if no matching control was found in `root`.
  */
-function getRealVariantStringingValue(wrapper?: HTMLElement | null): string | null {
-  const vocab = getStringingVocabulary(wrapper);
-  if (vocab.size === 0) return null;
-
-  const form = findProductForm();
-
+function scanRootForStringingValue(root: ParentNode, vocab: Set<string>): string | null {
   // 1) Native <select> of variant options (Dawn-style variant picker, or the theme's own field).
-  for (const select of Array.from(form.querySelectorAll<HTMLSelectElement>("select"))) {
+  for (const select of Array.from(root.querySelectorAll<HTMLSelectElement>("select"))) {
     if (select.closest(".proto-configurator-button-wrapper")) continue;
     if (select.matches("[data-proto-stringing-select]")) continue;
     const optionValues = Array.from(select.options).map((o) =>
@@ -145,7 +133,7 @@ function getRealVariantStringingValue(wrapper?: HTMLElement | null): string | nu
   // 2) Radio-button variant picker: group radios by name, find the group whose values are the
   //    stringing vocabulary, and read the checked one.
   const radios = Array.from(
-    form.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    root.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
   ).filter((r) => !r.closest(".proto-configurator-button-wrapper"));
   const groups = new Map<string, HTMLInputElement[]>();
   for (const radio of radios) {
@@ -163,6 +151,38 @@ function getRealVariantStringingValue(wrapper?: HTMLElement | null): string | nu
   }
 
   return null;
+}
+
+/**
+ * Read the shopper's ACTUAL Strung/Unstrung choice from the theme's real variant control, rather
+ * than the app's own decorative dropdown.
+ *
+ * The Strung/Unstrung choice is a real Shopify variant, so the theme renders a native control for
+ * it (a `<select>` of variant options, or a radio group). We locate that control WITHOUT relying
+ * on fragile label text: any control whose option values include this configurator's stringing
+ * vocabulary (e.g. "strung"/"unstrung") IS the stringing control. We then read its current value.
+ * The app's own `[data-proto-stringing-select]` is deliberately skipped so we never read it here.
+ *
+ * Scoped to the add-to-cart form FIRST (avoids matching unrelated selects elsewhere on the page),
+ * then widened to the whole document — some themes (this app has previously had to special-case
+ * "Vision and similar themes", see theme-placement.ts) render their native stringing field
+ * completely outside the cart form, so a form-only scan silently misses it.
+ *
+ * @returns The normalized current stringing value ("strung"/"unstrung"), or null if no real
+ *   variant control was found anywhere on the page (in which case the caller falls back to the
+ *   app dropdown).
+ */
+function getRealVariantStringingValue(wrapper?: HTMLElement | null): string | null {
+  const vocab = getStringingVocabulary(wrapper);
+  if (vocab.size === 0) return null;
+
+  const form = findProductForm();
+  if (form) {
+    const inForm = scanRootForStringingValue(form, vocab);
+    if (inForm) return inForm;
+  }
+
+  return scanRootForStringingValue(document, vocab);
 }
 
 /**
@@ -213,6 +233,15 @@ export function applyStringingPageGate(wrapper?: HTMLElement) {
     ? "strung"
     : "unstrung";
 
+  // The legacy Liquid configurator's own script re-shows itself on "Strung" (its original
+  // behaviour, predating this app) by setting its own inline style — which clobbers our earlier
+  // hide rather than merely fighting it. Re-assert the hide on every gate application (i.e. every
+  // Strung/Unstrung change), not just once at page load. Only for products this app actually
+  // owns (`proto-configurator-linked`) — never touches a page this app isn't assigned to.
+  if (showConfigure && document.documentElement.classList.contains("proto-configurator-linked")) {
+    refreshLegacyConfiguratorHidden();
+  }
+
   for (const gateWrapper of wrappers) {
     const actions = getConfiguratorActions(gateWrapper);
     if (!actions) continue;
@@ -223,6 +252,10 @@ export function applyStringingPageGate(wrapper?: HTMLElement) {
     if (!showConfigure) {
       actions.classList.remove("proto-configurator-actions--inline");
       actions.style.removeProperty("display");
+      // A prior failed-fetch error banner (showConfigureError) is appended as a sibling of
+      // `actions` inside the wrapper, so hiding `actions` alone doesn't hide it — it would
+      // otherwise linger visibly under a hidden/absent button after switching to Unstrung.
+      gateWrapper.querySelector("[data-proto-configure-error]")?.remove();
     }
 
     syncConfigureButtonSlot(gateWrapper, showConfigure);
