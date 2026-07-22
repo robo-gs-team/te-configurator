@@ -10,8 +10,12 @@
   classes the app toggles).
 
   By default the button inherits the theme's own primary-button styling (the same look as the
-  native Add to Cart) via the theme's `button accent` classes, so it matches the store. A gear
-  icon sits before the label and rotates slightly on hover. Colours can be overridden per-block.
+  native Add to Cart) via the theme's `button accent` classes, so it matches the store — but its
+  own layout (width/display/gap) is forced with !important, since some theme CSS targets those
+  same classes with a narrower layout meant for a different original context (this block isn't
+  wrapped in the theme's .add_to_cart_holder for that reason — that wrapper shrank the button
+  when placed directly under Quantity/Add to cart). A gear icon sits before the label and rotates
+  slightly on hover. Colours can be overridden per-block.
 {% endcomment %}
 
 {% assign button_label = block.settings.button_label | default: 'Configure Racquet' %}
@@ -22,12 +26,6 @@
     data-proto-v2-standalone
     {{ block.shopify_attributes }}
   >
-    {%- comment -%}
-      Wrapped in the theme's own .add_to_cart_holder so it inherits the exact spacing/context of
-      the buy-box buttons (the old Configure button used this same holder), which makes it sit
-      flush with the native Add to Cart when the merchant places this block directly under it.
-    {%- endcomment -%}
-    <div class="add_to_cart_holder proto-v2-holder">
     <button
       type="button"
       class="proto-v2-configure-trigger button accent single-add-to-cart-button"
@@ -58,7 +56,6 @@
       {% endif %}
       <span class="single-add-to-cart-button--text proto-v2-label">{{ button_label }}</span>
     </button>
-    </div>
 
     {% if block.settings.subtext != blank %}
       <p class="proto-v2-standalone-subtext">{{ block.settings.subtext }}</p>
@@ -72,20 +69,20 @@
       max-width: 100%;
     }
 
-    /* Keep the theme's holder full-width and reset any inherited top margin so our wrapper
-       controls the spacing (avoids a double gap from both .add_to_cart_holder and the wrapper). */
-    .proto-v2-holder {
-      width: 100%;
-      margin: 0;
-    }
-
-    /* Inherit the theme's button look; only enforce full width + icon layout. */
+    /* Inherit the theme's button look (color, font, radius, border) via the theme's own button
+       classes; force layout ourselves with !important, since this block can be placed inside
+       containers whose own CSS targets those same theme classes with higher specificity than a
+       plain class rule here (that's what shrank the button when placed under Quantity/Add to
+       cart — a theme rule sized for a different original layout was winning the cascade). */
     .proto-v2-configure-trigger {
-      width: 100%;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 8px !important;
+      width: 100% !important;
+      max-width: none !important;
+      flex: 1 1 100% !important;
+      white-space: nowrap;
       cursor: pointer;
     }
 
@@ -149,7 +146,7 @@
       "type": "text",
       "id": "subtext",
       "label": "Subtext under button",
-      "default": "v2.0 experience — try it out",
+      "default": "New: build your string setup in seconds",
       "info": "Small line shown under the button. Leave blank to hide it."
     },
     {
