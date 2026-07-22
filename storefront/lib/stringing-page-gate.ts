@@ -81,6 +81,91 @@ export function isStrungSelection(
 }
 
 /**
+ * Build the set of stringing option values ("strung", "unstrung", …) that identify a control as
+ * "the stringing selector". Derived from the gate's trigger value plus the app dropdown's own
+ * option list — so it always matches the exact vocabulary this merchant configured, no hardcoding.
+ */
+function getStringingVocabulary(wrapper?: HTMLElement | null): Set<string> {
+  const vocab = new Set<string>();
+  vocab.add(normalize(getStringingTriggerValue(wrapper)));
+
+  const appSelect =
+    wrapper?.querySelector<HTMLSelectElement>("[data-proto-stringing-select]") ??
+    document.querySelector<HTMLSelectElement>("[data-proto-stringing-select]");
+  appSelect?.querySelectorAll("option").forEach((opt) => {
+    const value = normalize(opt.value || opt.textContent || "");
+    if (value) vocab.add(value);
+  });
+
+  return vocab;
+}
+
+/** The product form that carries the theme's real variant controls (Strung/Unstrung radios or select). */
+function findProductForm(): ParentNode {
+  return (
+    document.querySelector("product-form form") ??
+    document.querySelector('form[action*="/cart/add"]') ??
+    document
+  );
+}
+
+/**
+ * Read the shopper's ACTUAL Strung/Unstrung choice from the theme's real variant control, rather
+ * than the app's own decorative dropdown.
+ *
+ * The Strung/Unstrung choice is a real Shopify variant, so the theme renders a native control for
+ * it (a `<select>` of variant options, or a radio group). We locate that control WITHOUT relying
+ * on fragile label text: any control whose option values include this configurator's stringing
+ * vocabulary (e.g. "strung"/"unstrung") IS the stringing control. We then read its current value.
+ * The app's own `[data-proto-stringing-select]` is deliberately skipped so we never read it here.
+ *
+ * @returns The normalized current stringing value ("strung"/"unstrung"), or null if no real
+ *   variant control was found (in which case the caller falls back to the app dropdown).
+ */
+function getRealVariantStringingValue(wrapper?: HTMLElement | null): string | null {
+  const vocab = getStringingVocabulary(wrapper);
+  if (vocab.size === 0) return null;
+
+  const form = findProductForm();
+
+  // 1) Native <select> of variant options (Dawn-style variant picker, or the theme's own field).
+  for (const select of Array.from(form.querySelectorAll<HTMLSelectElement>("select"))) {
+    if (select.closest(".proto-configurator-button-wrapper")) continue;
+    if (select.matches("[data-proto-stringing-select]")) continue;
+    const optionValues = Array.from(select.options).map((o) =>
+      normalize(o.value || o.textContent || ""),
+    );
+    if (!optionValues.some((v) => vocab.has(v))) continue;
+    const current = normalize(
+      select.value || select.selectedOptions[0]?.textContent || "",
+    );
+    if (vocab.has(current)) return current;
+  }
+
+  // 2) Radio-button variant picker: group radios by name, find the group whose values are the
+  //    stringing vocabulary, and read the checked one.
+  const radios = Array.from(
+    form.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+  ).filter((r) => !r.closest(".proto-configurator-button-wrapper"));
+  const groups = new Map<string, HTMLInputElement[]>();
+  for (const radio of radios) {
+    const list = groups.get(radio.name) ?? [];
+    list.push(radio);
+    groups.set(radio.name, list);
+  }
+  for (const group of groups.values()) {
+    if (!group.some((r) => vocab.has(normalize(r.value)))) continue;
+    const checked = group.find((r) => r.checked);
+    if (checked) {
+      const value = normalize(checked.value);
+      if (vocab.has(value)) return value;
+    }
+  }
+
+  return null;
+}
+
+/**
  * @returns true unless the wrapper explicitly opts out via `data-hide-theme-buybox="false"`.
  *   Controls whether selecting "Strung" also hides the theme's Buy now buttons.
  */
@@ -114,11 +199,15 @@ export function applyStringingPageGate(wrapper?: HTMLElement) {
   }
 
   const primary = wrappers[0];
-  const select = getActiveStringingSelect(primary);
   const trigger = getStringingTriggerValue(primary);
-  const showConfigure = select
-    ? isStrungSelection(select.value, trigger)
-    : true;
+
+  // The shopper's REAL variant choice (Strung/Unstrung is a Shopify variant) is authoritative.
+  // Only fall back to the app's own decorative dropdown when no real variant control exists —
+  // that dropdown defaults to "Strung" and does NOT reflect the selected variant, which is
+  // exactly what used to leave Configure showing on an Unstrung racquet.
+  const realValue = getRealVariantStringingValue(primary);
+  const value = realValue ?? getActiveStringingSelect(primary)?.value ?? null;
+  const showConfigure = value != null ? isStrungSelection(value, trigger) : true;
 
   document.documentElement.dataset.protoStringingState = showConfigure
     ? "strung"
@@ -220,6 +309,12 @@ export function initStringingPageGate() {
   if (!gateListenersBound) {
     gateListenersBound = true;
     window.addEventListener("pageshow", () => applyStringingPageGate());
+    // Selecting the real Strung/Unstrung variant fires a `change` on the theme's variant control
+    // (a native <select> or radio), which is NOT our own dropdown, so the per-select bindings
+    // above never see it. Re-apply the gate on ANY change in the product area — applyStringingPageGate
+    // reads the real variant itself and is cheap/idempotent, so this reliably tracks variant changes
+    // even on themes whose markup our per-control bindings don't recognise.
+    document.addEventListener("change", () => applyStringingPageGate());
   }
 
   applyStringingPageGate();
