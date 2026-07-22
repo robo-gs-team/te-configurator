@@ -1,6 +1,14 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "@vercel/remix";
 import { json } from "@vercel/remix";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import {
+  Form,
+  isRouteErrorResponse,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+  useRouteError,
+} from "@remix-run/react";
+import { boundary } from "@shopify/shopify-app-remix/server";
 import {
   Badge,
   Banner,
@@ -1353,3 +1361,64 @@ export default function EditConfigurator() {
     </Page>
   );
 }
+
+/**
+ * Friendly error screen for this route. Auth/redirect responses (401/403/410) are delegated to
+ * Shopify's own boundary so the embedded app's transparent re-authentication still works — we
+ * only render our own UI for the cases a merchant can actually act on: a deleted configurator
+ * (404) or a temporary hiccup that a refresh clears (everything else). This replaces the raw
+ * framework error page some merchants were hitting when opening a configurator.
+ */
+export function ErrorBoundary() {
+  const error = useRouteError();
+
+  if (
+    isRouteErrorResponse(error) &&
+    (error.status === 401 || error.status === 403 || error.status === 410)
+  ) {
+    return boundary.error(error);
+  }
+
+  const notFound = isRouteErrorResponse(error) && error.status === 404;
+
+  return (
+    <Page
+      title={notFound ? "Configurator not found" : "Something went wrong"}
+      backAction={{ content: "Configurators", url: "/app/configurators" }}
+    >
+      <Layout>
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                {notFound
+                  ? "This configurator couldn't be found"
+                  : "We couldn't load this configurator"}
+              </Text>
+              <Text as="p" tone="subdued">
+                {notFound
+                  ? "It may have been deleted, or the link is out of date. Head back to your configurators list to pick another one."
+                  : "This is usually a temporary connection hiccup — refreshing the page normally fixes it and your work is safe."}
+              </Text>
+              <InlineStack gap="200">
+                {notFound ? (
+                  <Button variant="primary" url="/app/configurators">
+                    Back to configurators
+                  </Button>
+                ) : (
+                  <Button variant="primary" onClick={() => window.location.reload()}>
+                    Refresh the page
+                  </Button>
+                )}
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
+
+export const headers: HeadersFunction = (headersArgs) => {
+  return boundary.headers(headersArgs);
+};
