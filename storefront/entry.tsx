@@ -250,14 +250,30 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
  * button — prevents acting on a click that landed on a visually-hidden button.
  */
 function isConfigureTriggerVisible(trigger: HTMLElement): boolean {
-  if (document.documentElement.dataset.protoStringingState === "unstrung") {
-    return false;
+  // The v2 "Configure Racquet" standalone button isn't part of the Strung/Unstrung gate and is
+  // never wrapped in a gated actions container, so those checks don't apply to it — only its own
+  // computed visibility matters.
+  const standalone = trigger.hasAttribute("data-proto-v2-standalone");
+  if (!standalone) {
+    if (document.documentElement.dataset.protoStringingState === "unstrung") {
+      return false;
+    }
+    const actions = trigger.closest("[data-proto-configurator-actions]");
+    if (actions?.hasAttribute("hidden")) return false;
   }
-  const actions = trigger.closest("[data-proto-configurator-actions]");
-  if (actions?.hasAttribute("hidden")) return false;
   if (trigger.hasAttribute("hidden")) return false;
   const style = window.getComputedStyle(trigger);
   return style.display !== "none" && style.visibility !== "hidden" && style.pointerEvents !== "none";
+}
+
+/**
+ * True when a v2 standalone "Configure Racquet" button is on the page. In this mode the app is
+ * purely additive: it shows/hides its own button via linkage and opens the modal on click, and
+ * does NONE of the buy-box relocation, Strung/Unstrung gating, or legacy-configurator suppression
+ * — so it cannot interfere with the merchant's existing configurator or native Add to Cart.
+ */
+function isStandaloneV2Mode(): boolean {
+  return Boolean(document.querySelector("[data-proto-v2-standalone]"));
 }
 
 /**
@@ -415,6 +431,15 @@ async function initStorefrontUi() {
   configuratorCache.set(productId, configurator);
   markProductLinked();
 
+  // Standalone v2 mode: the "Configure Racquet" button is fully self-contained. Skip every piece
+  // of DOM surgery (fallback injection, buy-box relocation, Strung/Unstrung gate) — the block
+  // renders in its own place and only needs the linkage class (applied above) to become visible,
+  // plus the global click handler to open the modal.
+  if (isStandaloneV2Mode()) {
+    initButtons();
+    return;
+  }
+
   if (!document.querySelector(".proto-configurator-button-wrapper")) {
     injectProductPageButton();
   }
@@ -431,7 +456,9 @@ async function initStorefrontUi() {
 function boot() {
   invalidateThemeBlockCache();
   initConfigureClickDelegation();
-  initStringingPageGate();
+  // In standalone v2 mode the gate must never run — it reads/writes global stringing state and
+  // can restore the buy box, and we want zero interaction with the merchant's existing page.
+  if (!isStandaloneV2Mode()) initStringingPageGate();
   void initStorefrontUi();
   initShareRestore();
 }
@@ -444,7 +471,7 @@ if (document.readyState === "loading") {
 
 document.addEventListener("shopify:section:load", () => {
   invalidateThemeBlockCache();
-  initStringingPageGate();
+  if (!isStandaloneV2Mode()) initStringingPageGate();
   void initStorefrontUi();
 });
 
