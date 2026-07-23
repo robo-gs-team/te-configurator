@@ -29,8 +29,13 @@ declare global {
       appProxyUrl: string;
       productId: string;
       shopDomain?: string;
+      channel?: string;
       modalUrl?: string;
     };
+    /** Linkage fetch kicked off inline by the embed liquid during HTML parse (before this
+     *  deferred bundle runs), so the network round-trip overlaps page load instead of following
+     *  it. Consumed (once) by fetchConfiguratorAttempt. */
+    ProtoConfiguratorEarlyFetch?: Promise<Response>;
     Shopify?: {
       shop?: string;
     };
@@ -55,6 +60,51 @@ declare global {
 // Cache configurator data per productId so the Configure button click is instant
 // (avoids a second API round-trip after initStorefrontUi already fetched it).
 const configuratorCache = new Map<string, StorefrontConfigurator>();
+
+/**
+ * sessionStorage cache of the proxy payload, so REPEAT views of a product this session (back
+ * button, browsing several racquets, variant-change section reloads) show the Configure button
+ * instantly instead of waiting on the App Proxy round-trip every single time. The cached copy is
+ * served immediately and silently revalidated in the background (see initStorefrontUi), so it can
+ * never go stale for longer than one page view + TTL. Bump the version on payload shape changes.
+ */
+const SESSION_CACHE_VERSION = "v1";
+const SESSION_CACHE_TTL_MS = 5 * 60 * 1000; // matches the proxy's own Cache-Control max-age
+
+function sessionCacheKey(productId: string): string {
+  return `proto_cfg_${SESSION_CACHE_VERSION}:${getShopDomain()}:${normalizeProductId(productId)}`;
+}
+
+function readSessionCache(productId: string): StorefrontConfigurator | null {
+  try {
+    const raw = window.sessionStorage.getItem(sessionCacheKey(productId));
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as { at: number; configurator: StorefrontConfigurator };
+    if (!entry?.configurator || Date.now() - entry.at > SESSION_CACHE_TTL_MS) return null;
+    return entry.configurator;
+  } catch {
+    return null; // unavailable storage / corrupt entry — behave as a miss
+  }
+}
+
+function writeSessionCache(productId: string, configurator: StorefrontConfigurator): void {
+  try {
+    window.sessionStorage.setItem(
+      sessionCacheKey(productId),
+      JSON.stringify({ at: Date.now(), configurator }),
+    );
+  } catch {
+    // quota/unavailable — cache is best-effort
+  }
+}
+
+function clearSessionCache(productId: string): void {
+  try {
+    window.sessionStorage.removeItem(sessionCacheKey(productId));
+  } catch {
+    // best-effort
+  }
+}
 
 // In-flight promise for the lazy modal bundle so concurrent triggers share one load.
 let modalLoadPromise: Promise<ProtoConfiguratorModalApi> | null = null;
@@ -117,16 +167,63 @@ function getProxyUrl(): string {
   return window.ProtoConfiguratorSettings?.appProxyUrl ?? "/apps/proto-configurator";
 }
 
+/** Per-attempt fetch timeout. Short on purpose: a hung attempt should fail fast and RETRY
+ *  (see fetchConfigurator) instead of blocking the Configure button behind one 15s stall. */
+const FETCH_ATTEMPT_TIMEOUT_MS = 7000;
+/** Backoff before retry attempts 2 and 3. Transient App Proxy blips / serverless cold starts
+ *  are routine; a quick retry converts most of them into a success instead of a dead button. */
+const FETCH_RETRY_DELAYS_MS = [400, 1500];
+
+/** One HTTP attempt. Uses the embed's early-fetch promise (kicked off inline in
+ *  configurator-embed.liquid during HTML parse, before this deferred bundle even runs) for the
+ *  first attempt when available — the response is typically already in flight or done by now. */
+async function fetchConfiguratorAttempt(url: string): Promise<Response> {
+  const early = window.ProtoConfiguratorEarlyFetch;
+  if (early) {
+    // Consume once; a failed early fetch must not poison retries.
+    window.ProtoConfiguratorEarlyFetch = undefined;
+    let timer = 0;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(
+        () => reject(new DOMException("timeout", "AbortError")),
+        FETCH_ATTEMPT_TIMEOUT_MS,
+      );
+    });
+    try {
+      return await Promise.race([early, timeout]);
+    } finally {
+      // Prevent a late, unobserved rejection from the loser of the race.
+      window.clearTimeout(timer);
+    }
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FETCH_ATTEMPT_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      credentials: "same-origin",
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 /**
  * Fetch the configurator for a product from the App Proxy (`GET /product/:id`).
  *
- * Aborts after 15s, requires a JSON response, and maps every failure mode to a shopper-facing
- * `error` string. A null configurator with no error means "no configurator linked".
- * @returns `{ configurator }` on success, or `{ configurator: null, error }` otherwise.
+ * Reliability: up to 3 attempts (7s timeout each, short backoff between) — retrying on network
+ * errors, timeouts, 5xx, and non-JSON responses (all transient failure modes of the
+ * Shopify-proxy→serverless path). Definitive answers (success, or a 2xx/4xx JSON body saying
+ * not-linked/inactive) are never retried.
+ *
+ * @returns `{ configurator }` on success, or `{ configurator: null, error, code? }`. `code` is
+ *   set for DEFINITIVE negative answers ("not_linked" / "inactive") so callers can distinguish
+ *   "this product really has no configurator" from a transient fetch failure.
  */
 async function fetchConfigurator(
   productId: string,
-): Promise<{ configurator: StorefrontConfigurator | null; error?: string }> {
+): Promise<{ configurator: StorefrontConfigurator | null; error?: string; code?: string }> {
   const proxyUrl = getProxyUrl();
   const normalizedId = normalizeProductId(productId);
   const shop = getShopDomain();
@@ -137,62 +234,61 @@ async function fetchConfigurator(
   const queryString = query.toString();
   const url = `${proxyUrl}/product/${normalizedId}${queryString ? `?${queryString}` : ""}`;
 
-  try {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 15000);
+  let lastError = "Unable to reach the configurator. Please refresh the page and try again.";
 
-    const res = await fetch(url, {
-      credentials: "same-origin",
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
-    window.clearTimeout(timeout);
+  for (let attempt = 0; attempt <= FETCH_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => window.setTimeout(r, FETCH_RETRY_DELAYS_MS[attempt - 1]));
+    }
+    try {
+      const res = await fetchConfiguratorAttempt(url);
+      const contentType = res.headers.get("content-type") ?? "";
+      const raw = await res.text();
 
-    const contentType = res.headers.get("content-type") ?? "";
-    const raw = await res.text();
+      // 5xx or non-JSON (e.g. an HTML error page from the proxy) — transient; retry.
+      if (res.status >= 500 || !contentType.includes("application/json")) {
+        lastError = "Unable to load configurator. Please refresh the page and try again.";
+        continue;
+      }
 
-    if (!contentType.includes("application/json")) {
+      const data = JSON.parse(raw) as {
+        configurator?: StorefrontConfigurator | null;
+        error?: string;
+        code?: string;
+        productId?: string;
+      };
+
+      if (!res.ok) {
+        // Definitive 4xx — retrying won't change the answer.
+        return {
+          configurator: null,
+          error: data.error ?? `Configurator request failed (${res.status})`,
+          code: data.code,
+        };
+      }
+
+      if (data.configurator) {
+        return { configurator: data.configurator };
+      }
+
+      // 2xx with no configurator: a definitive "not linked / inactive" answer.
       return {
         configurator: null,
-        error: "Unable to load configurator. Please refresh the page and try again.",
+        error:
+          data.error ??
+          "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
+        code: data.code ?? "not_linked",
       };
-    }
-
-    const data = JSON.parse(raw) as {
-      configurator?: StorefrontConfigurator | null;
-      error?: string;
-      code?: string;
-      productId?: string;
-    };
-
-    if (!res.ok) {
-      return {
-        configurator: null,
-        error: data.error ?? `Configurator request failed (${res.status})`,
-      };
-    }
-
-    if (data.configurator) {
-      return { configurator: data.configurator };
-    }
-
-    if (data.error) {
-      return { configurator: null, error: data.error };
-    }
-
-    return {
-      configurator: null,
-      error: "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
-    };
-  } catch (err) {
-    const aborted = err instanceof DOMException && err.name === "AbortError";
-    return {
-      configurator: null,
-      error: aborted
+    } catch (err) {
+      const aborted = err instanceof DOMException && err.name === "AbortError";
+      lastError = aborted
         ? "Configurator request timed out. Please refresh the page and try again."
-        : "Unable to reach the configurator. Please refresh the page and try again.",
-    };
+        : "Unable to reach the configurator. Please refresh the page and try again.";
+      // network error / timeout — transient; retry.
+    }
   }
+
+  return { configurator: null, error: lastError };
 }
 
 /** Toggle the Configure button's loading state (disabled + busy + wait cursor) during fetch. */
@@ -401,34 +497,8 @@ function initShareRestore() {
  * mark linked, inject the fallback button if needed, schedule placement, and init the gate.
  * This is what decides whether the Configure button appears on this product page.
  */
-async function initStorefrontUi() {
-  const productId = getPageProductId();
-  if (!productId) {
-    initButtons();
-    return;
-  }
-
-  markProductLinkagePending();
-  // Reuse the per-product cache when this re-runs on a `shopify:section:load` for the same
-  // product — avoids a redundant round trip to the App Proxy on every section reload.
-  const cached = configuratorCache.get(productId);
-  const { configurator } = cached
-    ? { configurator: cached }
-    : await fetchConfigurator(productId);
-  if (!configurator) {
-    markProductUnlinked();
-    return;
-  }
-
-  // Merchant-wide kill switch (Theme Settings > "Enable customize button globally").
-  // Treat "disabled" the same as "no configurator" — hides the button and restores the
-  // theme's native Add to Cart everywhere, regardless of any individual configurator's state.
-  if (configurator.theme.buttonEnabled === false) {
-    markProductUnlinked();
-    return;
-  }
-
-  // Cache so the Configure button click is instant — no second round-trip
+/** Apply the full "linked" UI state for a resolved configurator (button visible + wired). */
+function applyLinkedUi(productId: string, configurator: StorefrontConfigurator) {
   configuratorCache.set(productId, configurator);
   markProductLinked();
 
@@ -448,6 +518,63 @@ async function initStorefrontUi() {
   scheduleConfiguratorRelocation();
   initStringingPageGate();
   initButtons();
+}
+
+/**
+ * Silently refresh a cache-served configurator from the proxy. Success updates both caches (so
+ * prices/availability in the modal stay ≤ one page view stale). A DEFINITIVE negative answer
+ * (code "not_linked"/"inactive" — the merchant unassigned this racquet or turned the
+ * configurator off) drops the caches and hides the button. Transient failures (network/timeout,
+ * no `code`) change nothing — the cached experience keeps working.
+ */
+async function revalidateConfigurator(productId: string) {
+  const { configurator, code } = await fetchConfigurator(productId);
+  if (configurator && configurator.theme.buttonEnabled !== false) {
+    configuratorCache.set(productId, configurator);
+    writeSessionCache(productId, configurator);
+    return;
+  }
+  if (code || (configurator && configurator.theme.buttonEnabled === false)) {
+    configuratorCache.delete(productId);
+    clearSessionCache(productId);
+    markProductUnlinked();
+  }
+}
+
+async function initStorefrontUi() {
+  const productId = getPageProductId();
+  if (!productId) {
+    initButtons();
+    return;
+  }
+
+  // Cache-first: an in-memory hit (section:load re-run on the same page) or a sessionStorage hit
+  // (back button / revisits this session) shows the button IMMEDIATELY — no pending-hide flash,
+  // no App Proxy round-trip on the critical path — then revalidates silently in the background.
+  const cached = configuratorCache.get(productId) ?? readSessionCache(productId);
+  if (cached && cached.theme.buttonEnabled !== false) {
+    applyLinkedUi(productId, cached);
+    void revalidateConfigurator(productId);
+    return;
+  }
+
+  markProductLinkagePending();
+  const { configurator } = await fetchConfigurator(productId);
+  if (!configurator) {
+    markProductUnlinked();
+    return;
+  }
+
+  // Merchant-wide kill switch (Theme Settings > "Enable customize button globally").
+  // Treat "disabled" the same as "no configurator" — hides the button and restores the
+  // theme's native Add to Cart everywhere, regardless of any individual configurator's state.
+  if (configurator.theme.buttonEnabled === false) {
+    markProductUnlinked();
+    return;
+  }
+
+  writeSessionCache(productId, configurator);
+  applyLinkedUi(productId, configurator);
 }
 
 /**
