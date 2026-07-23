@@ -315,5 +315,14 @@ export function ConfiguratorModal() {
         </div>
   );
 
-  return createPortal(modal, document.body);
+  // Portal INTO #proto-configurator-root (not <body>) so the modal stays a descendant of the
+  // element the storefront Tailwind build scopes every utility class to (important:
+  // "#proto-configurator-root"). Portaling to <body> put the modal OUTSIDE that scope, so none of
+  // its layout classes (fixed/inset-0/flex/…) matched and it opened invisibly. The root element is
+  // created (by modal-entry.tsx#mount) with position:relative + max z-index before this renders;
+  // position:relative does NOT create a containing block for the modal's position:fixed, so it
+  // still covers the viewport. Fallback to <body> only if the root is somehow absent.
+  const portalTarget =
+    document.getElementById("proto-configurator-root") ?? document.body;
+  return createPortal(modal, portalTarget);
 }
