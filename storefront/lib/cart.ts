@@ -201,11 +201,11 @@ export async function addToShopifyCart(
       pushVariantLine(items, stringVariantId, 1, {
         ...parentTag,
         _line_type: "string",
-        // Customer-visible (no leading underscore): matches the racquet line's own Mains/Crosses
-        // vocabulary so the shopper can tell which separate string line is which. Standard mode
-        // has only one string, so no side here. Gauge/Color/Tension stay staff-only — granular
-        // fulfillment specs the shopper doesn't need restated on a second line.
-        ...(side ? { Position: side } : {}),
+        // Staff-only (leading underscore) — the racquet line's own (customer-visible)
+        // Mains/Crosses summary already tells the shopper which side is which, so the string
+        // line itself only surfaces "Strung ID" to the customer; everything else here (side,
+        // gauge, color, tension) is fulfillment detail for whoever strings it.
+        ...(side ? { _Position: side } : {}),
         _Gauge: `${bed.gauge}g`,
         _Color: bed.color,
         _Tension: `${bed.tension} lbs`,
