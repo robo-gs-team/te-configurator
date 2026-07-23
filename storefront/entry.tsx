@@ -374,6 +374,18 @@ function isStandaloneV2Mode(): boolean {
 }
 
 /**
+ * True inside the Shopify Theme Editor preview. The App Proxy (`/apps/…`) doesn't route to the
+ * app in the editor, so the linkage round-trip that reveals the button can never resolve there —
+ * without special-casing this, the button stays hidden in the editor and merchants can't see or
+ * place the block even though it works on the live storefront.
+ */
+function isThemeEditor(): boolean {
+  return Boolean(
+    (window as unknown as { Shopify?: { designMode?: boolean } }).Shopify?.designMode,
+  );
+}
+
+/**
  * Handle a Configure click: bail if not visible, otherwise prevent the default/native action,
  * resolve the product id (from the button or embed settings), and open the configurator.
  */
@@ -561,6 +573,17 @@ async function initStorefrontUi() {
   markProductLinkagePending();
   const { configurator } = await fetchConfigurator(productId);
   if (!configurator) {
+    // Theme Editor: linkage can't resolve here (the App Proxy doesn't run in the editor preview),
+    // so a null result is EXPECTED, not "unlinked". Reveal the standalone button anyway so the
+    // merchant can see and position the block; it gates normally on the live storefront where the
+    // proxy works. (Only the self-contained v2 button — the legacy buy-box gate must never run in
+    // the editor.) Non-editor: a null result genuinely means not linked → hide.
+    if (isThemeEditor() && isStandaloneV2Mode()) {
+      markProductLinked();
+      initV2StandaloneGate();
+      initButtons();
+      return;
+    }
     markProductUnlinked();
     return;
   }

@@ -11,51 +11,128 @@
  * only ever toggles a class on our OWN wrapper. Safe to run alongside anything else on the page.
  */
 
-const TRIGGER = "strung";
+const STRINGING_VOCAB = new Set(["strung", "unstrung"]);
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
 /**
- * Find the page's Strung/Unstrung control by vocabulary (any <select> whose options include
- * both "strung" and "unstrung"), not by a specific selector — this app doesn't own that control,
- * it belongs to the merchant's existing configurator or theme, and its markup can vary.
+ * In the Shopify Theme Editor the App Proxy round-trip that gates this button doesn't run, and
+ * there may be no real Strung/Unstrung variant to select — so gating on it would leave the button
+ * permanently hidden while the merchant is trying to place/style it. In the editor we always show.
  */
-function findStringingSelect(): HTMLSelectElement | null {
-  const selects = document.querySelectorAll<HTMLSelectElement>("select");
-  for (const select of selects) {
+function isThemeEditor(): boolean {
+  return Boolean(
+    (window as unknown as { Shopify?: { designMode?: boolean } }).Shopify?.designMode,
+  );
+}
+
+/** The theme's add-to-cart form, when present — the preferred scan root (avoids unrelated selects). */
+function findProductForm(): ParentNode | null {
+  return (
+    document.querySelector("product-form form") ??
+    document.querySelector('form[action*="/cart/add"]') ??
+    null
+  );
+}
+
+/**
+ * Read the shopper's current Strung/Unstrung choice from the page's REAL variant control,
+ * identified by vocabulary (its options include both "strung" and "unstrung"), never a fragile
+ * selector — the control belongs to the theme, not us. Handles the shapes themes actually use:
+ *
+ *   - <select> of variant options — the currently-selected option's VALUE may be the label
+ *     ("Strung") OR a variant id ("49123…"); we check both value and the option's text. (Reading
+ *     select.value alone was the bug: a variant-id-valued picker never matched "strung", so the
+ *     control wasn't even recognized and the button never gated.)
+ *   - radio-button variant picker — read the checked radio's value, falling back to its label.
+ *
+ * Our own button subtree is always skipped. @returns "strung" | "unstrung", or null if no such
+ * control exists on the page (caller then defaults to showing the button).
+ */
+function readStringingValue(root: ParentNode): string | null {
+  for (const select of Array.from(root.querySelectorAll<HTMLSelectElement>("select"))) {
     if (select.closest("[data-proto-v2-standalone]")) continue;
-    const values = Array.from(select.options).map((o) =>
-      normalize(o.value || o.textContent || ""),
-    );
-    if (values.includes("strung") && values.includes("unstrung")) return select;
+    const opts = Array.from(select.options).map((o) => ({
+      value: normalize(o.value || ""),
+      text: normalize(o.textContent || ""),
+    }));
+    const hasOption = (v: string) => opts.some((o) => o.value === v || o.text === v);
+    if (!hasOption("strung") || !hasOption("unstrung")) continue;
+
+    const opt = select.selectedOptions[0] ?? select.options[select.selectedIndex];
+    if (!opt) continue;
+    const optValue = normalize(opt.value);
+    const current = STRINGING_VOCAB.has(optValue) ? optValue : normalize(opt.textContent || "");
+    if (STRINGING_VOCAB.has(current)) return current;
   }
+
+  // Radio-button variant picker: group by name, find the stringing group, read the checked one.
+  const radios = Array.from(
+    root.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+  ).filter((r) => !r.closest("[data-proto-v2-standalone]"));
+  const groups = new Map<string, HTMLInputElement[]>();
+  for (const radio of radios) {
+    const list = groups.get(radio.name) ?? [];
+    list.push(radio);
+    groups.set(radio.name, list);
+  }
+  for (const group of groups.values()) {
+    const valueOf = (r: HTMLInputElement): string => {
+      const v = normalize(r.value);
+      if (STRINGING_VOCAB.has(v)) return v;
+      // Themes sometimes set the radio value to a variant id — fall back to its label text.
+      const label = r.id
+        ? document.querySelector(`label[for="${CSS.escape(r.id)}"]`)
+        : r.closest("label");
+      return normalize(label?.textContent || "");
+    };
+    const values = group.map(valueOf);
+    if (!values.includes("strung") || !values.includes("unstrung")) continue;
+    const checkedIndex = group.findIndex((r) => r.checked);
+    if (checkedIndex >= 0 && STRINGING_VOCAB.has(values[checkedIndex])) {
+      return values[checkedIndex];
+    }
+  }
+
   return null;
 }
 
-/** Show/hide every v2 standalone wrapper based on the given select's current value. */
-function applyVisibility(select: HTMLSelectElement | null) {
-  const show = select ? normalize(select.value) === TRIGGER : true;
+/** The shopper's stringing choice, scanning the cart form first then the whole document. */
+function getStringingValue(): string | null {
+  const form = findProductForm();
+  if (form) {
+    const inForm = readStringingValue(form);
+    if (inForm) return inForm;
+  }
+  return readStringingValue(document);
+}
+
+/** Show/hide every v2 standalone wrapper based on the current Strung/Unstrung choice. */
+function applyVisibility() {
+  const value = getStringingValue();
+  // Show when: in the theme editor (always, for placement), no stringing control found (nothing
+  // to gate on), or the choice is "strung". Hide only on a definite "unstrung".
+  const show = isThemeEditor() || value === null || value === "strung";
   document.querySelectorAll<HTMLElement>(".proto-v2-standalone-wrapper").forEach((wrapper) => {
     wrapper.classList.toggle("proto-v2-hide-unstrung", !show);
   });
 }
 
-let boundSelect: HTMLSelectElement | null = null;
+let delegatedChangeBound = false;
 
 /**
  * Initialize (or re-initialize) the visibility gate. Safe to call repeatedly — e.g. on
- * `shopify:section:load` — since it re-finds the control and re-binds only if it changed.
+ * `shopify:section:load`. Uses ONE delegated, capturing `change` listener on the document rather
+ * than binding to a specific control: the stringing control can be a <select> or a radio group,
+ * can be re-rendered by the theme on variant change, and can live outside any form — a delegated
+ * listener catches all of those without re-finding and re-binding the exact element each time.
  */
 export function initV2StandaloneGate() {
-  const select = findStringingSelect();
-  applyVisibility(select);
-
-  if (select === boundSelect) return;
-  boundSelect = select;
-  if (select && !select.dataset.protoV2GateBound) {
-    select.dataset.protoV2GateBound = "true";
-    select.addEventListener("change", () => applyVisibility(select));
+  applyVisibility();
+  if (!delegatedChangeBound) {
+    delegatedChangeBound = true;
+    document.addEventListener("change", applyVisibility, true);
   }
 }
