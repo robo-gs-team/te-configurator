@@ -14,29 +14,33 @@ import type { Config } from "tailwindcss";
  * collided with the theme's own semantic `.grid` class and broke collection-page layouts
  * storefront-wide.
  *
- * This config (wired in via postcss.storefront.config.js -> vite.storefront.config.ts) ensures
- * the storefront build only ever sees classes actually used in storefront/**, so nothing from
- * the admin app can leak into the public bundle again, regardless of what the admin UI adds.
+ * This config (pinned via the @config directive in storefront/styles.css and passed to the
+ * tailwindcss plugin inline in vite.storefront.config.ts) ensures the storefront build only ever
+ * sees classes actually used in storefront/**, so nothing from the admin app can leak into the
+ * public bundle again, regardless of what the admin UI adds.
  *
  * Content-scoping alone does NOT fully fix the live incident, though: `grid` is genuinely used by
  * our OWN modal UI (storefront/components/Steps.tsx), and Tailwind utility class names are bare
  * (`.grid`, `.flex`, ...) with no relation to which app "owns" them — since proto-configurator.css
  * is loaded globally on every storefront page via a plain <link>, our `.grid{display:grid}` was
  * matching the MERCHANT'S OWN unrelated `.grid` elements (their collection-page product grid),
- * clobbering it. `important` set to a selector (Tailwind's "Selector Strategy") scopes every
- * generated utility to only apply inside that ancestor, so `.grid` compiles to
- * `#proto-configurator-root .grid{display:grid!important}` — matching only inside the dynamically
- * created React modal mount point (see modal-entry.tsx#ensureRoot), never the merchant's page.
+ * clobbering it.
+ *
+ * Scoping is therefore done by a small PostCSS plugin inline in vite.storefront.config.ts that
+ * prefixes EVERY rule in this bundle with `#proto-configurator-root ` (so `.grid` -> `#proto-configurator-root
+ * .grid`, matching only inside the modal mount point, never the merchant's page). We deliberately
+ * do NOT use Tailwind's `important: "#selector"` strategy for this: that scopes utilities but also
+ * flags every one `!important`, which then overrode the modal's own hand-written `.proto-desk-*`
+ * design CSS (backgrounds/spacing/borders) that is supposed to win by source order — butchering
+ * the modal's look. The prefix plugin scopes utilities AND the design rules equally, preserving
+ * their original relative specificity + source order, with no `!important` anywhere.
  */
 export default {
   content: ["./storefront/**/*.{js,jsx,ts,tsx}"],
-  // `important` scopes generated UTILITIES to only apply inside the modal root (so `.grid`,
-  // `.flex`, etc. can never touch the merchant's page). But it does NOT scope Preflight — so we
-  // also disable Preflight entirely: its global `*, ::before, ::after` reset (border-width:0,
-  // margin/box-sizing resets, html/body font + line-height) was applying to the WHOLE storefront
-  // via the globally-loaded proto-configurator.css and clobbering the theme site-wide. The modal
-  // gets an equivalent reset scoped to #proto-configurator-root in storefront/styles.css instead.
-  important: "#proto-configurator-root",
+  // Preflight stays OFF: its global `*, ::before, ::after` reset (border-width:0, margin/box-sizing
+  // resets, html/body font + line-height) would apply to the WHOLE storefront via the
+  // globally-loaded proto-configurator.css and clobber the theme site-wide. The modal gets an
+  // equivalent reset scoped to #proto-configurator-root in storefront/styles.css instead.
   corePlugins: {
     preflight: false,
   },
