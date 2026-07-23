@@ -1,0 +1,63 @@
+name: Migrate Database
+
+# Applies Prisma migrations to the production database when a merge to main adds/changes them.
+#
+# Migrations deliberately do NOT run inside the Vercel build anymore (scripts/vercel-build.mjs):
+# the build container's DB env/network kept failing Production deploys even when the code was
+# fine, and a deploy build shouldn't be able to mutate the database anyway. Running them here —
+# once per merge, only when the migrations folder actually changed — keeps deploys and schema
+# changes decoupled and each independently retryable.
+#
+# Requires repo secret DATABASE_URL (the Supabase transaction-pooler string, port 6543). The
+# session-pooler DIRECT_URL (port 5432) is derived from it automatically, mirroring what the
+# Vercel build used to do; set a DIRECT_URL secret only for a non-Supabase database.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "prisma/migrations/**"
+      - "prisma/schema.prisma"
+      - ".github/workflows/migrate-db.yml"
+  workflow_dispatch: {}
+
+jobs:
+  migrate:
+    name: prisma migrate deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL repo secret is not set — migrations were NOT applied." \
+                 "Add it in GitHub → Settings → Secrets and variables → Actions, then re-run this workflow."
+            exit 1
+          fi
+          # Derive the Supabase session-pooler DIRECT_URL (port 5432) when not explicitly set.
+          if [ -z "$DIRECT_URL" ]; then
+            case "$DATABASE_URL" in
+              *pooler.supabase.com*)
+                DIRECT_URL=$(printf '%s' "$DATABASE_URL" | sed 's/:6543\//:5432\//; s/?.*$//')
+                export DIRECT_URL
+                echo "DIRECT_URL derived from DATABASE_URL (Supabase session pooler, port 5432)"
+                ;;
+              *)
+                echo "::error::DIRECT_URL secret is not set and could not be derived (non-Supabase DATABASE_URL)."
+                exit 1
+                ;;
+            esac
+          fi
+          npx prisma migrate deploy
