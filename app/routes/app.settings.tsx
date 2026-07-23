@@ -3,25 +3,30 @@ import { json } from "@vercel/remix";
 import { Form, useLoaderData, useNavigation } from "@remix-run/react";
 import {
   BlockStack,
+  Badge,
   Button,
   Card,
   Checkbox,
   FormLayout,
+  InlineStack,
   Layout,
   Page,
+  Text,
   TextField,
 } from "@shopify/polaris";
 import { useState } from "react";
 import prisma from "~/db.server";
 import { ensureShop, getShopThemeSettings } from "~/lib/configurator.server";
 import { refreshShopSnapshots } from "~/lib/snapshot.server";
+import { getVersionInfo } from "~/lib/version.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
   const theme = await getShopThemeSettings(shop.id);
-  return json({ theme });
+  const versions = getVersionInfo();
+  return json({ theme, versions });
 };
 
 /** Mobile string count: a small positive integer. Clamp to 1–20 (20 = the desktop count, the
@@ -75,8 +80,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ success: true });
 };
 
+/** "Jul 23, 2026, 3:16 PM" — no dependency, just Intl. Falls back to the raw ISO string on a
+ *  malformed date rather than throwing. */
+function formatVersionDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(d);
+}
+
 export default function ThemeSettings() {
-  const { theme } = useLoaderData<typeof loader>();
+  const { theme, versions } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
 
   const [buttonEnabled, setButtonEnabled] = useState(theme.buttonEnabled);
@@ -183,6 +199,51 @@ export default function ThemeSettings() {
                 </Button>
               </BlockStack>
             </Form>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                Configurator version
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Your live theme runs the <strong>Stable</strong> channel; a draft/test theme set
+                to <strong>Beta</strong> in Theme Editor → App embeds runs the latest build. Ask
+                for a promotion once a tested Beta build should become the new Stable.
+              </Text>
+              <BlockStack gap="150">
+                <InlineStack gap="200" blockAlign="center">
+                  <Badge tone="success">Stable</Badge>
+                  <Text as="span" variant="bodySm" fontWeight="semibold">
+                    {versions.stable.version}
+                  </Text>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    — {versions.stable.label}
+                  </Text>
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Promoted {formatVersionDate(versions.stable.promotedAt)} · commit{" "}
+                  {versions.stable.commit.slice(0, 8)}
+                  {versions.stable.rollbackOf ? ` · rollback of ${versions.stable.rollbackOf}` : ""}
+                </Text>
+              </BlockStack>
+              <BlockStack gap="150">
+                <InlineStack gap="200" blockAlign="center">
+                  <Badge tone="attention">Beta</Badge>
+                  <Text as="span" variant="bodySm" fontWeight="semibold">
+                    {versions.beta.commit ? versions.beta.commit.slice(0, 8) : "unknown"}
+                  </Text>
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {versions.beta.message
+                    ? `"${versions.beta.message}"`
+                    : "Always mirrors the latest code on main."}
+                  {versions.beta.ref ? ` (${versions.beta.ref})` : ""}
+                </Text>
+              </BlockStack>
+            </BlockStack>
           </Card>
         </Layout.Section>
       </Layout>
