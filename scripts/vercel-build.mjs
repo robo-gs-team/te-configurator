@@ -34,5 +34,17 @@ function run(command) {
 }
 
 run("npx prisma generate");
-run("npx prisma migrate deploy");
+
+// Preview and Production builds point at the same database (Vercel env vars aren't scoped
+// per-branch here), so running `migrate deploy` on every Preview build races Production's own
+// migrate step against the same Supabase connection/advisory lock — the likely cause of the
+// intermittent, non-reproducible Preview build failures seen on this branch — and would also
+// apply an unmerged PR's migration to the live DB before review. Only Production should migrate;
+// Preview builds run against whatever schema is already live.
+if (process.env.VERCEL_ENV === "production") {
+  run("npx prisma migrate deploy");
+} else {
+  console.log(`\nSkipping migrate deploy (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`);
+}
+
 run("npm run build");
