@@ -28,24 +28,17 @@ import {
 } from "~/lib/theme-detection.server";
 import { themeEditorEmbedUrl } from "~/lib/theme-embed";
 import { refreshShopSnapshots } from "~/lib/snapshot.server";
-import {
-  getAllLinkedRacquetProductIds,
-  migrateLegacyRacquetTension,
-  type TensionMigrationResult,
-} from "~/lib/product-metafields.server";
-import { getBuildInfo } from "~/lib/build-info.server";
-import { getDeploymentStatus } from "~/lib/vercel-status.server";
+import { getVersionInfo } from "~/lib/version.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
-  const [configurators, analytics, buttonStatus, theme, deployStatus] = await Promise.all([
+  const [configurators, analytics, buttonStatus, theme] = await Promise.all([
     listConfigurators(shop.id),
     getAnalyticsSummary(shop.id, 30),
     detectThemeButtonStatus(admin, session.shop),
     getShopThemeSettings(shop.id),
-    getDeploymentStatus(),
   ]);
 
   return json({
@@ -54,8 +47,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     analytics,
     buttonStatus,
     theme,
-    buildInfo: getBuildInfo(),
-    deployStatus,
+    versions: getVersionInfo(),
   });
 };
 
@@ -78,19 +70,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: true });
   }
 
-  if (intent === "migrate_legacy_tension") {
-    const productIds = await getAllLinkedRacquetProductIds(admin, shop.id);
-    const migration = await migrateLegacyRacquetTension(admin, productIds);
-    // Newly-populated tension fields won't reach shoppers until the snapshot is rebuilt.
-    await refreshShopSnapshots(admin, shop.id, session.shop);
-    return json({ migration });
-  }
-
   return json({ ok: true });
 };
 
+/** "Jul 23, 2026, 3:16 PM" — matches the formatting used on the Settings version card. */
+function formatVersionDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(d);
+}
+
 export default function Dashboard() {
-  const { shop, configurators, analytics, buttonStatus, theme, buildInfo, deployStatus } =
+  const { shop, configurators, analytics, buttonStatus, theme, versions } =
     useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const actionData = useActionData<typeof action>();
@@ -101,11 +92,6 @@ export default function Dashboard() {
   // The badge itself flips On/Off after a toggle; this message just confirms it explicitly.
   const toggleJustSucceeded =
     navigation.state === "idle" && Boolean((actionData as { success?: boolean } | undefined)?.success);
-  const isMigrating =
-    navigation.state !== "idle" &&
-    navigation.formData?.get("intent") === "migrate_legacy_tension";
-  const migrationResult = (actionData as { migration?: TensionMigrationResult } | undefined)
-    ?.migration;
 
   return (
     <Page
@@ -117,6 +103,38 @@ export default function Dashboard() {
       }}
     >
       <Layout>
+        <Layout.Section>
+          <Banner tone="info">
+            <InlineStack align="space-between" blockAlign="center" wrap>
+              <InlineStack gap="400" blockAlign="center" wrap>
+                <InlineStack gap="150" blockAlign="center">
+                  <Badge tone="success">Stable · live theme</Badge>
+                  <Text as="span" variant="headingSm">
+                    {versions.stable.version}
+                  </Text>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {versions.stable.label} · promoted {formatVersionDate(versions.stable.promotedAt)}
+                  </Text>
+                </InlineStack>
+                <InlineStack gap="150" blockAlign="center">
+                  <Badge tone="attention">Beta · draft theme</Badge>
+                  <Text as="span" variant="bodySm" fontWeight="semibold">
+                    {versions.beta.commit ? versions.beta.commit.slice(0, 8) : "unknown"}
+                  </Text>
+                  {versions.beta.message && (
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      "{versions.beta.message}"
+                    </Text>
+                  )}
+                </InlineStack>
+              </InlineStack>
+              <Button url="/app/settings" size="slim">
+                Version details
+              </Button>
+            </InlineStack>
+          </Banner>
+        </Layout.Section>
+
         <Layout.Section>
           <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
             <Card>
@@ -274,57 +292,6 @@ export default function Dashboard() {
 
         <Layout.Section>
           <Card>
-            <BlockStack gap="300">
-              <InlineStack gap="150" blockAlign="center">
-                <Text as="h2" variant="headingMd">
-                  Tension data migration
-                </Text>
-                <Tooltip content="One-time copy from your prior system's racquet.string_tension_min/max/recommended metafields into this app's own te_stringing.tension_min/max/recommended fields. Only fills in racquets that don't already have a value in the te_stringing fields — never overwrites an existing value. Safe to run more than once.">
-                  <Text as="span" tone="subdued">
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 15,
-                        height: 15,
-                        borderRadius: "50%",
-                        border: "1px solid currentColor",
-                        fontSize: 10,
-                        cursor: "help",
-                      }}
-                    >
-                      ?
-                    </span>
-                  </Text>
-                </Tooltip>
-              </InlineStack>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Copies per-racquet tension data from your prior system's metafields into the
-                fields this app reads, for every racquet linked to a configurator. Skips any
-                racquet that already has a value set here — safe to run again later.
-              </Text>
-              {migrationResult && (
-                <Banner tone={migrationResult.updated > 0 ? "success" : "info"}>
-                  <p>
-                    Checked {migrationResult.total} racquet{migrationResult.total === 1 ? "" : "s"}:{" "}
-                    updated {migrationResult.updated}, {migrationResult.skippedAlreadySet} already had
-                    a value, {migrationResult.skippedNoLegacyData} had no legacy data to copy.
-                  </p>
-                </Banner>
-              )}
-              <Form method="post">
-                <input type="hidden" name="intent" value="migrate_legacy_tension" />
-                <Button submit size="slim" loading={isMigrating}>
-                  Copy existing tension data
-                </Button>
-              </Form>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between">
                 <Text as="h2" variant="headingMd">
@@ -386,46 +353,6 @@ export default function Dashboard() {
               <Button url="/app/settings">Theme settings</Button>
             </BlockStack>
           </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Box paddingBlockStart="200">
-            <BlockStack gap="150" inlineAlign="center">
-              {deployStatus.configured && deployStatus.state !== "unknown" && (
-                <Badge
-                  tone={
-                    deployStatus.state === "up_to_date"
-                      ? "success"
-                      : deployStatus.state === "failed"
-                        ? "critical"
-                        : deployStatus.state === "newer_ready"
-                          ? "attention"
-                          : "info"
-                  }
-                >
-                  {deployStatus.state === "up_to_date"
-                    ? "Running the latest build"
-                    : deployStatus.state === "newer_building"
-                      ? `New build deploying${deployStatus.latestShortSha ? ` (${deployStatus.latestShortSha})` : ""}…`
-                      : deployStatus.state === "newer_ready"
-                        ? "New build ready — refresh to load it"
-                        : "Latest build failed"}
-                </Badge>
-              )}
-              <Text as="p" variant="bodySm" tone="subdued" alignment="center">
-                Build{" "}
-                {buildInfo.commitUrl ? (
-                  <a href={buildInfo.commitUrl} target="_blank" rel="noopener noreferrer">
-                    {buildInfo.shortSha}
-                  </a>
-                ) : (
-                  buildInfo.shortSha
-                )}
-                {" · server started "}
-                {buildInfo.serverStartedAt.replace("T", " ").slice(0, 16)} UTC
-              </Text>
-            </BlockStack>
-          </Box>
         </Layout.Section>
       </Layout>
     </Page>

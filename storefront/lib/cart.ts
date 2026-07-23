@@ -153,9 +153,9 @@ export async function addToShopifyCart(
   // One id per stringing job, stamped on every line this call produces (racquet, string(s),
   // labor, addons) so multiple strung racquets in one order stay disambiguated. Not applied to
   // the generic (non-stringing) flow — a single racquet + addons has nothing to disambiguate.
-  // Staff-only (leading underscore): this exists to help whoever fulfills a multi-racquet order
-  // pair each string back to its racquet — the shopper never needs to see it themselves. Still
-  // fully visible to staff on the Shopify Admin order page.
+  // Customer-visible (no leading underscore) by design: the shopper should be able to see which
+  // string lines belong to which racquet in their own cart/checkout/receipt, not just staff on
+  // the Shopify Admin order page.
   const sessionId = getOrCreateSessionId();
   const strungId = isStringing ? generateStrungId() : null;
   // Staff-only session stamp (leading underscore) so the orders/create webhook can attribute the
@@ -164,10 +164,10 @@ export async function addToShopifyCart(
     _parent_configurator: configurator.id,
     _proto_session: sessionId,
   };
-  if (strungId) parentTag["_Strung ID"] = strungId;
+  if (strungId) parentTag["Strung ID"] = strungId;
 
   const racquetProps: Record<string, string> = { ...properties, _proto_session: sessionId };
-  if (strungId) racquetProps["_Strung ID"] = strungId;
+  if (strungId) racquetProps["Strung ID"] = strungId;
 
   const items: Array<{
     id: number;
@@ -201,9 +201,10 @@ export async function addToShopifyCart(
       pushVariantLine(items, stringVariantId, 1, {
         ...parentTag,
         _line_type: "string",
-        // Staff-only — the racquet line's own (customer-visible) Mains/Crosses summary already
-        // tells the shopper which side is which; these are the granular fulfillment specs for
-        // whoever strings it. Standard mode has only one string, so no side here.
+        // Staff-only (leading underscore) — the racquet line's own (customer-visible)
+        // Mains/Crosses summary already tells the shopper which side is which, so the string
+        // line itself only surfaces "Strung ID" to the customer; everything else here (side,
+        // gauge, color, tension) is fulfillment detail for whoever strings it.
         ...(side ? { _Position: side } : {}),
         _Gauge: `${bed.gauge}g`,
         _Color: bed.color,
