@@ -1,11 +1,17 @@
 {
-  "current": "v1",
+  "current": "v2",
   "history": [
     {
       "version": "v1",
       "commit": "cb257b258483d05cf8fc5ff269db330e3d1537a0",
       "promotedAt": "2026-07-23T15:16:00.000Z",
       "label": "Modal design restored + P0 CSS isolation (pre-Stable/Beta baseline)"
+    },
+    {
+      "version": "v2",
+      "commit": "18cd90cbf6aa68a4be5203897c990d14c6beb4b3",
+      "promotedAt": "2026-07-23T19:16:29.653Z",
+      "label": "PDP perf fixes + rem/margin CSS isolation fixes (Beta-tested, confirmed working)"
     }
   ]
 }
