@@ -6,6 +6,12 @@ import { resolve } from "path";
 // IIFE. The tiny entry bundle (vite.storefront.config.ts) injects this on first interaction.
 // The IIFE global name is intentionally different from the runtime window.ProtoConfiguratorModal
 // the module assigns, so the IIFE's return value can't clobber the API object.
+//
+// `PROTO_CHANNEL=beta` writes `proto-configurator-modal.beta.js` for the Stable/Beta release
+// channel (see configurator-embed.liquid). The entry bundle loads whichever modal URL the embed
+// passes via window.ProtoConfiguratorSettings.modalUrl, so it's channel-agnostic itself.
+const CHANNEL_SUFFIX = process.env.PROTO_CHANNEL === "beta" ? ".beta" : "";
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -23,11 +29,11 @@ export default defineConfig({
       entry: resolve(__dirname, "storefront/modal-entry.tsx"),
       name: "ProtoConfiguratorModalBundle",
       formats: ["iife"],
-      fileName: () => "proto-configurator-modal.js",
+      fileName: () => `proto-configurator-modal${CHANNEL_SUFFIX}.js`,
     },
     rollupOptions: {
       output: {
-        assetFileNames: "proto-configurator-modal.[ext]",
+        assetFileNames: `proto-configurator-modal${CHANNEL_SUFFIX}.[ext]`,
         inlineDynamicImports: true,
       },
     },
