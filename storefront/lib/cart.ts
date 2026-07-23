@@ -147,7 +147,11 @@ export async function addToShopifyCart(
 
   const mainVariantId = variantId || getProductVariantFromPage();
   if (!mainVariantId) {
-    return { success: false, error: "No variant selected" };
+    return {
+      success: false,
+      error:
+        "Please select your racquet options (like grip size) on the product page, then try again.",
+    };
   }
 
   // One id per stringing job, stamped on every line this call produces (racquet, string(s),
@@ -339,6 +343,14 @@ function getProductVariantFromPage(): string | null {
   const urlVariant = new URLSearchParams(window.location.search).get("variant");
   if (urlVariant) return urlVariant;
 
+  // window.ShopifyAnalytics.meta — populated by Shopify itself on almost every PDP, independent
+  // of theme markup. `selectedVariantId` is the theme-reported current selection. This closed a
+  // real live failure: a theme whose buy box exposed no `name="id"` control and no product-JSON
+  // script produced "No variant selected" on Add to Cart even though the page knew the variant.
+  // (getProductPriceFromPage already trusted this same source for price.)
+  const analyticsMeta = getShopifyAnalyticsMeta();
+  if (analyticsMeta?.selectedVariantId) return String(analyticsMeta.selectedVariantId);
+
   const productJson = document.querySelector<HTMLScriptElement>(
     'script[type="application/json"][data-product-json], script[type="application/json"][id*="ProductJson"]',
   );
@@ -357,7 +369,36 @@ function getProductVariantFromPage(): string | null {
     }
   }
 
+  // Last resort: the product's first variant from the analytics meta. Only reached when nothing
+  // on the page reports a selection at all — a single-variant product resolves correctly here;
+  // a multi-variant product gets its first variant rather than a dead Add to Cart.
+  const firstAnalyticsVariant = analyticsMeta?.product?.variants?.[0]?.id;
+  if (firstAnalyticsVariant != null) return String(firstAnalyticsVariant);
+
   return null;
+}
+
+/** Safe read of window.ShopifyAnalytics.meta (shape varies across themes; never throws). */
+function getShopifyAnalyticsMeta(): {
+  selectedVariantId?: number | string;
+  product?: { variants?: Array<{ id?: number | string; price?: number | string }> };
+} | null {
+  try {
+    return (
+      (
+        window as unknown as {
+          ShopifyAnalytics?: {
+            meta?: {
+              selectedVariantId?: number | string;
+              product?: { variants?: Array<{ id?: number | string; price?: number | string }> };
+            };
+          };
+        }
+      ).ShopifyAnalytics?.meta ?? null
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
