@@ -1,9 +1,10 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
 import { json } from "@vercel/remix";
-import { Form, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import {
   BlockStack,
   Badge,
+  Banner,
   Button,
   Card,
   Checkbox,
@@ -13,11 +14,17 @@ import {
   Page,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
 import { useState } from "react";
 import prisma from "~/db.server";
 import { ensureShop, getShopThemeSettings } from "~/lib/configurator.server";
 import { refreshShopSnapshots } from "~/lib/snapshot.server";
+import {
+  getAllLinkedRacquetProductIds,
+  migrateLegacyRacquetTension,
+  type TensionMigrationResult,
+} from "~/lib/product-metafields.server";
 import { getVersionInfo } from "~/lib/version.server";
 import { authenticate } from "~/shopify.server";
 
@@ -41,6 +48,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
   const form = await request.formData();
+
+  if (String(form.get("intent")) === "migrate_legacy_tension") {
+    const productIds = await getAllLinkedRacquetProductIds(admin, shop.id);
+    const migration = await migrateLegacyRacquetTension(admin, productIds);
+    // Newly-populated tension fields won't reach shoppers until the snapshot is rebuilt.
+    await refreshShopSnapshots(admin, shop.id, session.shop);
+    return json({ migration });
+  }
 
   await prisma.themeSetting.upsert({
     where: { shopId: shop.id },
@@ -94,6 +109,12 @@ function formatVersionDate(iso: string): string {
 export default function ThemeSettings() {
   const { theme, versions } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
+  const actionData = useActionData<typeof action>();
+  const isMigrating =
+    navigation.state !== "idle" &&
+    navigation.formData?.get("intent") === "migrate_legacy_tension";
+  const migrationResult = (actionData as { migration?: TensionMigrationResult } | undefined)
+    ?.migration;
 
   const [buttonEnabled, setButtonEnabled] = useState(theme.buttonEnabled);
   const [buttonLabel, setButtonLabel] = useState(theme.buttonLabel);
@@ -243,6 +264,58 @@ export default function ThemeSettings() {
                   {versions.beta.ref ? ` (${versions.beta.ref})` : ""}
                 </Text>
               </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack gap="150" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Tension data migration
+                </Text>
+                <Tooltip content="One-time copy from your prior system's racquet.string_tension_min/max/recommended metafields into this app's own te_stringing.tension_min/max/recommended fields. Only fills in racquets that don't already have a value in the te_stringing fields — never overwrites an existing value. Safe to run more than once.">
+                  <Text as="span" tone="subdued">
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 15,
+                        height: 15,
+                        borderRadius: "50%",
+                        border: "1px solid currentColor",
+                        fontSize: 10,
+                        cursor: "help",
+                      }}
+                    >
+                      ?
+                    </span>
+                  </Text>
+                </Tooltip>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                One-time setup tool — copies per-racquet tension data from your prior system's
+                metafields into the fields this app reads, for every racquet linked to a
+                configurator. Skips any racquet that already has a value set here — safe to run
+                again later if you link new racquets.
+              </Text>
+              {migrationResult && (
+                <Banner tone={migrationResult.updated > 0 ? "success" : "info"}>
+                  <p>
+                    Checked {migrationResult.total} racquet{migrationResult.total === 1 ? "" : "s"}:{" "}
+                    updated {migrationResult.updated}, {migrationResult.skippedAlreadySet} already had
+                    a value, {migrationResult.skippedNoLegacyData} had no legacy data to copy.
+                  </p>
+                </Banner>
+              )}
+              <Form method="post">
+                <input type="hidden" name="intent" value="migrate_legacy_tension" />
+                <Button submit size="slim" loading={isMigrating}>
+                  Copy existing tension data
+                </Button>
+              </Form>
             </BlockStack>
           </Card>
         </Layout.Section>
