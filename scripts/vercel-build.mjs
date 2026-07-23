@@ -11,21 +11,6 @@ function deriveSupabaseSessionUrl(databaseUrl) {
   return databaseUrl.replace(":6543/", ":5432/").replace(/\?.*$/, "");
 }
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  console.error("DATABASE_URL is not set");
-  process.exit(1);
-}
-
-const derivedDirect = deriveSupabaseSessionUrl(databaseUrl);
-if (derivedDirect) {
-  process.env.DIRECT_URL = derivedDirect;
-  console.log("DIRECT_URL derived from DATABASE_URL (Supabase session pooler, port 5432)");
-} else if (!process.env.DIRECT_URL) {
-  console.error("DIRECT_URL is not set");
-  process.exit(1);
-}
-
 const env = { ...process.env };
 
 function run(command) {
@@ -35,16 +20,34 @@ function run(command) {
 
 run("npx prisma generate");
 
-// Preview and Production builds point at the same database (Vercel env vars aren't scoped
-// per-branch here), so running `migrate deploy` on every Preview build races Production's own
-// migrate step against the same Supabase connection/advisory lock — the likely cause of the
-// intermittent, non-reproducible Preview build failures seen on this branch — and would also
-// apply an unmerged PR's migration to the live DB before review. Only Production should migrate;
-// Preview builds run against whatever schema is already live.
+// migrate deploy runs ONLY on Production. Preview and Production point at the same database, so
+// migrating on every Preview build races Production's own migrate step for the same Supabase
+// connection/advisory lock, and would apply an unmerged PR's migration to the live DB before
+// review. Crucially, because only Production migrates, only Production needs the database
+// connection env vars at build time — `prisma generate` and the Remix/Vite build never touch the
+// DB (verified). So the DB env-var requirement lives INSIDE this branch: a Preview build must not
+// hard-fail just because DATABASE_URL/DIRECT_URL aren't configured, which is exactly what breaks
+// every Preview build on a newly-connected Vercel project whose Preview env has no DB vars yet.
 if (process.env.VERCEL_ENV === "production") {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    console.error("DATABASE_URL is not set (required for Production migrate deploy)");
+    process.exit(1);
+  }
+  const derivedDirect = deriveSupabaseSessionUrl(databaseUrl);
+  if (derivedDirect) {
+    env.DIRECT_URL = derivedDirect;
+    console.log("DIRECT_URL derived from DATABASE_URL (Supabase session pooler, port 5432)");
+  } else if (!process.env.DIRECT_URL) {
+    console.error("DIRECT_URL is not set (required for Production migrate deploy)");
+    process.exit(1);
+  }
   run("npx prisma migrate deploy");
 } else {
-  console.log(`\nSkipping migrate deploy (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`);
+  console.log(
+    `\nSkipping migrate deploy + DB env checks (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"}) — ` +
+      "Preview/dev builds don't migrate and don't need database env vars.",
+  );
 }
 
 run("npm run build");
