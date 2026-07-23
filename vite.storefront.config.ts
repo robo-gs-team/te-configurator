@@ -36,6 +36,37 @@ const scopeToModalRoot = {
   },
 };
 
+/**
+ * Convert every `rem` length in the bundle to a fixed `px` (16px base).
+ *
+ * WHY THIS EXISTS — a live production bug: our modal's Tailwind utilities are rem-based, and `rem`
+ * ALWAYS resolves against the host document's <html> font-size, which our `#proto-configurator-root`
+ * scoping physically cannot override (rem is root-relative by definition). Several merchant themes
+ * set a non-16px root font-size (e.g. `html{font-size:62.5%}` → 10px, or a larger value), which
+ * silently rescaled the ENTIRE modal — oversized type, cramped spacing, the fixed-width (px) panel
+ * overflowing its own content and cutting off the Add-to-Cart button. It renders perfectly in
+ * isolation (16px root) and breaks only on the merchant's store, which is exactly why it was so
+ * hard to pin down.
+ *
+ * Pinning `font-size` on the modal root does NOT help — rem ignores it. The only reliable fix is to
+ * stop depending on the host root entirely: bake every rem down to the px it was designed against.
+ * The hand-written `.proto-desk-*` CSS is already px, so this only touches the Tailwind utilities,
+ * locking the modal to its intended 16px-based scale on ANY theme. Browser zoom still scales px, so
+ * user zoom-based accessibility is preserved; only the theme's arbitrary root font-size is
+ * neutralized. Runs storefront-bundle-only — the admin app and the merchant's theme are untouched.
+ */
+const REM_BASE_PX = 16;
+const remToPx = {
+  postcssPlugin: "proto-rem-to-px",
+  Declaration(decl: { value: string }) {
+    if (!decl.value.includes("rem")) return;
+    decl.value = decl.value.replace(
+      /(-?\d*\.?\d+)rem\b/g,
+      (_m: string, n: string) => `${parseFloat(n) * REM_BASE_PX}px`,
+    );
+  },
+};
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -73,6 +104,7 @@ export default defineConfig({
       plugins: [
         tailwindcss({ config: "./tailwind.storefront.config.ts" }),
         scopeToModalRoot,
+        remToPx,
         autoprefixer(),
       ],
     },
