@@ -20,10 +20,64 @@
   border-width: 0;
   border-style: solid;
   border-color: currentColor;
+  /* Zero inherited margins — Preflight normally strips the default/theme margins off headings,
+     <p>, etc.; without it the merchant theme's `p{margin:…}` / `h2{margin:…}` leaked into the
+     modal and padded out every string card, heading and label (the "weird card heights"). All our
+     own spacing comes from Tailwind/`.proto-desk-*` classes (higher specificity), so they still
+     win wherever we set a margin on purpose — this only removes what the host theme injects. */
+  margin: 0;
+}
+
+/* Form-control reset — the OTHER half of Preflight we were missing. Preflight normally neutralizes
+   a button/input's inherited padding, margin, min-height, line-height, text-transform, appearance,
+   etc.; with it disabled, the merchant theme's global `button {}` / `input {}` rules leaked
+   straight into our modal — inflating every string-picker card, chip, toggle and the search box to
+   the theme's button height (min-height/padding/line-height), which is what made the cards "weird
+   heights". These re-establish a clean baseline; our own `.proto-desk-*` classes (higher
+   specificity) still set the real padding/height/background per control, so this only removes what
+   the host theme injects, never our own design. */
+#proto-configurator-root button,
+#proto-configurator-root input,
+#proto-configurator-root select,
+#proto-configurator-root textarea,
+#proto-configurator-root optgroup {
+  font-family: inherit;
+  font-size: 100%;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  margin: 0;
+  padding: 0;
+}
+#proto-configurator-root button,
+#proto-configurator-root select {
+  text-transform: none;
+}
+#proto-configurator-root button,
+#proto-configurator-root [type="button"],
+#proto-configurator-root [type="reset"],
+#proto-configurator-root [type="submit"] {
+  -webkit-appearance: button;
+  appearance: button;
+  background-color: transparent;
+  background-image: none;
+  cursor: pointer;
+  border-radius: 0;
+  box-shadow: none;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
 }
 
 .proto-configurator-root {
+  /* Pin the typographic baseline so `line-height:inherit` / `font-size:100%` on the controls above
+     resolve against THIS, not the merchant theme's <body> (which may set a tall line-height, etc.). */
   font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  letter-spacing: normal;
+  color: #1a1a1a;
   -webkit-font-smoothing: antialiased;
 }
 
