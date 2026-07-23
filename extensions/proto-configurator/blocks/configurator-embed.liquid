@@ -5,6 +5,23 @@
 {% endcomment %}
 
 {% if block.settings.enabled %}
+  {% comment %}
+    Release channel (Stable/Beta). Per-theme setting: the live/published theme should stay on
+    "stable" (the frozen, known-good bundle), while a draft/duplicate theme can be set to "beta" to
+    run the latest code without touching the live theme. Both bundles ship in the extension; this
+    only picks which one THIS theme loads. See package.json build:storefront:beta / promote:stable.
+  {% endcomment %}
+  {% assign proto_channel = block.settings.channel | default: 'stable' %}
+  {% if proto_channel == 'beta' %}
+    {% assign proto_js = 'proto-configurator.beta.js' %}
+    {% assign proto_css = 'proto-configurator.beta.css' %}
+    {% assign proto_modal = 'proto-configurator-modal.beta.js' %}
+  {% else %}
+    {% assign proto_js = 'proto-configurator.js' %}
+    {% assign proto_css = 'proto-configurator.css' %}
+    {% assign proto_modal = 'proto-configurator-modal.js' %}
+  {% endif %}
+
   <script>
     document.documentElement.classList.add('proto-configurator-pending');
   </script>
@@ -13,11 +30,12 @@
       appProxyUrl: {{ block.settings.app_proxy_url | default: '/apps/proto-configurator' | json }},
       productId: {{ product.id | default: '' | json }},
       shopDomain: {{ shop.permanent_domain | default: shop.domain | json }},
-      modalUrl: {{ 'proto-configurator-modal.js' | asset_url | json }}
+      channel: {{ proto_channel | json }},
+      modalUrl: {{ proto_modal | asset_url | json }}
     };
   </script>
-  <script src="{{ 'proto-configurator.js' | asset_url }}" defer></script>
-  {{ 'proto-configurator.css' | asset_url | stylesheet_tag }}
+  <script src="{{ proto_js | asset_url }}" defer></script>
+  {{ proto_css | asset_url | stylesheet_tag }}
 
   <style>
     #proto-configurator-root {
@@ -153,6 +171,17 @@
       "id": "enabled",
       "label": "Enable configurator",
       "default": true
+    },
+    {
+      "type": "select",
+      "id": "channel",
+      "label": "Version",
+      "default": "stable",
+      "options": [
+        { "value": "stable", "label": "Stable (recommended for your live theme)" },
+        { "value": "beta", "label": "Beta (latest — for a test/draft theme only)" }
+      ],
+      "info": "Stable = the frozen, tested bundle. Beta = the latest build, for trying new changes on a draft theme without affecting your live theme. Set Beta ONLY on a duplicate/test theme."
     },
     {
       "type": "text",

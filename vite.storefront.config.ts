@@ -18,6 +18,12 @@ import autoprefixer from "autoprefixer";
  * gate (`…proto-configurator-button-wrapper`), which targets the page, not the modal. Keyframe step
  * selectors (from/to/%) are skipped — prefixing them is invalid.
  */
+// Channel suffix for the Stable/Beta release-channel system (see configurator-embed.liquid). The
+// default (stable) build writes `proto-configurator.js/css`; `PROTO_CHANNEL=beta` writes
+// `proto-configurator.beta.js/css`. The app embed loads one or the other per theme, so the live
+// theme can stay pinned to the frozen stable bundle while a draft theme runs the latest beta.
+const CHANNEL_SUFFIX = process.env.PROTO_CHANNEL === "beta" ? ".beta" : "";
+
 const EXCLUDE = /proto-configurator-root|proto-configurator-button-wrapper/;
 const scopeToModalRoot = {
   postcssPlugin: "proto-scope-to-modal-root",
@@ -47,11 +53,11 @@ export default defineConfig({
       entry: resolve(__dirname, "storefront/entry.tsx"),
       name: "ProtoConfigurator",
       formats: ["iife"],
-      fileName: () => "proto-configurator.js",
+      fileName: () => `proto-configurator${CHANNEL_SUFFIX}.js`,
     },
     rollupOptions: {
       output: {
-        assetFileNames: "proto-configurator.[ext]",
+        assetFileNames: `proto-configurator${CHANNEL_SUFFIX}.[ext]`,
         inlineDynamicImports: true,
       },
     },

@@ -26,8 +26,14 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Build storefront assets
-        run: npm run build:storefront
+      # Rebuild ONLY the beta bundle from this commit. The stable bundle
+      # (proto-configurator.{js,css} + proto-configurator-modal.js) is a committed, frozen artifact
+      # — it is NOT rebuilt here, so merging changes to main updates only the Beta channel (which a
+      # draft/test theme loads) and never the live theme, which is pinned to Stable. Promote a
+      # validated beta to stable deliberately with `npm run promote:stable` (rebuilds + commits the
+      # stable files); that commit then ships to Stable-channel themes on the next deploy.
+      - name: Build storefront BETA assets
+        run: npm run build:storefront:beta
 
       - name: Install Shopify CLI
         run: npm install -g @shopify/cli@latest
