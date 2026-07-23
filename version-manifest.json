@@ -1,0 +1,11 @@
+{
+  "current": "v1",
+  "history": [
+    {
+      "version": "v1",
+      "commit": "cb257b258483d05cf8fc5ff269db330e3d1537a0",
+      "promotedAt": "2026-07-23T15:16:00.000Z",
+      "label": "Modal design restored + P0 CSS isolation (pre-Stable/Beta baseline)"
+    }
+  ]
+}
