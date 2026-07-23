@@ -33,6 +33,25 @@
       channel: {{ proto_channel | json }},
       modalUrl: {{ proto_modal | asset_url | json }}
     };
+    /* Perf: start the linkage fetch NOW, during HTML parse, instead of after the deferred bundle
+       downloads + executes — the App Proxy round-trip overlaps page load. The bundle consumes
+       this promise for its first attempt (entry.tsx#fetchConfiguratorAttempt) and falls back to
+       its own retrying fetch if it's absent or failed. */
+    (function () {
+      try {
+        var s = window.ProtoConfiguratorSettings;
+        if (s && s.productId) {
+          var q = s.shopDomain ? '?shop=' + encodeURIComponent(s.shopDomain) : '';
+          window.ProtoConfiguratorEarlyFetch = window.fetch(
+            s.appProxyUrl + '/product/' + s.productId + q,
+            { credentials: 'same-origin', headers: { Accept: 'application/json' } }
+          );
+          /* Swallow here so an offline/failed early fetch never surfaces as an unhandled
+             rejection; the bundle re-fetches with retries on its own. */
+          window.ProtoConfiguratorEarlyFetch.catch(function () {});
+        }
+      } catch (e) { /* no-op — bundle fetches normally */ }
+    })();
   </script>
   <script src="{{ proto_js | asset_url }}" defer></script>
   {{ proto_css | asset_url | stylesheet_tag }}

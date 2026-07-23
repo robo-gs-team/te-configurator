@@ -20,11 +20,23 @@ import {
   type RecommendedStringsMaps,
 } from "~/lib/product-metafields.server";
 import type { StoredSnapshot } from "~/lib/snapshot.server";
+import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
+import { runAfterResponse } from "~/lib/after-response.server";
 import {
   getCachedProxyResponse,
   setCachedProxyResponse,
 } from "~/lib/proxy-cache.server";
 import { authenticate, unauthenticated } from "~/shopify.server";
+
+/**
+ * Self-heal stampede guard: when a configurator has no usable enrichedSnapshot, EVERY PDP request
+ * pays for live Shopify enrichment (the single biggest cause of slow/unreliable PDP loads) until
+ * a snapshot exists. We schedule a background rebuild from the request itself so the slow path
+ * fixes itself — but at most once per configurator per cooldown per lambda instance, so a burst
+ * of traffic can't fan out into dozens of concurrent full-catalog rebuilds.
+ */
+const snapshotRebuildAttempts = new Map<string, number>();
+const SNAPSHOT_REBUILD_COOLDOWN_MS = 10 * 60 * 1000;
 
 const PROXY_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -129,7 +141,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     }
 
-    // Snapshot not yet built (or corrupt) — fall back to live enrichment
+    // Snapshot not yet built (or corrupt) — fall back to live enrichment. Every request through
+    // this path does real Shopify Admin API work, so it must be a self-terminating state: below,
+    // after responding, we rebuild the snapshot in the background (see runAfterResponse) so
+    // subsequent requests take the fast snapshot path above instead.
     const [enrichedConfigurator, shop, tensionMap, recommendedMap] = await Promise.all([
       admin
         ? enrichConfiguratorWithShopifyData(admin, lookup.configurator)
@@ -158,6 +173,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       ),
     };
     setCachedProxyResponse(shopDomain, productId, responseData);
+
+    // Self-heal: build the missing snapshot in the background so this stops being the slow path.
+    if (admin) {
+      const configuratorId = lookup.configurator.id;
+      const lastAttempt = snapshotRebuildAttempts.get(configuratorId) ?? 0;
+      if (Date.now() - lastAttempt > SNAPSHOT_REBUILD_COOLDOWN_MS) {
+        snapshotRebuildAttempts.set(configuratorId, Date.now());
+        const adminForRebuild = admin;
+        runAfterResponse(() =>
+          refreshConfiguratorSnapshot(adminForRebuild, configuratorId, shop.id, shopDomain),
+        );
+      }
+    }
 
     return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "MISS" } });
   }

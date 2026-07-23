@@ -66,54 +66,69 @@ export async function lookupConfiguratorForProduct(
   const shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) return { status: "not_linked" };
 
-  const configurators = await prisma.configurator.findMany({
+  // Phase 1 — MATCH on the lightweight assignment columns only. This runs on every storefront
+  // PDP request (via the App Proxy), so it must not drag every configurator's full
+  // steps→optionGroups→options/addons/rules tree out of the DB just to compare a few ID lists.
+  // The full tree is fetched below for the single winner only.
+  const candidates = await prisma.configurator.findMany({
     where: { shopId: shop.id },
-    include: configuratorInclude,
+    select: {
+      id: true,
+      isActive: true,
+      productIds: true,
+      collectionIds: true,
+      excludedProductIds: true,
+    },
   });
 
   // A configurator never applies to a product the merchant explicitly excluded — even if that
   // product's ID or collection would otherwise match below.
-  const isExcludedFor = (configurator: (typeof configurators)[number]) => {
-    const excluded = parseJson<string[]>(
-      (configurator as { excludedProductIds?: string }).excludedProductIds ?? "[]",
-      [],
-    );
-    return productIdsMatch(excluded, productId);
-  };
+  const isExcludedFor = (candidate: (typeof candidates)[number]) =>
+    productIdsMatch(parseJson<string[]>(candidate.excludedProductIds ?? "[]", []), productId);
 
-  // First pass: check explicit product IDs — no network call needed
-  for (const configurator of configurators) {
-    if (isExcludedFor(configurator)) continue;
-    const productIds = parseJson<string[]>(configurator.productIds, []);
-    if (productIdsMatch(productIds, productId)) {
-      if (!configurator.isActive) return { status: "inactive", configurator };
-      return { status: "found", configurator };
+  let winner: (typeof candidates)[number] | undefined;
+
+  // First pass: explicit product IDs — no network call needed.
+  for (const candidate of candidates) {
+    if (isExcludedFor(candidate)) continue;
+    if (productIdsMatch(parseJson<string[]>(candidate.productIds, []), productId)) {
+      winner = candidate;
+      break;
     }
   }
 
-  // Second pass: check collection membership.
-  // Fetch the product's collections ONCE then compare in-memory against all configurators,
-  // instead of making one Shopify API call per configurator.
-  const collectionConfigurators = (configurators as ConfiguratorWithRelations[]).filter(
-    (c) => parseJson<string[]>(c.collectionIds, []).length > 0,
-  );
-
-  if (collectionConfigurators.length > 0 && admin) {
-    const productCollectionIds = await getProductCollectionIds(admin, productId, shopDomain);
-    const productCollSet = new Set(productCollectionIds.map(normalizeCollectionId));
-
-    for (const configurator of collectionConfigurators) {
-      if (isExcludedFor(configurator)) continue;
-      const collectionIds = parseJson<string[]>(configurator.collectionIds, []);
-      const matches = collectionIds.some((id) => productCollSet.has(normalizeCollectionId(id)));
-      if (matches) {
-        if (!configurator.isActive) return { status: "inactive", configurator };
-        return { status: "found", configurator };
+  // Second pass: collection membership. Fetch the product's collections ONCE then compare
+  // in-memory against all candidates, instead of one Shopify API call per configurator.
+  if (!winner) {
+    const collectionCandidates = candidates.filter(
+      (c) => parseJson<string[]>(c.collectionIds, []).length > 0,
+    );
+    if (collectionCandidates.length > 0 && admin) {
+      const productCollectionIds = await getProductCollectionIds(admin, productId, shopDomain);
+      const productCollSet = new Set(productCollectionIds.map(normalizeCollectionId));
+      for (const candidate of collectionCandidates) {
+        if (isExcludedFor(candidate)) continue;
+        const collectionIds = parseJson<string[]>(candidate.collectionIds, []);
+        if (collectionIds.some((id) => productCollSet.has(normalizeCollectionId(id)))) {
+          winner = candidate;
+          break;
+        }
       }
     }
   }
 
-  return { status: "not_linked" };
+  if (!winner) return { status: "not_linked" };
+
+  // Phase 2 — load the full relation tree for the winner alone.
+  const configurator = await prisma.configurator.findUnique({
+    where: { id: winner.id },
+    include: configuratorInclude,
+  });
+  if (!configurator) return { status: "not_linked" };
+
+  return winner.isActive
+    ? { status: "found", configurator }
+    : { status: "inactive", configurator };
 }
 
 export async function getConfiguratorForProduct(

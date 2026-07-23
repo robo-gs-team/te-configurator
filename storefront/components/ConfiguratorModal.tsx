@@ -13,10 +13,13 @@ import {
 
 declare global {
   interface Window {
+    // Must stay identical to the declaration in storefront/entry.tsx (TS requires duplicate
+    // global declarations to agree exactly).
     ProtoConfiguratorSettings?: {
       appProxyUrl: string;
       productId: string;
       shopDomain?: string;
+      channel?: string;
       modalUrl?: string;
     };
   }
