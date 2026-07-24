@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "@vercel/remix";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { ensureShop, trackAnalyticsEvent } from "../lib/configurator.server";
+import { runAfterResponse } from "../lib/after-response.server";
 
 // Shopify order/create webhook payload (REST-style snake_case). We only read the few fields we
 // need to attribute a purchase to a configurator.
@@ -45,74 +46,85 @@ function propMap(props?: WebhookLineItemProperty[] | null): Record<string, strin
  * Only requires the read_orders scope (already granted); we never write back to the order here.
  * Best-effort and idempotent — orders/create can be delivered more than once, so we skip an order
  * already recorded.
+ *
+ * Fast-ack: Shopify allows ~5s to respond to a webhook, and repeated timeouts get the webhook
+ * subscription silently disabled — which would kill purchase tracking store-wide, not just miss
+ * one order. `authenticate.webhook` (HMAC verify, no I/O) still runs before responding since it's
+ * what proves the request is really Shopify; everything that touches the database — the
+ * idempotency check and the actual analytics write(s) — runs via runAfterResponse AFTER the 200
+ * is already sent, so a slow/cold-start DB moment can never turn into a webhook timeout. This
+ * mirrors the existing runAfterResponse snapshot-rebuild pattern used in proxy.$.tsx.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, payload, topic } = await authenticate.webhook(request);
   console.log(`Received ${topic} webhook for ${shop}`);
 
   const order = payload as OrderWebhookPayload;
-  const lineItems = order.line_items ?? [];
-  const orderId = order.id != null ? String(order.id) : undefined;
-  const orderTotal = Number(order.total_price ?? 0) || 0;
 
-  const shopRecord = await ensureShop(shop);
+  runAfterResponse(async () => {
+    const lineItems = order.line_items ?? [];
+    const orderId = order.id != null ? String(order.id) : undefined;
+    const orderTotal = Number(order.total_price ?? 0) || 0;
 
-  // Idempotency: skip if this order was already recorded, whether as a configurator purchase or a
-  // baseline order_other (orders/create can be delivered more than once).
-  if (orderId) {
-    const existing = await prisma.analytics.findFirst({
-      where: {
-        shopId: shopRecord.id,
-        eventType: { in: ["purchase", "order_other"] },
-        metadata: { contains: `"orderId":"${orderId}"` },
-      },
-      select: { id: true },
+    const shopRecord = await ensureShop(shop);
+
+    // Idempotency: skip if this order was already recorded, whether as a configurator purchase or
+    // a baseline order_other (orders/create can be delivered more than once).
+    if (orderId) {
+      const existing = await prisma.analytics.findFirst({
+        where: {
+          shopId: shopRecord.id,
+          eventType: { in: ["purchase", "order_other"] },
+          metadata: { contains: `"orderId":"${orderId}"` },
+        },
+        select: { id: true },
+      });
+      if (existing) return;
+    }
+
+    const configuratorLines = lineItems.filter((li) => {
+      const m = propMap(li.properties);
+      return "_configurator_id" in m || "_parent_configurator" in m;
     });
-    if (existing) return new Response();
-  }
 
-  const configuratorLines = lineItems.filter((li) => {
-    const m = propMap(li.properties);
-    return "_configurator_id" in m || "_parent_configurator" in m;
-  });
+    if (configuratorLines.length === 0) {
+      // Non-configurator order — record only its total, so the dashboard can compute a store-wide
+      // AOV baseline to compare configurator orders against.
+      await trackAnalyticsEvent({
+        shopId: shopRecord.id,
+        eventType: "order_other",
+        metadata: { orderId, value: orderTotal },
+      });
+      return;
+    }
 
-  if (configuratorLines.length === 0) {
-    // Non-configurator order — record only its total, so the dashboard can compute a store-wide
-    // AOV baseline to compare configurator orders against.
+    // The racquet line carries _configurator_id (plus the full spec); fall back to the first
+    // configurator line if a future flow only sets _parent_configurator.
+    const racquetLine =
+      configuratorLines.find((li) => "_configurator_id" in propMap(li.properties)) ??
+      configuratorLines[0];
+    const racquetProps = propMap(racquetLine.properties);
+    const configuratorId =
+      racquetProps["_configurator_id"] || racquetProps["_parent_configurator"] || undefined;
+    const productId = racquetLine.product_id ? String(racquetLine.product_id) : undefined;
+    const sessionId = racquetProps["_proto_session"] || undefined;
+    const mode = racquetProps["Stringing mode"]?.toLowerCase() || undefined;
+
+    // value = the whole configured bundle (racquet + strings + labor + addons). incremental =
+    // what the configurator ADDED on top of the bare racquet frame (strings + labor + addons) —
+    // the app's direct revenue contribution.
+    const value = configuratorLines.reduce((sum, li) => sum + lineTotal(li), 0);
+    const racquetFrame = lineTotal(racquetLine);
+    const incremental = Math.max(0, value - racquetFrame);
+
     await trackAnalyticsEvent({
       shopId: shopRecord.id,
-      eventType: "order_other",
-      metadata: { orderId, value: orderTotal },
+      configuratorId,
+      eventType: "purchase",
+      productId,
+      sessionId,
+      metadata: { orderId, value, incremental, orderTotal, mode, currency: order.currency },
     });
-    return new Response();
-  }
-
-  // The racquet line carries _configurator_id (plus the full spec); fall back to the first
-  // configurator line if a future flow only sets _parent_configurator.
-  const racquetLine =
-    configuratorLines.find((li) => "_configurator_id" in propMap(li.properties)) ??
-    configuratorLines[0];
-  const racquetProps = propMap(racquetLine.properties);
-  const configuratorId =
-    racquetProps["_configurator_id"] || racquetProps["_parent_configurator"] || undefined;
-  const productId = racquetLine.product_id ? String(racquetLine.product_id) : undefined;
-  const sessionId = racquetProps["_proto_session"] || undefined;
-  const mode = racquetProps["Stringing mode"]?.toLowerCase() || undefined;
-
-  // value = the whole configured bundle (racquet + strings + labor + addons). incremental = what
-  // the configurator ADDED on top of the bare racquet frame (strings + labor + addons) — the app's
-  // direct revenue contribution.
-  const value = configuratorLines.reduce((sum, li) => sum + lineTotal(li), 0);
-  const racquetFrame = lineTotal(racquetLine);
-  const incremental = Math.max(0, value - racquetFrame);
-
-  await trackAnalyticsEvent({
-    shopId: shopRecord.id,
-    configuratorId,
-    eventType: "purchase",
-    productId,
-    sessionId,
-    metadata: { orderId, value, incremental, orderTotal, mode, currency: order.currency },
   });
 
   return new Response();

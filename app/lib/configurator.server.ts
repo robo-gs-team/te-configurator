@@ -58,20 +58,34 @@ export type ConfiguratorProductLookup =
   | { status: "inactive"; configurator: ConfiguratorWithRelations }
   | { status: "not_linked" };
 
-export async function lookupConfiguratorForProduct(
-  shopDomain: string,
-  productId: string,
-  admin?: ShopifyAdmin,
-): Promise<ConfiguratorProductLookup> {
-  const shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
-  if (!shop) return { status: "not_linked" };
+type ConfiguratorCandidate = {
+  id: string;
+  isActive: boolean;
+  productIds: string;
+  collectionIds: string;
+  excludedProductIds: string;
+};
 
-  // Phase 1 — MATCH on the lightweight assignment columns only. This runs on every storefront
-  // PDP request (via the App Proxy), so it must not drag every configurator's full
-  // steps→optionGroups→options/addons/rules tree out of the DB just to compare a few ID lists.
-  // The full tree is fetched below for the single winner only.
+/**
+ * Phase 1 of the product→configurator match: the lightweight assignment-column scan, shared by
+ * both the full lookup (below) and the linkage-only check (checkProductLinkage). Runs on every
+ * storefront PDP request, so it must not drag any configurator's full
+ * steps→optionGroups→options/addons/rules tree out of the DB just to compare a few ID lists —
+ * only the winner (if any) needs its full tree, fetched by the caller that actually needs it.
+ *
+ * Matching order: explicit product IDs first (no network call), then collection membership
+ * (one Shopify API call total, compared in-memory against every candidate) — exclusions checked
+ * first in both passes, so an explicitly-excluded product never matches via either path.
+ * @returns The winning candidate row, or undefined if none matched.
+ */
+async function findMatchingConfigurator(
+  shopId: string,
+  productId: string,
+  shopDomain: string,
+  admin?: ShopifyAdmin,
+): Promise<ConfiguratorCandidate | undefined> {
   const candidates = await prisma.configurator.findMany({
-    where: { shopId: shop.id },
+    where: { shopId },
     select: {
       id: true,
       isActive: true,
@@ -81,42 +95,43 @@ export async function lookupConfiguratorForProduct(
     },
   });
 
-  // A configurator never applies to a product the merchant explicitly excluded — even if that
-  // product's ID or collection would otherwise match below.
-  const isExcludedFor = (candidate: (typeof candidates)[number]) =>
+  const isExcludedFor = (candidate: ConfiguratorCandidate) =>
     productIdsMatch(parseJson<string[]>(candidate.excludedProductIds ?? "[]", []), productId);
 
-  let winner: (typeof candidates)[number] | undefined;
-
-  // First pass: explicit product IDs — no network call needed.
   for (const candidate of candidates) {
     if (isExcludedFor(candidate)) continue;
     if (productIdsMatch(parseJson<string[]>(candidate.productIds, []), productId)) {
-      winner = candidate;
-      break;
+      return candidate;
     }
   }
 
-  // Second pass: collection membership. Fetch the product's collections ONCE then compare
-  // in-memory against all candidates, instead of one Shopify API call per configurator.
-  if (!winner) {
-    const collectionCandidates = candidates.filter(
-      (c) => parseJson<string[]>(c.collectionIds, []).length > 0,
-    );
-    if (collectionCandidates.length > 0 && admin) {
-      const productCollectionIds = await getProductCollectionIds(admin, productId, shopDomain);
-      const productCollSet = new Set(productCollectionIds.map(normalizeCollectionId));
-      for (const candidate of collectionCandidates) {
-        if (isExcludedFor(candidate)) continue;
-        const collectionIds = parseJson<string[]>(candidate.collectionIds, []);
-        if (collectionIds.some((id) => productCollSet.has(normalizeCollectionId(id)))) {
-          winner = candidate;
-          break;
-        }
+  const collectionCandidates = candidates.filter(
+    (c) => parseJson<string[]>(c.collectionIds, []).length > 0,
+  );
+  if (collectionCandidates.length > 0 && admin) {
+    const productCollectionIds = await getProductCollectionIds(admin, productId, shopDomain);
+    const productCollSet = new Set(productCollectionIds.map(normalizeCollectionId));
+    for (const candidate of collectionCandidates) {
+      if (isExcludedFor(candidate)) continue;
+      const collectionIds = parseJson<string[]>(candidate.collectionIds, []);
+      if (collectionIds.some((id) => productCollSet.has(normalizeCollectionId(id)))) {
+        return candidate;
       }
     }
   }
 
+  return undefined;
+}
+
+export async function lookupConfiguratorForProduct(
+  shopDomain: string,
+  productId: string,
+  admin?: ShopifyAdmin,
+): Promise<ConfiguratorProductLookup> {
+  const shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
+  if (!shop) return { status: "not_linked" };
+
+  const winner = await findMatchingConfigurator(shop.id, productId, shopDomain, admin);
   if (!winner) return { status: "not_linked" };
 
   // Phase 2 — load the full relation tree for the winner alone.
@@ -129,6 +144,46 @@ export async function lookupConfiguratorForProduct(
   return winner.isActive
     ? { status: "found", configurator }
     : { status: "inactive", configurator };
+}
+
+export type ProductLinkageStatus = {
+  linked: boolean;
+  code?: "not_linked" | "inactive" | "button_disabled";
+};
+
+/**
+ * Answer ONLY "does this product have a working, enabled configurator?" — no relation tree, no
+ * enrichment, no snapshot parsing. This is the split-phase fetch's linkage check: on every PDP
+ * page load, the storefront used to fetch the ENTIRE configurator payload (full string catalog,
+ * every variant, prices — potentially hundreds of KB) just to decide whether to show a button.
+ * That decision only ever needed a boolean. This function costs one lightweight candidate scan
+ * (phase 1 above — no relation-tree fetch at all) plus a cheap single-row theme-settings read;
+ * the full catalog is fetched separately, only once the shopper shows intent (hover/click) — see
+ * proxy.$.tsx's `product/:id/link` route and storefront/entry.tsx's split fetch.
+ *
+ * `winner.isActive` already comes out of the phase-1 candidate scan, so unlike
+ * lookupConfiguratorForProduct there is no phase-2 DB call at all for the "not linked"/"inactive"
+ * outcomes — only a linked+active+enabled result required a second (still tiny) query.
+ */
+export async function checkProductLinkage(
+  shopDomain: string,
+  productId: string,
+  admin?: ShopifyAdmin,
+): Promise<ProductLinkageStatus> {
+  const shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
+  if (!shop) return { linked: false, code: "not_linked" };
+
+  const winner = await findMatchingConfigurator(shop.id, productId, shopDomain, admin);
+  if (!winner) return { linked: false, code: "not_linked" };
+  if (!winner.isActive) return { linked: false, code: "inactive" };
+
+  // Shop-wide kill switch (Theme Settings → "Enable customize button globally") overrides any
+  // individual configurator's active state — same semantics as the full endpoint's
+  // `configurator.theme.buttonEnabled === false` check.
+  const theme = await getShopThemeSettings(shop.id);
+  if (theme.buttonEnabled === false) return { linked: false, code: "button_disabled" };
+
+  return { linked: true };
 }
 
 export async function getConfiguratorForProduct(

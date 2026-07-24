@@ -110,10 +110,29 @@
       opacity: 0.65;
     }
 
-    /* Hidden until the app confirms this racquet is assigned to a v2 configurator, so the button
-       never flashes before the linkage check resolves. Mirrors the app embed's linkage rules. */
-    html.proto-configurator-pending .proto-v2-standalone-wrapper {
+    /* Hidden by DEFAULT (not just while html.proto-configurator-pending is set) — a real layout
+       shift was traced to this: the app embed that adds the "pending" class lives in a separate
+       `target: body` block, which Shopify injects near the END of <body>, well after THIS
+       `target: section` block (placed wherever the merchant put it, e.g. right under the variant
+       selector) has already parsed and painted. That left a window where the button rendered
+       fully visible at its natural size before the later script hid it — visible on load, then
+       hidden, then shown again once linked, reading as a layout jump. Gating on our OWN inline
+       CSS instead — co-located with this exact markup, so there is no cross-block timing to race
+       — means the button is hidden from the very first paint, no matter where any other script on
+       the page happens to run. `visibility` (not `display`) still reserves the layout space, so
+       showing it later causes no shift; only an explicit `proto-configurator-linked` class (set
+       once the app confirms this racquet has a configurator) reveals it.
+       Edge case: if page JS never runs at all (blocked/disabled — rare, and the rest of this
+       storefront's cart/checkout needs JS too), neither the "linked" nor "unlinked" class is ever
+       set, so this reserved space stays permanently blank rather than showing a dead, non-
+       functional button — the same trade-off the old default (nothing hidden until JS said so)
+       made in the opposite, worse direction: a visible button that silently does nothing. */
+    .proto-v2-standalone-wrapper {
       visibility: hidden;
+    }
+
+    html.proto-configurator-linked .proto-v2-standalone-wrapper {
+      visibility: visible;
     }
 
     html.proto-configurator-unlinked .proto-v2-standalone-wrapper {

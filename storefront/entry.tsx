@@ -32,9 +32,10 @@ declare global {
       channel?: string;
       modalUrl?: string;
     };
-    /** Linkage fetch kicked off inline by the embed liquid during HTML parse (before this
+    /** Linkage-check fetch kicked off inline by the embed liquid during HTML parse (before this
      *  deferred bundle runs), so the network round-trip overlaps page load instead of following
-     *  it. Consumed (once) by fetchConfiguratorAttempt. */
+     *  it. Targets the LIGHT `/product/:id/link` endpoint (~100 bytes), not the full catalog —
+     *  see fetchLinkageAttempt. Consumed (once) by it. */
     ProtoConfiguratorEarlyFetch?: Promise<Response>;
     Shopify?: {
       shop?: string;
@@ -47,32 +48,39 @@ declare global {
  *
  * The storefront bundle's tiny entry point. Loaded (deferred) by the App Embed on every page
  * where the embed is enabled. Deliberately carries NO React — that lives in the separate
- * proto-configurator-modal.js bundle, loaded lazily on first interaction. Responsibilities:
+ * proto-configurator-modal.js bundle, loaded lazily on first interaction.
+ *
+ * Split-phase fetch: page load only ever asks the App Proxy "is this product linked?" (~100
+ * bytes) — never the full string catalog, which used to ship on EVERY product page view just to
+ * decide whether to show a button. The full catalog is fetched separately, warmed in the
+ * background (idle + hover/touch/focus "intent" signals) once linkage confirms the button should
+ * exist, with a same-click fallback fetch if neither warm-up finished in time. Responsibilities:
  *   - decide whether this product has a configurator (linkage check) and reveal/inject the
  *     Configure button accordingly
  *   - wire up the Strung/Unstrung gate and the global Configure-click handler
- *   - on the first Configure click, lazy-load the modal bundle, then open it (with cached data)
+ *   - warm the full catalog + modal bundle in the background once linked, so a real click is
+ *     instant in the overwhelming majority of cases
+ *   - on the first Configure click, ensure the full catalog + modal bundle are ready, then open
  *   - restore a shared configuration from a `?proto_config=` URL (also lazy-loads the modal)
  *
  * It exposes a small `window.ProtoConfigurator` API ({ open, close }) for external callers.
  */
 
-// Cache configurator data per productId so the Configure button click is instant
-// (avoids a second API round-trip after initStorefrontUi already fetched it).
+// In-memory cache of the FULL catalog per productId, once fetched — click is instant afterward
+// (avoids a second API round-trip after it's already been fetched once this page view).
 const configuratorCache = new Map<string, StorefrontConfigurator>();
 
 /**
- * sessionStorage cache of the proxy payload, so REPEAT views of a product this session (back
- * button, browsing several racquets, variant-change section reloads) show the Configure button
- * instantly instead of waiting on the App Proxy round-trip every single time. The cached copy is
- * served immediately and silently revalidated in the background (see initStorefrontUi), so it can
- * never go stale for longer than one page view + TTL. Bump the version on payload shape changes.
+ * sessionStorage cache of the FULL catalog payload, so REPEAT views of a product this session
+ * (back button, browsing several racquets, variant-change section reloads) that have ALREADY
+ * fetched the full catalog once don't refetch it. Served immediately and silently revalidated in
+ * the background (see revalidateConfigurator), so it can never go stale for longer than one page
+ * view + TTL. Bump the version on payload shape changes.
  */
 const SESSION_CACHE_VERSION = "v1";
-// 30 min (was 5): repeat browsing — comparing several racquets over many minutes, back/forward —
-// keeps painting the button INSTANTLY from cache instead of re-fetching the payload every 5 min.
-// Safe to lengthen because a served copy is silently revalidated in the background on every view
-// (see initStorefrontUi → revalidateConfigurator), so it never actually goes stale to the shopper.
+// 30 min: repeat browsing — comparing several racquets over many minutes, back/forward — keeps
+// using the cached catalog instead of re-fetching. Safe to lengthen because a served copy is
+// silently revalidated in the background on every view that shows it.
 const SESSION_CACHE_TTL_MS = 30 * 60 * 1000;
 
 function sessionCacheKey(productId: string): string {
@@ -105,6 +113,63 @@ function writeSessionCache(productId: string, configurator: StorefrontConfigurat
 function clearSessionCache(productId: string): void {
   try {
     window.sessionStorage.removeItem(sessionCacheKey(productId));
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * sessionStorage cache of the LINKAGE-ONLY answer (linked boolean + definitive code), separate
+ * from the full-catalog cache above. This is what makes repeat views of the vast majority of a
+ * general store's product pages — anything with NO configurator — cost zero network requests
+ * after the first: a cached definitive negative hides the button with no round-trip at all.
+ * Positive and negative entries use different TTLs (see below).
+ */
+const LINK_CACHE_VERSION = "v1";
+// Matches the full-catalog cache's TTL — a positive linkage result is silently re-checked in the
+// background on every view anyway (see revalidateLinkage), so it can't actually go stale to the
+// shopper for longer than one page view.
+const LINK_CACHE_POSITIVE_TTL_MS = 30 * 60 * 1000;
+// Shorter than the positive TTL: a cached NEGATIVE result skips the round-trip entirely (there's
+// nothing to reveal, so no background revalidation runs against a hidden button) — bounding this
+// more tightly limits how long a newly-linked product could still read as "not linked" from a
+// stale cache entry, while still eliminating the round-trip for most of a session.
+const LINK_CACHE_NEGATIVE_TTL_MS = 10 * 60 * 1000;
+
+type LinkCacheEntry = { at: number; linked: boolean; code?: string };
+
+function linkCacheKey(productId: string): string {
+  return `proto_link_${LINK_CACHE_VERSION}:${getShopDomain()}:${normalizeProductId(productId)}`;
+}
+
+function readLinkCache(productId: string): LinkCacheEntry | null {
+  try {
+    const raw = window.sessionStorage.getItem(linkCacheKey(productId));
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as LinkCacheEntry;
+    if (typeof entry?.linked !== "boolean") return null;
+    const ttl = entry.linked ? LINK_CACHE_POSITIVE_TTL_MS : LINK_CACHE_NEGATIVE_TTL_MS;
+    if (Date.now() - entry.at > ttl) return null;
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+function writeLinkCache(productId: string, data: { linked: boolean; code?: string }): void {
+  try {
+    window.sessionStorage.setItem(
+      linkCacheKey(productId),
+      JSON.stringify({ at: Date.now(), ...data } satisfies LinkCacheEntry),
+    );
+  } catch {
+    // best-effort
+  }
+}
+
+function clearLinkCache(productId: string): void {
+  try {
+    window.sessionStorage.removeItem(linkCacheKey(productId));
   } catch {
     // best-effort
   }
@@ -172,20 +237,29 @@ function getProxyUrl(): string {
 }
 
 /** Per-attempt fetch timeout. Short on purpose: a hung attempt should fail fast and RETRY
- *  (see fetchConfigurator) instead of blocking the Configure button behind one 15s stall. */
+ *  instead of blocking the Configure button behind one 15s stall. */
 const FETCH_ATTEMPT_TIMEOUT_MS = 7000;
 /** Backoff before retry attempts 2 and 3. Transient App Proxy blips / serverless cold starts
  *  are routine; a quick retry converts most of them into a success instead of a dead button. */
 const FETCH_RETRY_DELAYS_MS = [400, 1500];
 
-/** One HTTP attempt. Uses the embed's early-fetch promise (kicked off inline in
- *  configurator-embed.liquid during HTML parse, before this deferred bundle even runs) for the
- *  first attempt when available — the response is typically already in flight or done by now. */
-async function fetchConfiguratorAttempt(url: string): Promise<Response> {
-  const early = window.ProtoConfiguratorEarlyFetch;
+function buildProductUrl(productId: string, suffix: ""): string;
+function buildProductUrl(productId: string, suffix: "/link"): string;
+function buildProductUrl(productId: string, suffix: "" | "/link"): string {
+  const proxyUrl = getProxyUrl();
+  const normalizedId = normalizeProductId(productId);
+  const shop = getShopDomain();
+  const query = new URLSearchParams();
+  if (shop) query.set("shop", shop);
+  const queryString = query.toString();
+  return `${proxyUrl}/product/${normalizedId}${suffix}${queryString ? `?${queryString}` : ""}`;
+}
+
+/** One HTTP attempt against `url`, racing an optional early-fetch promise (kicked off inline in
+ *  configurator-embed.liquid during HTML parse, before this deferred bundle even runs) — the
+ *  response is typically already in flight or done by now. */
+async function fetchAttempt(url: string, early?: Promise<Response>): Promise<Response> {
   if (early) {
-    // Consume once; a failed early fetch must not poison retries.
-    window.ProtoConfiguratorEarlyFetch = undefined;
     let timer = 0;
     const timeout = new Promise<never>((_, reject) => {
       timer = window.setTimeout(
@@ -214,30 +288,20 @@ async function fetchConfiguratorAttempt(url: string): Promise<Response> {
 }
 
 /**
- * Fetch the configurator for a product from the App Proxy (`GET /product/:id`).
+ * Fetch the LINKAGE-ONLY status for a product from the App Proxy (`GET /product/:id/link`) —
+ * phase 1 of the split-phase fetch. Consumes the embed's early-fetch (which now targets this
+ * endpoint, not the full catalog). Same retry semantics as the full fetch below: up to 3
+ * attempts, retrying network errors/timeouts/5xx/non-JSON; a definitive answer (linked, or a
+ * `code`d negative) is never retried.
  *
- * Reliability: up to 3 attempts (7s timeout each, short backoff between) — retrying on network
- * errors, timeouts, 5xx, and non-JSON responses (all transient failure modes of the
- * Shopify-proxy→serverless path). Definitive answers (success, or a 2xx/4xx JSON body saying
- * not-linked/inactive) are never retried.
- *
- * @returns `{ configurator }` on success, or `{ configurator: null, error, code? }`. `code` is
- *   set for DEFINITIVE negative answers ("not_linked" / "inactive") so callers can distinguish
- *   "this product really has no configurator" from a transient fetch failure.
+ * @returns `{ linked: true }` on success, `{ linked: false, code }` for a DEFINITIVE negative
+ *   ("not_linked" / "inactive" / "button_disabled"), or `{ linked: false, error }` (no code) for
+ *   a transient failure — callers use the presence of `code` to distinguish the two.
  */
-async function fetchConfigurator(
+async function fetchLinkage(
   productId: string,
-): Promise<{ configurator: StorefrontConfigurator | null; error?: string; code?: string }> {
-  const proxyUrl = getProxyUrl();
-  const normalizedId = normalizeProductId(productId);
-  const shop = getShopDomain();
-
-  const query = new URLSearchParams();
-  if (shop) query.set("shop", shop);
-
-  const queryString = query.toString();
-  const url = `${proxyUrl}/product/${normalizedId}${queryString ? `?${queryString}` : ""}`;
-
+): Promise<{ linked: boolean; code?: string; error?: string }> {
+  const url = buildProductUrl(productId, "/link");
   let lastError = "Unable to reach the configurator. Please refresh the page and try again.";
 
   for (let attempt = 0; attempt <= FETCH_RETRY_DELAYS_MS.length; attempt++) {
@@ -245,7 +309,57 @@ async function fetchConfigurator(
       await new Promise((r) => window.setTimeout(r, FETCH_RETRY_DELAYS_MS[attempt - 1]));
     }
     try {
-      const res = await fetchConfiguratorAttempt(url);
+      const early = attempt === 0 ? window.ProtoConfiguratorEarlyFetch : undefined;
+      if (early) window.ProtoConfiguratorEarlyFetch = undefined; // consume once
+      const res = await fetchAttempt(url, early);
+      const contentType = res.headers.get("content-type") ?? "";
+      const raw = await res.text();
+
+      if (res.status >= 500 || !contentType.includes("application/json")) {
+        lastError = "Unable to load configurator. Please refresh the page and try again.";
+        continue;
+      }
+
+      const data = JSON.parse(raw) as { linked?: boolean; code?: string };
+      if (data.linked) return { linked: true };
+      return { linked: false, code: data.code };
+    } catch (err) {
+      const aborted = err instanceof DOMException && err.name === "AbortError";
+      lastError = aborted
+        ? "Configurator request timed out. Please refresh the page and try again."
+        : "Unable to reach the configurator. Please refresh the page and try again.";
+    }
+  }
+
+  return { linked: false, error: lastError };
+}
+
+/**
+ * Fetch the FULL configurator catalog for a product from the App Proxy (`GET /product/:id`) —
+ * phase 2 of the split-phase fetch, used once the shopper shows intent (hover/touch/focus/click)
+ * rather than unconditionally on every page load. Endpoint and response shape unchanged from
+ * before the split — only the trigger moved.
+ *
+ * Reliability: up to 3 attempts (7s timeout each, short backoff between) — retrying on network
+ * errors, timeouts, 5xx, and non-JSON responses. Definitive answers (success, or a 2xx/4xx JSON
+ * body saying not-linked/inactive) are never retried.
+ *
+ * @returns `{ configurator }` on success, or `{ configurator: null, error, code? }`. `code` is
+ *   set for DEFINITIVE negative answers so callers can distinguish "this product really has no
+ *   configurator" from a transient fetch failure.
+ */
+async function fetchFullConfigurator(
+  productId: string,
+): Promise<{ configurator: StorefrontConfigurator | null; error?: string; code?: string }> {
+  const url = buildProductUrl(productId, "");
+  let lastError = "Unable to reach the configurator. Please refresh the page and try again.";
+
+  for (let attempt = 0; attempt <= FETCH_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => window.setTimeout(r, FETCH_RETRY_DELAYS_MS[attempt - 1]));
+    }
+    try {
+      const res = await fetchAttempt(url);
       const contentType = res.headers.get("content-type") ?? "";
       const raw = await res.text();
 
@@ -295,6 +409,57 @@ async function fetchConfigurator(
   return { configurator: null, error: lastError };
 }
 
+// In-flight full-catalog fetch per productId, so a hover-triggered warm-up and a subsequent real
+// click share ONE request instead of firing two.
+const fullCatalogInFlight = new Map<
+  string,
+  Promise<{ configurator: StorefrontConfigurator | null; error?: string; code?: string }>
+>();
+
+/**
+ * Resolve the full catalog for a product: in-memory cache, then sessionStorage cache, then an
+ * in-flight fetch already started by a warm-up, then a fresh fetch — in that order, never doing
+ * more than one network request at a time per product. Every caller (background warm-up on
+ * idle/hover, and the click handler's fallback) goes through this single path, so the two can
+ * never race into duplicate requests.
+ */
+function fetchAndCacheFullCatalog(
+  productId: string,
+): Promise<{ configurator: StorefrontConfigurator | null; error?: string; code?: string }> {
+  const cached = configuratorCache.get(productId) ?? readSessionCache(productId);
+  if (cached) {
+    configuratorCache.set(productId, cached);
+    return Promise.resolve({ configurator: cached });
+  }
+
+  const inFlight = fullCatalogInFlight.get(productId);
+  if (inFlight) return inFlight;
+
+  const promise = fetchFullConfigurator(productId).then((result) => {
+    if (result.configurator) {
+      configuratorCache.set(productId, result.configurator);
+      writeSessionCache(productId, result.configurator);
+    }
+    return result;
+  });
+  fullCatalogInFlight.set(productId, promise);
+  void promise.finally(() => {
+    // Only clear if this is still the tracked promise (a newer call could have replaced it).
+    if (fullCatalogInFlight.get(productId) === promise) fullCatalogInFlight.delete(productId);
+  });
+  return promise;
+}
+
+/**
+ * Fire-and-forget background warm-up of the full catalog — failures are silently swallowed
+ * (nothing is cached on failure, so a later real click/warm-up attempt will genuinely retry
+ * rather than getting stuck on a cached failure). Safe to call unconditionally and repeatedly:
+ * fetchAndCacheFullCatalog short-circuits to zero network work once cached or already in flight.
+ */
+function prefetchFullCatalog(productId: string): void {
+  void fetchAndCacheFullCatalog(productId).catch(() => {});
+}
+
 /** Toggle the Configure button's loading state (disabled + busy + wait cursor) during fetch. */
 function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
   trigger.toggleAttribute("disabled", loading);
@@ -304,37 +469,31 @@ function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
 }
 
 /**
- * Open the modal for a product. Uses the per-product cache for an instant open when available;
- * otherwise shows a loading state on the button, fetches, caches, and opens. Surfaces any error
- * inline on the button. Also preloads option images so the modal renders without pop-in.
+ * Open the modal for a product. Uses the full-catalog cache (or an in-flight warm-up already
+ * started by hover/idle) for an instant-or-near-instant open in the common case; otherwise shows
+ * a loading state on the button while fetchAndCacheFullCatalog does a fresh fetch. Surfaces any
+ * error inline on the button.
  */
 async function openConfigurator(productId: string, trigger: HTMLElement) {
   clearConfigureError(trigger);
   setTriggerLoading(trigger, true);
 
   try {
-    // Resolve the configurator data (cached from the on-load linkage check when possible)
-    // and lazy-load the modal bundle in parallel — both must be ready before we open.
-    let configurator = configuratorCache.get(productId);
-    if (!configurator) {
-      const result = await fetchConfigurator(productId);
-      if (result.error) {
-        showConfigureError(trigger, result.error);
-        return;
-      }
-      if (!result.configurator) {
-        showConfigureError(
-          trigger,
-          "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
-        );
-        return;
-      }
-      configurator = result.configurator;
-      configuratorCache.set(productId, configurator);
+    const result = await fetchAndCacheFullCatalog(productId);
+    if (result.error) {
+      showConfigureError(trigger, result.error);
+      return;
+    }
+    if (!result.configurator) {
+      showConfigureError(
+        trigger,
+        "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
+      );
+      return;
     }
 
     const modal = await loadModal();
-    modal.open(productId, configurator);
+    modal.open(productId, result.configurator);
   } catch (err) {
     showConfigureError(
       trigger,
@@ -436,6 +595,35 @@ function initConfigureClickDelegation() {
   );
 }
 
+/**
+ * Install delegated "intent" listeners (hover, touch, keyboard focus) that warm the full catalog
+ * BEFORE the shopper actually clicks — so by the time a deliberate click lands, the data is
+ * usually already there and the modal opens instantly, same as before the split-phase fetch. A
+ * click with no prior intent signal (e.g. a very fast tap) still works via openConfigurator's own
+ * fallback fetch; this is purely a head start, never required for correctness. Bound at most once.
+ */
+function initConfigurePrefetchDelegation() {
+  if (document.documentElement.dataset.protoPrefetchDelegated) return;
+  document.documentElement.dataset.protoPrefetchDelegated = "true";
+
+  const handler = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const trigger = target.closest<HTMLElement>("[data-proto-configurator-trigger]");
+    if (!trigger || !isConfigureTriggerVisible(trigger)) return;
+    const productId =
+      trigger.dataset.productId ?? window.ProtoConfiguratorSettings?.productId ?? "";
+    if (!productId) return;
+    prefetchFullCatalog(productId);
+  };
+
+  // pointerover covers mouse hover (desktop); touchstart covers touch devices (fires just ahead
+  // of click, a short but real head start); focusin covers keyboard navigation (Tab to button).
+  document.addEventListener("pointerover", handler, true);
+  document.addEventListener("touchstart", handler, { capture: true, passive: true });
+  document.addEventListener("focusin", handler, true);
+}
+
 /** Mark all existing trigger buttons as bound (a simple presence flag; clicks use delegation). */
 function initButtons() {
   document.querySelectorAll("[data-proto-configurator-trigger]").forEach((el) => {
@@ -474,7 +662,9 @@ function injectProductPageButton() {
 /**
  * If the URL carries `?proto_config={shareId}`, fetch that saved configuration from the proxy
  * (`GET /share/:id`) and open the modal with its selections restored. Silently does nothing if
- * the param is absent or the fetch fails.
+ * the param is absent or the fetch fails. Unaffected by the split-phase fetch — a share link is
+ * an explicit request to view a specific configuration right now, so it always fetches the full
+ * payload directly (there's no linkage decision to make first).
  */
 function initShareRestore() {
   const params = new URLSearchParams(window.location.search);
@@ -507,12 +697,6 @@ function initShareRestore() {
     .catch(() => {});
 }
 
-/**
- * The on-load linkage routine: find the page's product id, mark linkage pending, and fetch the
- * configurator. If none is linked, mark unlinked (hides the button). If one is linked, cache it,
- * mark linked, inject the fallback button if needed, schedule placement, and init the gate.
- * This is what decides whether the Configure button appears on this product page.
- */
 /** Run a low-priority task during browser idle time, falling back to a short timeout. */
 function whenIdle(fn: () => void): void {
   const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => void })
@@ -546,12 +730,28 @@ function prefetchModalBundle(): void {
   }
 }
 
-/** Apply the full "linked" UI state for a resolved configurator (button visible + wired). */
-function applyLinkedUi(productId: string, configurator: StorefrontConfigurator) {
-  configuratorCache.set(productId, configurator);
+/**
+ * Everything worth warming up once a page is confirmed linked: the modal JS bundle and the full
+ * catalog. Both are pure background head-starts — a click still works correctly (just slower)
+ * if either hasn't finished, or failed, by the time it happens.
+ */
+function warmUpForLikelyClick(productId: string): void {
+  prefetchModalBundle();
+  prefetchFullCatalog(productId);
+}
+
+/**
+ * Apply the full "linked" UI state. `configurator`, when already known (e.g. a full-catalog cache
+ * hit from an earlier click this session), is cached immediately; when linkage was confirmed via
+ * the lightweight link-only check, this is called with no configurator yet — the full catalog is
+ * fetched separately (see warmUpForLikelyClick / openConfigurator).
+ */
+function applyLinkedUi(productId: string, configurator?: StorefrontConfigurator) {
+  if (configurator) configuratorCache.set(productId, configurator);
   markProductLinked();
-  // Linked page → a Configure click is plausible; warm the modal bundle when the browser is idle.
-  whenIdle(prefetchModalBundle);
+  // A Configure click is now plausible; warm the modal bundle + full catalog when the browser is
+  // idle (a no-op for whichever of the two, if any, is already cached/in flight).
+  whenIdle(() => warmUpForLikelyClick(productId));
 
   // Standalone v2 mode: the "Configure Racquet" button is fully self-contained. Skip every piece
   // of DOM surgery (fallback injection, buy-box relocation, Strung/Unstrung gate) — the block
@@ -572,24 +772,48 @@ function applyLinkedUi(productId: string, configurator: StorefrontConfigurator) 
 }
 
 /**
- * Silently refresh a cache-served configurator from the proxy. Success updates both caches (so
+ * Silently refresh a cache-served FULL catalog from the proxy. Success updates both caches (so
  * prices/availability in the modal stay ≤ one page view stale). A DEFINITIVE negative answer
- * (code "not_linked"/"inactive" — the merchant unassigned this racquet or turned the
- * configurator off) drops the caches and hides the button. Transient failures (network/timeout,
+ * (code "not linked"/"inactive" — the merchant unassigned this racquet or turned the configurator
+ * off) drops every cache (full + link) and hides the button. Transient failures (network/timeout,
  * no `code`) change nothing — the cached experience keeps working.
  */
 async function revalidateConfigurator(productId: string) {
-  const { configurator, code } = await fetchConfigurator(productId);
+  const { configurator, code } = await fetchFullConfigurator(productId);
   if (configurator && configurator.theme.buttonEnabled !== false) {
     configuratorCache.set(productId, configurator);
     writeSessionCache(productId, configurator);
+    writeLinkCache(productId, { linked: true });
     return;
   }
   if (code || (configurator && configurator.theme.buttonEnabled === false)) {
     configuratorCache.delete(productId);
     clearSessionCache(productId);
+    clearLinkCache(productId);
     markProductUnlinked();
   }
+}
+
+/**
+ * Silently re-check LINKAGE ONLY (not the full catalog) for a product whose button is showing
+ * from a link-only cache hit (no full catalog fetched yet this view). Mirrors
+ * revalidateConfigurator's semantics for the lightweight case: a definitive negative hides the
+ * button and clears every cache; a transient failure changes nothing; a confirmed positive just
+ * refreshes the cache timestamp.
+ */
+async function revalidateLinkage(productId: string) {
+  const linkage = await fetchLinkage(productId);
+  if (linkage.linked) {
+    writeLinkCache(productId, { linked: true });
+    return;
+  }
+  if (linkage.code) {
+    writeLinkCache(productId, { linked: false, code: linkage.code });
+    configuratorCache.delete(productId);
+    clearSessionCache(productId);
+    markProductUnlinked();
+  }
+  // transient failure (no code) — change nothing, cached "linked" experience keeps working
 }
 
 async function initStorefrontUi() {
@@ -599,54 +823,70 @@ async function initStorefrontUi() {
     return;
   }
 
-  // Cache-first: an in-memory hit (section:load re-run on the same page) or a sessionStorage hit
-  // (back button / revisits this session) shows the button IMMEDIATELY — no pending-hide flash,
-  // no App Proxy round-trip on the critical path — then revalidates silently in the background.
-  const cached = configuratorCache.get(productId) ?? readSessionCache(productId);
-  if (cached && cached.theme.buttonEnabled !== false) {
-    applyLinkedUi(productId, cached);
+  // Fastest path: the FULL catalog is already cached (e.g. the shopper opened the modal earlier
+  // this session, or this is a shopify:section:load re-run on the same page) — strictly more
+  // informed than the lightweight link cache, so use it directly and skip even the light fetch.
+  const fullCached = configuratorCache.get(productId) ?? readSessionCache(productId);
+  if (fullCached && fullCached.theme.buttonEnabled !== false) {
+    applyLinkedUi(productId, fullCached);
     void revalidateConfigurator(productId);
     return;
   }
 
+  // Common repeat-view path: a cached linkage-only answer from earlier this session. Positive →
+  // show the button immediately (full catalog warms in the background); negative → hide with NO
+  // round-trip at all — this is what makes repeat views of non-configured products free.
+  const linkHit = readLinkCache(productId);
+  if (linkHit) {
+    if (linkHit.linked) {
+      applyLinkedUi(productId);
+      void revalidateLinkage(productId);
+    } else {
+      markProductUnlinked();
+    }
+    return;
+  }
+
+  // No cache at all — the split-phase fetch's page-load request: ~100 bytes to decide show/hide,
+  // instead of the full catalog this used to cost on every single PDP view.
   markProductLinkagePending();
-  const { configurator } = await fetchConfigurator(productId);
-  if (!configurator) {
+  const linkage = await fetchLinkage(productId);
+
+  if (!linkage.linked) {
     // Theme Editor: linkage can't resolve here (the App Proxy doesn't run in the editor preview),
-    // so a null result is EXPECTED, not "unlinked". Reveal the standalone button anyway so the
-    // merchant can see and position the block; it gates normally on the live storefront where the
-    // proxy works. (Only the self-contained v2 button — the legacy buy-box gate must never run in
-    // the editor.) Non-editor: a null result genuinely means not linked → hide.
-    if (isThemeEditor() && isStandaloneV2Mode()) {
+    // so a result with no code (a transient failure, not a real negative) is EXPECTED, not
+    // "unlinked". Reveal the standalone button anyway so the merchant can see and position the
+    // block; it gates normally on the live storefront where the proxy works. (Only the
+    // self-contained v2 button — the legacy buy-box gate must never run in the editor.)
+    if (!linkage.code && isThemeEditor() && isStandaloneV2Mode()) {
       markProductLinked();
       initV2StandaloneGate();
       initButtons();
       return;
     }
+    if (linkage.code) {
+      // Definitive negative (not_linked / inactive / button_disabled) — cache it so repeat views
+      // of this product (very likely, for a non-configured product on a general store) cost
+      // nothing.
+      writeLinkCache(productId, { linked: false, code: linkage.code });
+    }
     markProductUnlinked();
     return;
   }
 
-  // Merchant-wide kill switch (Theme Settings > "Enable customize button globally").
-  // Treat "disabled" the same as "no configurator" — hides the button and restores the
-  // theme's native Add to Cart everywhere, regardless of any individual configurator's state.
-  if (configurator.theme.buttonEnabled === false) {
-    markProductUnlinked();
-    return;
-  }
-
-  writeSessionCache(productId, configurator);
-  applyLinkedUi(productId, configurator);
+  writeLinkCache(productId, { linked: true });
+  applyLinkedUi(productId);
 }
 
 /**
- * One-time startup: wire click delegation + gate, run the linkage check, restore any share.
- * The React modal is NOT mounted here — it loads lazily on the first Configure click
- * (or immediately when a share link is present), keeping page-load JS tiny.
+ * One-time startup: wire click/prefetch delegation + gate, run the linkage check, restore any
+ * share. The React modal is NOT mounted here — it loads lazily on the first Configure click (or
+ * immediately when a share link is present), keeping page-load JS tiny.
  */
 function boot() {
   invalidateThemeBlockCache();
   initConfigureClickDelegation();
+  initConfigurePrefetchDelegation();
   // In standalone v2 mode the invasive gate must never run — it reads/writes global stringing
   // state and can restore the buy box. initV2StandaloneGate is the safe, read-only replacement
   // (see initStorefrontUi, called once linkage confirms the button should exist at all).

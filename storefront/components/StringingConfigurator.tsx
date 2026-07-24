@@ -7,8 +7,12 @@ import {
   formatStringPrice,
   getStringById,
   resolveStringCatalog,
+  sizedStringThumbnail,
   SWATCH_COLORS,
 } from "../lib/string-catalog";
+
+// w-9 h-9 below = 36px CSS; 2x for retina/HiDPI is a generous, still-tiny bound.
+const STRING_THUMB_WIDTH = 72;
 
 const FILTER_CHIPS = [
   { id: "all", label: "All" },
@@ -33,7 +37,7 @@ function StringImage({ product }: { product: StringProduct }) {
   if (product.imageUrl) {
     return (
       <img
-        src={product.imageUrl}
+        src={sizedStringThumbnail(product.imageUrl, STRING_THUMB_WIDTH)}
         alt={product.name}
         className="w-9 h-9 object-cover rounded"
         loading="lazy"
