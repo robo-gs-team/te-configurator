@@ -1,7 +1,14 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
-import { json } from "@vercel/remix";
-import { Form, Link, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
-import { useState } from "react";
+import { defer, json } from "@vercel/remix";
+import {
+  Await,
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "@remix-run/react";
+import { Suspense, useState } from "react";
 import {
   Badge,
   Banner,
@@ -14,6 +21,8 @@ import {
   InlineStack,
   Layout,
   Page,
+  SkeletonBodyText,
+  SkeletonDisplayText,
   Text,
 } from "@shopify/polaris";
 import prisma from "~/db.server";
@@ -29,23 +38,30 @@ import { refreshShopSnapshots } from "~/lib/snapshot.server";
 import { getVersionInfo } from "~/lib/version.server";
 import { authenticate } from "~/shopify.server";
 
+/**
+ * Configurators + theme settings are fast (single indexed DB reads) and drive content the page
+ * can't render without (the list, the on/off switch), so they're awaited — first paint is never
+ * blocked on them. Analytics (several aggregate queries) and the embed scan (up to ~11 live
+ * Shopify Admin API round-trips, see theme-detection.server.ts) are the two genuinely slow parts
+ * of this page — they're passed to `defer()` UNAWAITED, so the shell (nav, version strip,
+ * configurator list, on/off switch) paints immediately and these two stream in a moment later
+ * behind their own <Suspense> boundaries instead of blocking the whole page.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
-  const [configurators, analytics, embed, theme] = await Promise.all([
+  const [configurators, theme] = await Promise.all([
     listConfigurators(shop.id),
-    getAnalyticsSummary(shop.id, 30),
-    detectAppEmbedStatus(admin, session.shop),
     getShopThemeSettings(shop.id),
   ]);
 
-  return json({
+  return defer({
     shop: session.shop,
     configurators,
-    analytics,
-    embed,
     theme,
     versions: getVersionInfo(),
+    analytics: getAnalyticsSummary(shop.id, 30),
+    embed: detectAppEmbedStatus(admin, session.shop),
   });
 };
 
@@ -110,6 +126,18 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+/** Metric-tile-shaped placeholder shown while analytics streams in. */
+function StatSkeleton() {
+  return (
+    <Card>
+      <BlockStack gap="100">
+        <SkeletonBodyText lines={1} />
+        <SkeletonDisplayText size="small" />
+      </BlockStack>
+    </Card>
+  );
+}
+
 /** "Where is the app embed on" line for the Storefront button card. */
 function EmbedThemes({ embed, shop }: { embed: AppEmbedStatus; shop: string }) {
   if (!embed.ok) {
@@ -156,7 +184,7 @@ function EmbedThemes({ embed, shop }: { embed: AppEmbedStatus; shop: string }) {
 }
 
 export default function Dashboard() {
-  const { shop, configurators, analytics, embed, theme, versions } =
+  const { shop, configurators, theme, versions, analytics, embed } =
     useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const actionData = useActionData<typeof action>();
@@ -170,10 +198,6 @@ export default function Dashboard() {
     navigation.state === "idle" &&
     Boolean((actionData as { success?: boolean } | undefined)?.success);
 
-  const modalOpens = analytics.counts.modal_open ?? 0;
-  const addToCart = analytics.counts.add_to_cart ?? 0;
-  const conversion = modalOpens > 0 ? `${Math.round((addToCart / modalOpens) * 100)}%` : "—";
-
   const cfgs = configurators as Array<{
     id: string;
     name: string;
@@ -181,8 +205,6 @@ export default function Dashboard() {
     isActive: boolean;
   }>;
   const activeCount = cfgs.filter((c) => c.isActive).length;
-  const embedAnywhere = embed.ok && ((embed.live?.on ?? false) || embed.otherOn.length > 0);
-  const isSetUp = activeCount > 0 && embedAnywhere;
 
   const betaSha = versions.beta.commit ? versions.beta.commit.slice(0, 8) : "unknown";
   const betaFirstLine = versions.beta.message?.split("\n")[0] ?? "Latest code on main.";
@@ -232,16 +254,36 @@ export default function Dashboard() {
           </Card>
         </Layout.Section>
 
-        {/* Metrics. */}
+        {/* Metrics — streams in behind the shell; several aggregate queries. */}
         <Layout.Section>
-          <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
-            <Stat label="Modal opens (30d)" value={modalOpens} />
-            <Stat label="Add to cart (30d)" value={addToCart} />
-            <Stat label="Conversion (30d)" value={conversion} />
-          </InlineGrid>
+          <Suspense
+            fallback={
+              <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+                <StatSkeleton />
+                <StatSkeleton />
+                <StatSkeleton />
+              </InlineGrid>
+            }
+          >
+            <Await resolve={analytics}>
+              {(analyticsData) => {
+                const modalOpens = analyticsData.counts.modal_open ?? 0;
+                const addToCart = analyticsData.counts.add_to_cart ?? 0;
+                const conversion =
+                  modalOpens > 0 ? `${Math.round((addToCart / modalOpens) * 100)}%` : "—";
+                return (
+                  <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+                    <Stat label="Modal opens (30d)" value={modalOpens} />
+                    <Stat label="Add to cart (30d)" value={addToCart} />
+                    <Stat label="Conversion (30d)" value={conversion} />
+                  </InlineGrid>
+                );
+              }}
+            </Await>
+          </Suspense>
         </Layout.Section>
 
-        {/* Storefront button: master switch + where the embed is on, in one place. */}
+        {/* Storefront button: master switch (immediate) + where the embed is on (streamed). */}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
@@ -259,7 +301,9 @@ export default function Dashboard() {
                   : "The Configure button is hidden on all products, even where the app embed is on."}
               </Text>
 
-              <EmbedThemes embed={embed} shop={shop} />
+              <Suspense fallback={<SkeletonBodyText lines={2} />}>
+                <Await resolve={embed}>{(embedData) => <EmbedThemes embed={embedData} shop={shop} />}</Await>
+              </Suspense>
 
               {toggleJustSucceeded && (
                 <Banner tone={theme.buttonEnabled ? "success" : "warning"}>
@@ -306,7 +350,7 @@ export default function Dashboard() {
           </Card>
         </Layout.Section>
 
-        {/* Configurators. */}
+        {/* Configurators — immediate, no dependency on the deferred data. */}
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
@@ -361,32 +405,44 @@ export default function Dashboard() {
           </Card>
         </Layout.Section>
 
-        {/* Setup checklist — only until the app is actually set up, then it disappears. */}
-        {!isSetUp && (
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Finish setup
-                </Text>
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodySm">
-                    1. Create a configurator and select your racquet products
-                  </Text>
-                  <Text as="p" variant="bodySm">
-                    2. Theme Editor → App embeds → enable Proto Configurator
-                  </Text>
-                  <Text as="p" variant="bodySm">
-                    3. Product page → add the Configurator Button block
-                  </Text>
-                </BlockStack>
-                <Box>
-                  <Button url="/app/settings">Theme settings</Button>
-                </Box>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        )}
+        {/* Setup checklist — depends on the deferred embed status (whether the embed is on
+            anywhere), so it resolves inside the same <Await>; renders nothing while pending or
+            once the merchant is actually set up, to avoid a flash of the checklist on every load. */}
+        <Suspense fallback={null}>
+          <Await resolve={embed}>
+            {(embedData) => {
+              const embedAnywhere =
+                embedData.ok && ((embedData.live?.on ?? false) || embedData.otherOn.length > 0);
+              const isSetUp = activeCount > 0 && embedAnywhere;
+              if (isSetUp) return null;
+              return (
+                <Layout.Section>
+                  <Card>
+                    <BlockStack gap="300">
+                      <Text as="h2" variant="headingMd">
+                        Finish setup
+                      </Text>
+                      <BlockStack gap="200">
+                        <Text as="p" variant="bodySm">
+                          1. Create a configurator and select your racquet products
+                        </Text>
+                        <Text as="p" variant="bodySm">
+                          2. Theme Editor → App embeds → enable Proto Configurator
+                        </Text>
+                        <Text as="p" variant="bodySm">
+                          3. Product page → add the Configurator Button block
+                        </Text>
+                      </BlockStack>
+                      <Box>
+                        <Button url="/app/settings">Theme settings</Button>
+                      </Box>
+                    </BlockStack>
+                  </Card>
+                </Layout.Section>
+              );
+            }}
+          </Await>
+        </Suspense>
       </Layout>
     </Page>
   );
