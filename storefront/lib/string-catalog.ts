@@ -4,6 +4,27 @@ import { DEFAULT_TENSION_RANGE } from "~/lib/configurator.types";
 export type { TensionRange };
 export { DEFAULT_TENSION_RANGE };
 
+/**
+ * Ask Shopify's CDN to serve an image resized to `width`, instead of the merchant's original
+ * upload (routinely 1000-4000px, hundreds of KB to multiple MB) at a 36px card thumbnail size.
+ * Shopify CDN URLs (cdn.shopify.com) support a `width` query param that resizes on the fly; any
+ * existing query string (e.g. `?v=...`) is preserved. Deliberately NOT applied to `previewLayer`
+ * anywhere — that field is shared with the generic (non-stringing) configurator's LivePreview
+ * panel, which renders it up to 420px, so capping the shared field would blur that view. This only
+ * touches the string-picker card thumbnail, the one place we know the display size is fixed+tiny.
+ * Non-Shopify-CDN URLs (or a malformed URL) are returned unchanged rather than thrown away.
+ */
+export function sizedStringThumbnail(url: string, width: number): string {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith("cdn.shopify.com")) return url;
+    u.searchParams.set("width", String(width));
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 // A single real Shopify variant of a string, with its gauge/color pulled out so the cart can
 // resolve the exact variant matching the shopper's pick (instead of a fixed first variant).
 export type StringVariant = {
