@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Links,
   Meta,
@@ -7,6 +8,33 @@ import {
   isRouteErrorResponse,
   useRouteError,
 } from "@remix-run/react";
+
+/** Shared document shell so both the happy path and the error boundary render byte-identical
+ *  <head>/<Scripts> plumbing — the error boundary omitting Scripts was a real bug: once it
+ *  rendered, the page lost all client JS (no retry, no App Bridge, nothing hydrates again). */
+function Document({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <html>
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        {title ? <title>{title}</title> : null}
+        <link rel="preconnect" href="https://cdn.shopify.com/" />
+        <link
+          rel="stylesheet"
+          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+        />
+        <Meta />
+        <Links />
+      </head>
+      <body>
+        {children}
+        <ScrollRestoration />
+        <Scripts />
+      </body>
+    </html>
+  );
+}
 
 /**
  * Root error boundary — before this existed, ANY unhandled server error rendered as a bare
@@ -36,13 +64,8 @@ export function ErrorBoundary() {
   }
 
   return (
-    <html>
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <title>{title}</title>
-      </head>
-      <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#f6f6f7" }}>
+    <Document title={title}>
+      <div style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#f6f6f7", minHeight: "100vh" }}>
         <div style={{ maxWidth: 560, margin: "12vh auto 0", padding: "0 20px" }}>
           <div
             style={{
@@ -71,30 +94,15 @@ export function ErrorBoundary() {
             </p>
           </div>
         </div>
-      </body>
-    </html>
+      </div>
+    </Document>
   );
 }
 
 export default function App() {
   return (
-    <html>
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <link rel="preconnect" href="https://cdn.shopify.com/" />
-        <link
-          rel="stylesheet"
-          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-        />
-        <Meta />
-        <Links />
-      </head>
-      <body>
-        <Outlet />
-        <ScrollRestoration />
-        <Scripts />
-      </body>
-    </html>
+    <Document>
+      <Outlet />
+    </Document>
   );
 }
