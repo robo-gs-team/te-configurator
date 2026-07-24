@@ -7,28 +7,42 @@ type ShopifyAdmin = {
   ) => Promise<Response>;
 };
 
-export type ThemeButtonStatus = {
-  live: boolean;
-  themeName: string | null;
-  themeId: string | null;
-  detail: "active" | "embed_missing" | "unknown";
-  // When detail === "unknown", why — so the admin can show a specific hint instead of a
-  // vague "Unknown". Populated by the detection; null on the success paths.
+/** One theme and whether our app embed is enabled (present + not disabled) in it. */
+export type ThemeEmbedInfo = {
+  id: string;
+  name: string;
+  role: string; // "MAIN" (published) | "DEVELOPMENT" | "UNPUBLISHED" | "DEMO" | ...
+  on: boolean;
+};
+
+export type AppEmbedStatus = {
+  ok: boolean; // detection ran successfully (themes readable)
+  // The published theme's embed state, or null when it couldn't be determined.
+  live: ThemeEmbedInfo | null;
+  // Non-published themes we scanned where the embed is ON (draft/dev themes — e.g. the Beta test
+  // theme). Only from the scanned set (see `scanned`/`total`), most-recently-updated first.
+  otherOn: ThemeEmbedInfo[];
+  scanned: number; // how many themes we read settings for
+  total: number; // total themes on the store
   reason:
-    | "missing_theme_scope" // themes query returned an access/permission error
-    | "no_published_theme" // query succeeded but no MAIN-role theme
-    | "settings_unreadable" // theme found but its settings_data.json couldn't be read
-    | "api_error" // request threw (network/throttle/etc.)
-    | "graphql_error" // query returned some other GraphQL error
+    | "missing_theme_scope"
+    | "no_themes"
+    | "api_error"
+    | "graphql_error"
     | null;
 };
 
-// Two live Shopify Admin API round-trips (themes list + theme file) on every dashboard
-// view was the main cause of slow admin navigation. The embed toggle changes rarely, so a
-// short cache trades a little staleness for near-instant repeat page loads — same tradeoff
-// already used for the storefront proxy cache.
-const statusCache = new Map<string, { data: ThemeButtonStatus; expires: number }>();
-const STATUS_TTL_MS = 60 * 1000; // 1 minute
+// How many themes' settings_data.json we read per dashboard load. The published theme is always
+// read; the rest of the budget goes to the most-recently-updated themes (the one a merchant is
+// actively testing on is almost always recently touched). Bounded so a store with dozens of theme
+// copies can't fan out into dozens of Admin API calls on every dashboard view.
+const MAX_SETTINGS_READS = 10;
+
+// Two+ live Admin API round-trips on every dashboard view was a cause of slow admin navigation.
+// The embed toggle changes rarely, so a short cache trades a little staleness for near-instant
+// repeat loads — same tradeoff as the storefront proxy cache.
+const statusCache = new Map<string, { data: AppEmbedStatus; expires: number }>();
+const STATUS_TTL_MS = 60 * 1000;
 
 type SettingsBlock = { type?: unknown; disabled?: unknown };
 
@@ -44,58 +58,41 @@ function blockMatchesOurEmbed(key: string, block: SettingsBlock): boolean {
 }
 
 /**
- * Determine our app embed's state from a theme's settings_data.json.
- * App embeds live under `current.blocks`; a toggled-off embed keeps its entry but with
- * `disabled: true`. So presence alone is NOT "active" — we must find our block AND confirm
- * it isn't disabled. Falls back to a substring check only if the JSON can't be parsed.
+ * Determine our app embed's state from a theme's settings_data.json. App embeds live under
+ * `current.blocks`; a toggled-off embed keeps its entry but with `disabled: true`. So presence
+ * alone is NOT "on" — we must find our block AND confirm it isn't disabled. Falls back to a
+ * substring check only if the JSON can't be parsed.
  */
-function detectEmbedState(content: string): "active" | "embed_missing" {
+function detectEmbedOn(content: string): boolean {
   let data: unknown;
   try {
     data = JSON.parse(content);
   } catch {
-    // Unparseable — best-effort: presence of any of our identifiers (can't read disabled flag).
-    return content.includes(EXTENSION_UUID) ||
+    return (
+      content.includes(EXTENSION_UUID) ||
       content.includes(APP_CLIENT_ID) ||
       content.includes(EMBED_HANDLE)
-      ? "active"
-      : "embed_missing";
+    );
   }
 
   const root = data as { current?: unknown; blocks?: unknown };
   const current = root?.current as { blocks?: unknown } | undefined;
   const containers = [current?.blocks, root?.blocks].filter(
-    (b): b is Record<string, SettingsBlock> =>
-      Boolean(b) && typeof b === "object",
+    (b): b is Record<string, SettingsBlock> => Boolean(b) && typeof b === "object",
   );
 
   for (const blocks of containers) {
     for (const [key, block] of Object.entries(blocks)) {
       if (blockMatchesOurEmbed(key, block)) {
-        return block?.disabled === true ? "embed_missing" : "active";
+        return block?.disabled !== true;
       }
     }
   }
-  return "embed_missing";
+  return false;
 }
 
-export async function detectThemeButtonStatus(
-  admin: ShopifyAdmin,
-  shopDomain: string,
-): Promise<ThemeButtonStatus> {
-  const cached = statusCache.get(shopDomain);
-  if (cached && cached.expires > Date.now()) {
-    return cached.data;
-  }
-
-  const result = await fetchThemeButtonStatus(admin);
-  statusCache.set(shopDomain, { data: result, expires: Date.now() + STATUS_TTL_MS });
-  return result;
-}
-
-// A GraphQL errors array from Shopify that mentions access/permission/scope means the app's
-// token isn't allowed to read themes — almost always because read_themes was added to the app
-// after it was installed, so the merchant needs to re-authorize.
+// A GraphQL errors array mentioning access/permission/scope means the token can't read themes —
+// almost always because read_themes was added after install, so the merchant must re-authorize.
 function looksLikeScopeError(errors: unknown): boolean {
   const text = JSON.stringify(errors ?? "").toLowerCase();
   return (
@@ -107,98 +104,116 @@ function looksLikeScopeError(errors: unknown): boolean {
   );
 }
 
-async function fetchThemeButtonStatus(admin: ShopifyAdmin): Promise<ThemeButtonStatus> {
+/** Read one theme's settings_data.json and detect the embed state. Errors → off (best-effort). */
+async function readThemeEmbed(
+  admin: ShopifyAdmin,
+  theme: { id: string; name: string; role: string },
+): Promise<ThemeEmbedInfo> {
   try {
-    const themesRes = await admin.graphql(`
-      #graphql
-      query {
-        themes(first: 10) {
-          nodes { id name role }
-        }
-      }
-    `);
-    const themesJson = (await themesRes.json()) as {
-      data?: { themes?: { nodes?: Array<{ id: string; name: string; role: string }> } };
-      errors?: unknown;
-    };
-
-    if (themesJson.errors) {
-      console.error("theme-detection: themes query returned errors:", JSON.stringify(themesJson.errors));
-      return {
-        live: false,
-        themeName: null,
-        themeId: null,
-        detail: "unknown",
-        reason: looksLikeScopeError(themesJson.errors) ? "missing_theme_scope" : "graphql_error",
-      };
-    }
-
-    const mainTheme = themesJson.data?.themes?.nodes?.find((t) => t.role === "MAIN");
-    if (!mainTheme) {
-      return { live: false, themeName: null, themeId: null, detail: "unknown", reason: "no_published_theme" };
-    }
-
-    const fileRes = await admin.graphql(
+    const res = await admin.graphql(
       `
       #graphql
       query GetThemeFile($id: ID!) {
         theme(id: $id) {
           files(filenames: ["config/settings_data.json"]) {
-            nodes {
-              filename
-              body {
-                ... on OnlineStoreThemeFileBodyText {
-                  content
-                }
-              }
-            }
+            nodes { body { ... on OnlineStoreThemeFileBodyText { content } } }
           }
         }
       }
     `,
-      { variables: { id: mainTheme.id } },
+      { variables: { id: theme.id } },
     );
+    const json = (await res.json()) as {
+      data?: { theme?: { files?: { nodes?: Array<{ body?: { content?: string } }> } } };
+    };
+    const content = json.data?.theme?.files?.nodes?.[0]?.body?.content;
+    return {
+      id: theme.id,
+      name: theme.name,
+      role: theme.role,
+      on: content ? detectEmbedOn(content) : false,
+    };
+  } catch {
+    return { id: theme.id, name: theme.name, role: theme.role, on: false };
+  }
+}
 
-    const fileJson = (await fileRes.json()) as {
+export async function detectAppEmbedStatus(
+  admin: ShopifyAdmin,
+  shopDomain: string,
+): Promise<AppEmbedStatus> {
+  const cached = statusCache.get(shopDomain);
+  if (cached && cached.expires > Date.now()) return cached.data;
+
+  const result = await fetchAppEmbedStatus(admin);
+  statusCache.set(shopDomain, { data: result, expires: Date.now() + STATUS_TTL_MS });
+  return result;
+}
+
+async function fetchAppEmbedStatus(admin: ShopifyAdmin): Promise<AppEmbedStatus> {
+  const base: AppEmbedStatus = {
+    ok: false,
+    live: null,
+    otherOn: [],
+    scanned: 0,
+    total: 0,
+    reason: null,
+  };
+  try {
+    // first:50 (up from 10) so the published theme is found even on stores with many theme copies
+    // — a store with >10 themes pushed MAIN out of the window and produced a false "no published
+    // theme". updatedAt lets us prioritize which drafts to scan for the "also on" list.
+    const res = await admin.graphql(`
+      #graphql
+      query {
+        themes(first: 50) {
+          nodes { id name role updatedAt }
+        }
+      }
+    `);
+    const json = (await res.json()) as {
       data?: {
-        theme?: { files?: { nodes?: Array<{ filename: string; body?: { content?: string } }> } };
+        themes?: { nodes?: Array<{ id: string; name: string; role: string; updatedAt: string }> };
       };
       errors?: unknown;
     };
 
-    if (fileJson.errors) {
-      console.error("theme-detection: theme file query returned errors:", JSON.stringify(fileJson.errors));
+    if (json.errors) {
+      console.error("theme-detection: themes query errors:", JSON.stringify(json.errors));
       return {
-        live: false,
-        themeName: mainTheme.name,
-        themeId: mainTheme.id,
-        detail: "unknown",
-        reason: looksLikeScopeError(fileJson.errors) ? "missing_theme_scope" : "settings_unreadable",
+        ...base,
+        reason: looksLikeScopeError(json.errors) ? "missing_theme_scope" : "graphql_error",
       };
     }
 
-    const content = fileJson.data?.theme?.files?.nodes?.[0]?.body?.content;
-    if (!content) {
-      return {
-        live: false,
-        themeName: mainTheme.name,
-        themeId: mainTheme.id,
-        detail: "unknown",
-        reason: "settings_unreadable",
-      };
-    }
+    const themes = json.data?.themes?.nodes ?? [];
+    if (themes.length === 0) return { ...base, reason: "no_themes" };
 
-    // App embed is live only when our block is present AND not disabled in settings_data.json
-    const detail = detectEmbedState(content);
+    const mainTheme = themes.find((t) => t.role === "MAIN") ?? null;
+    const others = themes
+      .filter((t) => t.role !== "MAIN")
+      .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+
+    // Always read the published theme; spend the rest of the budget on most-recently-updated others.
+    const toRead = [
+      ...(mainTheme ? [mainTheme] : []),
+      ...others.slice(0, Math.max(0, MAX_SETTINGS_READS - (mainTheme ? 1 : 0))),
+    ];
+    const infos = await Promise.all(toRead.map((t) => readThemeEmbed(admin, t)));
+
+    const live = infos.find((t) => t.role === "MAIN") ?? null;
+    const otherOn = infos.filter((t) => t.role !== "MAIN" && t.on);
+
     return {
-      live: detail === "active",
-      themeName: mainTheme.name,
-      themeId: mainTheme.id,
-      detail,
+      ok: true,
+      live,
+      otherOn,
+      scanned: infos.length,
+      total: themes.length,
       reason: null,
     };
   } catch (err) {
     console.error("theme-detection: request threw:", err);
-    return { live: false, themeName: null, themeId: null, detail: "unknown", reason: "api_error" };
+    return { ...base, reason: "api_error" };
   }
 }
