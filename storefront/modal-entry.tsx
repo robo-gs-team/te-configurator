@@ -2,7 +2,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { ConfiguratorErrorBoundary } from "./components/ConfiguratorErrorBoundary";
 import { ConfiguratorModal } from "./components/ConfiguratorModal";
 import { useConfiguratorStore } from "./store/configurator-store";
-import { collectImageUrls, preloadImages } from "./lib/image-preloader";
 import type { StorefrontConfigurator } from "~/lib/configurator.types";
 
 /**
@@ -66,7 +65,11 @@ function mount() {
 function open(productId: string, configurator: StorefrontConfigurator) {
   mount();
   useConfiguratorStore.getState().open(productId, configurator);
-  void preloadImages(collectImageUrls(configurator)).catch(() => {});
+  // NOTE: we deliberately do NOT preload every catalog image here. That fired a download for the
+  // full-resolution photo of every string in the catalog the instant the modal opened — dozens of
+  // parallel requests (potentially many MB on mobile) competing with the modal's own first paint.
+  // The string cards render each thumbnail with loading="lazy" + a placeholder, so images arrive
+  // as the shopper scrolls, on demand, instead of all at once up front.
 }
 
 function close() {
@@ -85,7 +88,7 @@ function restoreShare(
   if (selections && addons) {
     store.restoreFromShare(selections, addons);
   }
-  void preloadImages(collectImageUrls(configurator)).catch(() => {});
+  // See open(): no bulk image preload — cards lazy-load their own thumbnails.
 }
 
 // Assign in the module body so it survives regardless of the IIFE's return value.

@@ -69,7 +69,11 @@ const configuratorCache = new Map<string, StorefrontConfigurator>();
  * never go stale for longer than one page view + TTL. Bump the version on payload shape changes.
  */
 const SESSION_CACHE_VERSION = "v1";
-const SESSION_CACHE_TTL_MS = 5 * 60 * 1000; // matches the proxy's own Cache-Control max-age
+// 30 min (was 5): repeat browsing — comparing several racquets over many minutes, back/forward —
+// keeps painting the button INSTANTLY from cache instead of re-fetching the payload every 5 min.
+// Safe to lengthen because a served copy is silently revalidated in the background on every view
+// (see initStorefrontUi → revalidateConfigurator), so it never actually goes stale to the shopper.
+const SESSION_CACHE_TTL_MS = 30 * 60 * 1000;
 
 function sessionCacheKey(productId: string): string {
   return `proto_cfg_${SESSION_CACHE_VERSION}:${getShopDomain()}:${normalizeProductId(productId)}`;
@@ -509,10 +513,45 @@ function initShareRestore() {
  * mark linked, inject the fallback button if needed, schedule placement, and init the gate.
  * This is what decides whether the Configure button appears on this product page.
  */
+/** Run a low-priority task during browser idle time, falling back to a short timeout. */
+function whenIdle(fn: () => void): void {
+  const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => void })
+    .requestIdleCallback;
+  if (typeof ric === "function") ric(fn);
+  else window.setTimeout(fn, 1200);
+}
+
+let modalPrefetched = false;
+/**
+ * On a LINKED product page, warm the heavy modal bundle (~184KB of React + UI) during browser idle
+ * with a low-priority `<link rel=prefetch>` — download only, no execution. The first Configure
+ * click then loads it from cache and opens instantly instead of waiting on a cold download+parse
+ * over mobile. Costs nothing on non-linked pages (never called) and nothing extra on repeat views
+ * (the browser cache + this guard make it a no-op). Prefetch, not preload: we don't pay parse cost
+ * for shoppers who never click.
+ */
+function prefetchModalBundle(): void {
+  if (modalPrefetched || window.ProtoConfiguratorModal || modalLoadPromise) return;
+  const url = getModalUrl();
+  if (!url) return;
+  modalPrefetched = true;
+  try {
+    const link = document.createElement("link");
+    link.rel = "prefetch";
+    link.as = "script";
+    link.href = url;
+    document.head.appendChild(link);
+  } catch {
+    // best-effort — a failed prefetch just means the click pays the normal load
+  }
+}
+
 /** Apply the full "linked" UI state for a resolved configurator (button visible + wired). */
 function applyLinkedUi(productId: string, configurator: StorefrontConfigurator) {
   configuratorCache.set(productId, configurator);
   markProductLinked();
+  // Linked page → a Configure click is plausible; warm the modal bundle when the browser is idle.
+  whenIdle(prefetchModalBundle);
 
   // Standalone v2 mode: the "Configure Racquet" button is fully self-contained. Skip every piece
   // of DOM surgery (fallback injection, buy-box relocation, Strung/Unstrung gate) — the block
