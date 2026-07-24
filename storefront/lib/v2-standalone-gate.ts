@@ -11,10 +11,29 @@
  * only ever toggles a class on our OWN wrapper. Safe to run alongside anything else on the page.
  */
 
-const STRINGING_VOCAB = new Set(["strung", "unstrung"]);
-
 function normalize(value: string): string {
   return value.trim().toLowerCase();
+}
+
+/**
+ * Does this option value/label belong to the stringing choice? Identified by the distinctive word
+ * "unstrung" — a control that offers an "unstrung" option is unambiguously the Strung/Unstrung
+ * picker. NOTE: "unstrung" CONTAINS "strung", so anything testing for "strung" must exclude the
+ * "unstrung" case first (see classifyStringing).
+ */
+function looksUnstrung(value: string, text: string): boolean {
+  return value.includes("unstrung") || text.includes("unstrung");
+}
+
+/**
+ * Classify a selected option as "strung" vs "unstrung". We deliberately do NOT require the strung
+ * choice to be labelled literally "Strung": stores spell it many ways ("Factory Strung", "Strung —
+ * add $20", "Custom string job", or even a bare variant id) — requiring an exact "strung" match was
+ * why the control went unrecognized and the button never gated. Within a control that HAS an
+ * unstrung option, anything that isn't the unstrung option is treated as strung → button shows.
+ */
+function classifyStringing(value: string, text: string): "strung" | "unstrung" {
+  return looksUnstrung(value, text) ? "unstrung" : "strung";
 }
 
 /**
@@ -58,14 +77,12 @@ function readStringingValue(root: ParentNode): string | null {
       value: normalize(o.value || ""),
       text: normalize(o.textContent || ""),
     }));
-    const hasOption = (v: string) => opts.some((o) => o.value === v || o.text === v);
-    if (!hasOption("strung") || !hasOption("unstrung")) continue;
+    // Recognize the control by the presence of an "unstrung" option (see looksUnstrung).
+    if (!opts.some((o) => looksUnstrung(o.value, o.text))) continue;
 
     const opt = select.selectedOptions[0] ?? select.options[select.selectedIndex];
     if (!opt) continue;
-    const optValue = normalize(opt.value);
-    const current = STRINGING_VOCAB.has(optValue) ? optValue : normalize(opt.textContent || "");
-    if (STRINGING_VOCAB.has(current)) return current;
+    return classifyStringing(normalize(opt.value), normalize(opt.textContent || ""));
   }
 
   // Radio-button variant picker: group by name, find the stringing group, read the checked one.
@@ -79,20 +96,20 @@ function readStringingValue(root: ParentNode): string | null {
     groups.set(radio.name, list);
   }
   for (const group of groups.values()) {
-    const valueOf = (r: HTMLInputElement): string => {
-      const v = normalize(r.value);
-      if (STRINGING_VOCAB.has(v)) return v;
-      // Themes sometimes set the radio value to a variant id — fall back to its label text.
+    // value + label text for each radio (themes sometimes set the value to a variant id, so the
+    // human-readable choice lives in the associated <label>).
+    const readable = (r: HTMLInputElement): { value: string; text: string } => {
       const label = r.id
         ? document.querySelector(`label[for="${CSS.escape(r.id)}"]`)
         : r.closest("label");
-      return normalize(label?.textContent || "");
+      return { value: normalize(r.value), text: normalize(label?.textContent || "") };
     };
-    const values = group.map(valueOf);
-    if (!values.includes("strung") || !values.includes("unstrung")) continue;
+    const cells = group.map(readable);
+    if (!cells.some((c) => looksUnstrung(c.value, c.text))) continue;
     const checkedIndex = group.findIndex((r) => r.checked);
-    if (checkedIndex >= 0 && STRINGING_VOCAB.has(values[checkedIndex])) {
-      return values[checkedIndex];
+    if (checkedIndex >= 0) {
+      const c = cells[checkedIndex];
+      return classifyStringing(c.value, c.text);
     }
   }
 
@@ -123,6 +140,22 @@ function applyVisibility() {
 let delegatedChangeBound = false;
 
 /**
+ * The stringing control can appear in the DOM AFTER this gate first runs: many themes hydrate or
+ * re-render the variant/property pickers with JS a beat after first paint. Since the split-phase
+ * linkage fetch, the button is revealed very early (tiny/cached linkage answer), so the gate's
+ * first scan can land before that control exists — it then finds nothing to gate on, shows the
+ * button, and (for a pre-selected "Unstrung") never re-checks, because no `change` event fires.
+ * Re-running the scan across a short window catches the late-rendering control. Every pass is
+ * read-only and idempotent, so extra runs are harmless.
+ */
+function scheduleRescans() {
+  for (const delay of [50, 150, 400, 900, 1800]) {
+    window.setTimeout(applyVisibility, delay);
+  }
+  window.addEventListener("load", applyVisibility, { once: true });
+}
+
+/**
  * Initialize (or re-initialize) the visibility gate. Safe to call repeatedly — e.g. on
  * `shopify:section:load`. Uses ONE delegated, capturing `change` listener on the document rather
  * than binding to a specific control: the stringing control can be a <select> or a radio group,
@@ -134,5 +167,6 @@ export function initV2StandaloneGate() {
   if (!delegatedChangeBound) {
     delegatedChangeBound = true;
     document.addEventListener("change", applyVisibility, true);
+    scheduleRescans();
   }
 }
