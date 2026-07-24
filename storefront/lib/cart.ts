@@ -527,6 +527,11 @@ export async function trackEvent(
     await fetch(`${appProxyUrl}/analytics`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // keepalive: an add_to_cart event fires immediately before the page navigates to the cart;
+      // without this the browser cancels the in-flight request on unload and the event is lost,
+      // undercounting the funnel. keepalive lets it complete after navigation. (Payload is tiny,
+      // well under the 64KB keepalive limit.)
+      keepalive: true,
       // Stamp the session id on every event (unless a caller already set one) so the dashboard can
       // count unique sessions per funnel stage and join to purchases from the orders webhook.
       body: JSON.stringify({
