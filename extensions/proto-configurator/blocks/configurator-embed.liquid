@@ -65,17 +65,20 @@
       channel: {{ proto_channel | json }},
       modalUrl: {{ proto_modal | asset_url | json }}
     };
-    /* Perf: start the linkage fetch NOW, during HTML parse, instead of after the deferred bundle
-       downloads + executes — the App Proxy round-trip overlaps page load. The bundle consumes
-       this promise for its first attempt (entry.tsx#fetchConfiguratorAttempt) and falls back to
-       its own retrying fetch if it's absent or failed. */
+    /* Perf: start the LINKAGE-ONLY fetch NOW, during HTML parse, instead of after the deferred
+       bundle downloads + executes — the App Proxy round-trip overlaps page load. This hits the
+       lightweight `/link` endpoint (~100 bytes: just "is this product linked?"), NOT the full
+       string catalog — the full catalog is fetched separately by the bundle only once the
+       shopper shows real intent (hover/touch/click), so a page load that never leads to a click
+       never pays for it. The bundle consumes this promise for its first attempt
+       (entry.tsx#fetchLinkage) and falls back to its own retrying fetch if it's absent or failed. */
     (function () {
       try {
         var s = window.ProtoConfiguratorSettings;
         if (s && s.productId) {
           var q = s.shopDomain ? '?shop=' + encodeURIComponent(s.shopDomain) : '';
           window.ProtoConfiguratorEarlyFetch = window.fetch(
-            s.appProxyUrl + '/product/' + s.productId + q,
+            s.appProxyUrl + '/product/' + s.productId + '/link' + q,
             { credentials: 'same-origin', headers: { Accept: 'application/json' } }
           );
           /* Swallow here so an offline/failed early fetch never surfaces as an unhandled

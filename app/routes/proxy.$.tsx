@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@vercel/remix";
 import { json } from "@vercel/remix";
 import {
+  checkProductLinkage,
   ensureShop,
   getConfiguratorForProduct,
   lookupConfiguratorForProduct,
@@ -65,6 +66,34 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   const path = params["*"] ?? "";
+
+  // Split-phase fetch, phase 1: "is this product linked to a working configurator?" — nothing
+  // more. Used on page load in place of the old full-catalog fetch (see storefront/entry.tsx),
+  // so a page load now costs ~100 bytes instead of the full serialized configurator (which can
+  // run into the hundreds of KB for a large string catalog). The full payload is fetched
+  // separately, only once the shopper shows real intent (hover/click) — see the plain
+  // `product/:id` branch below, which is unchanged.
+  if (path.startsWith("product/") && path.endsWith("/link")) {
+    const productId = normalizeProductId(path.slice("product/".length, -"/link".length));
+
+    const cacheKey = `${productId}:link`;
+    const cached = getCachedProxyResponse(shopDomain, cacheKey);
+    if (cached) {
+      return json(cached, { headers: { ...PROXY_HEADERS, "X-Cache": "HIT" } });
+    }
+
+    let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
+    try {
+      admin = (await unauthenticated.admin(shopDomain)).admin;
+    } catch {
+      // Collection-based matching needs an installed app session; explicit product-id matching
+      // (the common case) doesn't.
+    }
+
+    const linkage = await checkProductLinkage(shopDomain, productId, admin);
+    setCachedProxyResponse(shopDomain, cacheKey, linkage);
+    return json(linkage, { headers: PROXY_HEADERS });
+  }
 
   if (path.startsWith("product/")) {
     const productId = normalizeProductId(path.replace("product/", ""));
