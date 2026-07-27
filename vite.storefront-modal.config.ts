@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "path";
+import { storefrontPostcssPlugins } from "./vite.storefront-postcss";
 
 // Builds the heavy, lazy-loaded modal bundle (React + store + modal UI) as a standalone
 // IIFE. The tiny entry bundle (vite.storefront.config.ts) injects this on first interaction.
@@ -42,6 +43,9 @@ export default defineConfig({
     sourcemap: false,
   },
   css: {
-    postcss: "./postcss.config.js",
+    // The modal now carries its own styles (storefront/styles.css?inline in modal-entry.tsx), so
+    // they MUST run through the same scoped/rem-to-px pipeline as the entry stylesheet — the
+    // default postcss.config.js would silently skip the theme-isolation transforms.
+    postcss: { plugins: storefrontPostcssPlugins },
   },
 });

@@ -16,7 +16,10 @@ import {
 } from "./lib/theme-placement";
 import type { StorefrontConfigurator } from "~/lib/configurator.types";
 import type { ProtoConfiguratorModalApi } from "./modal-entry";
-import "./styles.css";
+// Page-load CSS is the tiny entry.css only. The full modal stylesheet ships inside the lazy
+// modal bundle (see modal-entry.tsx) — it used to be imported here, which put ~33KB of
+// render-blocking, modal-only CSS on every racquet PDP.
+import "./entry.css";
 
 declare global {
   interface Window {

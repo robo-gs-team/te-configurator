@@ -3,6 +3,12 @@ import { ConfiguratorErrorBoundary } from "./components/ConfiguratorErrorBoundar
 import { ConfiguratorModal } from "./components/ConfiguratorModal";
 import { useConfiguratorStore } from "./store/configurator-store";
 import type { StorefrontConfigurator } from "~/lib/configurator.types";
+// The FULL modal stylesheet, bundled into this lazy JS as a string (`?inline` — runs through the
+// same scoped/rem-to-px PostCSS pipeline as before, see vite.storefront-postcss.ts) and injected
+// as a <style> on mount. This is what took ~33KB of render-blocking, modal-only CSS off every
+// racquet PDP's initial load: the page now ships only the tiny entry.css, and these styles arrive
+// with the modal itself — always present before first render, since injection precedes mounting.
+import modalStyles from "./styles.css?inline";
 
 /**
  * modal-entry.tsx — the heavy, lazy-loaded half of the storefront bundle.
@@ -45,8 +51,18 @@ function App() {
   );
 }
 
+/** Inject the modal stylesheet once, idempotently, before anything renders. */
+function ensureStyles() {
+  if (document.getElementById("proto-configurator-modal-styles")) return;
+  const style = document.createElement("style");
+  style.id = "proto-configurator-modal-styles";
+  style.textContent = modalStyles;
+  document.head.appendChild(style);
+}
+
 /** Ensure the `#proto-configurator-root` element exists on <body> and render the App into it. */
 function mount() {
+  ensureStyles();
   let rootEl = document.getElementById("proto-configurator-root");
   if (!rootEl) {
     rootEl = document.createElement("div");

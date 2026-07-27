@@ -1,0 +1,35 @@
+/*
+ * entry.css — the ONLY stylesheet on the page at load time (via the embed's stylesheet_tag).
+ *
+ * Deliberately tiny: everything modal-related lives in storefront/styles.css, which now ships
+ * INSIDE the lazy modal bundle (imported `?inline` and injected as a <style> by modal-entry.tsx).
+ * The old arrangement imported the full modal stylesheet here, which made every racquet PDP load
+ * ~33KB of render-blocking CSS for a modal most visitors never open — the last render-blocking
+ * resource this app put on the page.
+ *
+ * Only page-level rules belong here: the linkage visibility gate for the button and the inline
+ * buy-box layout used when the legacy (non-v2) button is relocated. These duplicate the safety
+ * copies inlined in the Liquid blocks on purpose — the Liquid copy wins the timing race at first
+ * paint, this copy keeps older embed markup working if the Liquid inline styles are ever absent.
+ */
+
+/* Hide configure UI until product linkage is confirmed (see storefront/entry.tsx). */
+html.proto-configurator-pending .proto-configurator-button-wrapper {
+  visibility: hidden;
+}
+
+html.proto-configurator-unlinked .proto-configurator-button-wrapper {
+  display: none !important;
+}
+
+/* Inline placement next to the theme's own buy buttons (legacy relocation path). */
+.proto-configurator-actions--inline {
+  margin-top: 0 !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.proto-configurator-actions--inline .proto-configurator-trigger {
+  width: 100%;
+}
