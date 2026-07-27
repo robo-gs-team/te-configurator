@@ -21,6 +21,42 @@
 {% assign button_label = block.settings.button_label | default: 'Configure Racquet' %}
 
 {% if block.settings.show_button %}
+  {%- comment -%}
+    Pre-paint linkage resolution — the CLS fix's second half.
+
+    The block reserves space by default (visibility:hidden, see the CSS below) so that REVEALING a
+    linked product's button causes zero shift. But the mirror case used to shift: on an UNLINKED
+    product that reserved space collapses to display:none once JS answers, jumping everything below
+    up by the button's height.
+
+    This script runs synchronously, inline, BEFORE the wrapper below is parsed — so whatever class
+    it sets is already in effect at first paint, and no shift is possible in EITHER direction. It
+    can only decide when this session has already seen this product: it reads the same
+    sessionStorage entry the bundle writes (entry.tsx#writeLinkCache), so the key format and TTLs
+    below must stay in sync with it. Unknown/expired/corrupt/unavailable → do nothing at all, which
+    leaves exactly the previous behaviour (reserve, then resolve). It is therefore never worse, and
+    strictly better on any repeat view — which is also when it removes the blank-space wait.
+
+    First view of a product is still unresolved at paint time; fixing that needs the answer in the
+    HTML itself (a product metafield written when the merchant assigns the product).
+  {%- endcomment -%}
+  <script>
+    (function () {
+      try {
+        var key = 'proto_link_v1:' + {{ shop.permanent_domain | default: shop.domain | json }} + ':' + {{ product.id | json }};
+        var raw = window.sessionStorage.getItem(key);
+        if (!raw) return;
+        var e = JSON.parse(raw);
+        if (typeof e.linked !== 'boolean') return;
+        /* Must match LINK_CACHE_POSITIVE_TTL_MS / LINK_CACHE_NEGATIVE_TTL_MS in entry.tsx. */
+        var ttl = e.linked ? 1800000 : 600000;
+        if (Date.now() - e.at > ttl) return;
+        document.documentElement.classList.add(
+          e.linked ? 'proto-configurator-linked' : 'proto-configurator-unlinked'
+        );
+      } catch (err) { /* no-op — fall back to the reserve-then-resolve default */ }
+    })();
+  </script>
   <div
     class="proto-configurator-button-wrapper proto-v2-standalone-wrapper"
     data-proto-v2-standalone

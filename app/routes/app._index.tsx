@@ -265,7 +265,16 @@ export default function Dashboard() {
               </InlineGrid>
             }
           >
-            <Await resolve={analytics}>
+            <Await
+              resolve={analytics}
+              errorElement={
+                <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+                  <Stat label="Modal opens (30d)" value="—" />
+                  <Stat label="Add to cart (30d)" value="—" />
+                  <Stat label="Conversion (30d)" value="—" />
+                </InlineGrid>
+              }
+            >
               {(analyticsData) => {
                 const modalOpens = analyticsData.counts.modal_open ?? 0;
                 const addToCart = analyticsData.counts.add_to_cart ?? 0;
@@ -302,7 +311,16 @@ export default function Dashboard() {
               </Text>
 
               <Suspense fallback={<SkeletonBodyText lines={2} />}>
-                <Await resolve={embed}>{(embedData) => <EmbedThemes embed={embedData} shop={shop} />}</Await>
+                <Await
+                  resolve={embed}
+                  errorElement={
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Couldn't check your theme status — try reloading the page.
+                    </Text>
+                  }
+                >
+                  {(embedData) => <EmbedThemes embed={embedData} shop={shop} />}
+                </Await>
               </Suspense>
 
               {toggleJustSucceeded && (
@@ -409,7 +427,7 @@ export default function Dashboard() {
             anywhere), so it resolves inside the same <Await>; renders nothing while pending or
             once the merchant is actually set up, to avoid a flash of the checklist on every load. */}
         <Suspense fallback={null}>
-          <Await resolve={embed}>
+          <Await resolve={embed} errorElement={null}>
             {(embedData) => {
               const embedAnywhere =
                 embedData.ok && ((embedData.live?.on ?? false) || embedData.otherOn.length > 0);

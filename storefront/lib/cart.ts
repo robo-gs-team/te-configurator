@@ -170,7 +170,12 @@ export async function addToShopifyCart(
   };
   if (strungId) parentTag["Strung ID"] = strungId;
 
-  const racquetProps: Record<string, string> = { ...properties, _proto_session: sessionId };
+  // Theme properties FIRST so ours win any key collision — see readThemeLineItemProperties.
+  const racquetProps: Record<string, string> = {
+    ...readThemeLineItemProperties(),
+    ...properties,
+    _proto_session: sessionId,
+  };
   if (strungId) racquetProps["Strung ID"] = strungId;
 
   const items: Array<{
@@ -294,6 +299,51 @@ async function postCartItems(
   });
 }
 
+/** The theme's add-to-cart form, if present. */
+function findCartForm(): HTMLFormElement | null {
+  return (
+    document.querySelector<HTMLFormElement>('form[action*="/cart/add"]') ??
+    document.querySelector<HTMLFormElement>("product-form form")
+  );
+}
+
+/**
+ * Carry over the THEME's own line-item properties (any `properties[...]` control in the product
+ * form) so they survive our add-to-cart.
+ *
+ * Why this is needed: we don't submit the theme's form — we build our own line items and POST
+ * them to /cart/add.js. Anything the theme attaches as a line-item property is therefore silently
+ * dropped unless we copy it. That lost a merchant's "preorder" note on continue-selling-when-
+ * out-of-stock variants: the theme renders it into the form, the native Add to Cart carried it to
+ * the order, and configurator orders didn't — leaving customer service blind to preorder lines.
+ *
+ * FormData (rather than querying inputs directly) is deliberate, and the same lesson as variant
+ * resolution above: themes attach these controls to the form by a `form="..."` ATTRIBUTE as often
+ * as by nesting, and FormData is what correctly aggregates both — a DOM-descendant query misses
+ * the form-associated ones entirely.
+ *
+ * Empty values are skipped (Shopify drops empty properties anyway, and themes commonly render
+ * blank placeholder inputs). Our own properties always win on a key collision — see the merge in
+ * addToShopifyCart — so this can never overwrite configurator data.
+ */
+function readThemeLineItemProperties(): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const form = findCartForm();
+    if (!form) return out;
+    for (const [key, value] of new FormData(form).entries()) {
+      const match = key.match(/^properties\[(.+)\]$/);
+      if (!match || typeof value !== "string") continue;
+      const name = match[1].trim();
+      const trimmed = value.trim();
+      if (name && trimmed) out[name] = trimmed;
+    }
+  } catch {
+    // best-effort — never block an add-to-cart over this
+  }
+  return out;
+}
+
 /**
  * Best-effort discovery of the currently selected racquet variant id from the page, used when
  * the caller didn't pass one. Tries, in order: reading `id` from the actual cart-add form via
@@ -309,9 +359,7 @@ function getProductVariantFromPage(): string | null {
   // the theme's own native Add to Cart to work at all. FormData correctly aggregates whichever
   // control type holds that value (including ones associated via a `form="..."` attribute rather
   // than DOM nesting), so it captures exactly what the theme's own submission would use.
-  const cartForm =
-    document.querySelector<HTMLFormElement>('form[action*="/cart/add"]') ??
-    document.querySelector<HTMLFormElement>("product-form form");
+  const cartForm = findCartForm();
   if (cartForm) {
     const id = new FormData(cartForm).get("id");
     if (id) return String(id);

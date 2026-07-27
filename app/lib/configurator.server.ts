@@ -249,10 +249,66 @@ export async function getSavedConfiguration(shareId: string) {
   return prisma.savedConfiguration.findUnique({ where: { shareId } });
 }
 
+export type AnalyticsSummary = Awaited<ReturnType<typeof computeAnalyticsSummary>> & {
+  error: boolean;
+};
+
+function emptyAnalyticsSummary(): AnalyticsSummary {
+  return {
+    events: [],
+    counts: {},
+    total: 0,
+    funnel: {
+      openSessions: 0,
+      cartSessions: 0,
+      purchaseSessions: 0,
+      configOrders: 0,
+      otherOrders: 0,
+      storeOrders: 0,
+    },
+    revenue: {
+      added: 0,
+      purchased: 0,
+      incrementalTotal: 0,
+      incrementalPerOrder: 0,
+      configAOV: 0,
+      storeAOV: 0,
+      aovLiftPct: 0,
+      revenuePerOpen: 0,
+    },
+    byMode: {},
+    byDevice: [],
+    byRacquet: [],
+    trend: [],
+    error: true,
+  };
+}
+
+/**
+ * Several aggregate DB queries — the Dashboard awaits this via `defer()`/`<Await>` with no
+ * `errorElement`, so an uncaught rejection here doesn't just blank this one card, it throws
+ * during render and takes down the ENTIRE admin page (surfaced as the generic "Something went
+ * wrong" boundary). A transient DB hiccup (connection blip, statement timeout) must degrade to an
+ * empty-but-renderable summary instead — same resilience posture as detectAppEmbedStatus.
+ */
 export async function getAnalyticsSummary(
   shopId: string,
   days = 30,
   options: { includeEvents?: boolean } = {},
+): Promise<AnalyticsSummary> {
+  try {
+    const result = await computeAnalyticsSummary(shopId, days, options);
+    return { ...result, error: false };
+  } catch (err) {
+    console.error("getAnalyticsSummary: query failed:", err);
+    return emptyAnalyticsSummary();
+  }
+}
+
+async function computeAnalyticsSummary(
+  shopId: string,
+  days: number,
+  options: { includeEvents?: boolean },
 ) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const where = { shopId, createdAt: { gte: since } };
