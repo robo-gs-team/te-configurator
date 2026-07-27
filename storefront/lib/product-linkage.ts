@@ -17,6 +17,7 @@
 
 import { normalizeProductId } from "./product-id";
 import { restoreAddToCartButtons } from "./configure-placement";
+import { restoreLegacyButton } from "./legacy-button";
 import { setThemeBuyBoxHidden } from "./theme-buybox";
 
 /**
@@ -89,4 +90,7 @@ export function markProductUnlinked() {
   document.documentElement.classList.add("proto-configurator-unlinked");
   setThemeBuyBoxHidden(false);
   restoreAddToCartButtons();
+  // Our button is gone, so the merchant's own configurator button must come back — a product page
+  // must never end up with NO way to configure.
+  restoreLegacyButton();
 }

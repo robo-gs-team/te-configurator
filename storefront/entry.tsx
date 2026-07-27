@@ -178,6 +178,10 @@ function clearLinkCache(productId: string): void {
 // In-flight promise for the lazy modal bundle so concurrent triggers share one load.
 let modalLoadPromise: Promise<ProtoConfiguratorModalApi> | null = null;
 
+/** Ceiling on the lazy modal-bundle <script> load. Generous (it's ~190KB and only fetched on a
+ *  real click), but bounded — see loadModal for why an unbounded wait is a dead button. */
+const MODAL_LOAD_TIMEOUT_MS = 20000;
+
 /** Resolve the modal bundle URL from embed settings (set by the App Embed liquid). */
 function getModalUrl(): string {
   return window.ProtoConfiguratorSettings?.modalUrl ?? "";
@@ -203,14 +207,24 @@ function loadModal(): Promise<ProtoConfiguratorModalApi> {
     const script = document.createElement("script");
     script.src = url;
     script.async = true;
+    // A stalled script request fires NEITHER onload nor onerror — without this timeout the click
+    // handler awaits forever and the button is left permanently disabled + spinning (its `finally`
+    // never runs). Failing here instead surfaces a retryable error on the button.
+    const timer = window.setTimeout(() => {
+      reject(new Error("Configurator is taking too long to load. Please try again."));
+    }, MODAL_LOAD_TIMEOUT_MS);
     script.onload = () => {
+      window.clearTimeout(timer);
       if (window.ProtoConfiguratorModal) {
         resolve(window.ProtoConfiguratorModal);
       } else {
         reject(new Error("Configurator modal failed to initialize."));
       }
     };
-    script.onerror = () => reject(new Error("Configurator modal failed to load."));
+    script.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error("Configurator modal failed to load."));
+    };
     document.head.appendChild(script);
   });
 

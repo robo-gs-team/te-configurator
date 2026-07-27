@@ -11,6 +11,8 @@
  * only ever toggles a class on our OWN wrapper. Safe to run alongside anything else on the page.
  */
 
+import { applyLegacyButtonState } from "./legacy-button";
+
 function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -126,7 +128,11 @@ function getStringingValue(): string | null {
   return readStringingValue(document);
 }
 
-/** Show/hide every v2 standalone wrapper based on the current Strung/Unstrung choice. */
+/**
+ * Show/hide every v2 standalone wrapper based on the current Strung/Unstrung choice, and keep the
+ * merchant's legacy configurator button in the exact inverse state (only ever hidden while ours is
+ * actually shown — see legacy-button.ts).
+ */
 function applyVisibility() {
   const value = getStringingValue();
   // Show when: in the theme editor (always, for placement), no stringing control found (nothing
@@ -135,24 +141,49 @@ function applyVisibility() {
   document.querySelectorAll<HTMLElement>(".proto-v2-standalone-wrapper").forEach((wrapper) => {
     wrapper.classList.toggle("proto-v2-hide-unstrung", !show);
   });
+
+  // Our button is only truly visible if linkage also confirmed it belongs here — the wrapper is
+  // display:none under html.proto-configurator-unlinked regardless of the class toggled above.
+  const linked = document.documentElement.classList.contains("proto-configurator-linked");
+  applyLegacyButtonState(show && linked);
 }
 
 let delegatedChangeBound = false;
+let domObserver: MutationObserver | null = null;
 
 /**
- * The stringing control can appear in the DOM AFTER this gate first runs: many themes hydrate or
- * re-render the variant/property pickers with JS a beat after first paint. Since the split-phase
- * linkage fetch, the button is revealed very early (tiny/cached linkage answer), so the gate's
- * first scan can land before that control exists — it then finds nothing to gate on, shows the
- * button, and (for a pre-selected "Unstrung") never re-checks, because no `change` event fires.
- * Re-running the scan across a short window catches the late-rendering control. Every pass is
- * read-only and idempotent, so extra runs are harmless.
+ * The stringing control can appear in (or be re-rendered into) the DOM well AFTER this gate first
+ * runs: many themes hydrate or re-render variant/property pickers with JS a beat after first
+ * paint. Since the split-phase linkage fetch, our button is revealed very early (tiny/cached
+ * linkage answer), so the gate's first scan can land before that control exists — it then finds
+ * nothing to gate on, shows the button, and for a PRE-SELECTED "Unstrung" never re-checks, because
+ * no `change` event ever fires.
+ *
+ * A MutationObserver is the reliable fix rather than a fixed set of timers: it catches the control
+ * whenever it appears, no matter how late (slow network, heavy theme, a re-render seconds in), and
+ * it also re-applies the legacy-button state if the theme rebuilds the buy box underneath us. The
+ * short timer ladder is kept purely as a cheap belt-and-braces for environments where the observer
+ * is unavailable. Every pass is idempotent, so extra runs are harmless.
  */
-function scheduleRescans() {
+function watchForLateRenders() {
   for (const delay of [50, 150, 400, 900, 1800]) {
     window.setTimeout(applyVisibility, delay);
   }
   window.addEventListener("load", applyVisibility, { once: true });
+
+  if (typeof MutationObserver === "undefined" || domObserver) return;
+  let queued = false;
+  domObserver = new MutationObserver(() => {
+    // Coalesce bursts (a theme re-render fires many records) into ONE pass per frame — and run it
+    // off the observer callback so our own DOM writes can't re-enter it synchronously.
+    if (queued) return;
+    queued = true;
+    window.requestAnimationFrame(() => {
+      queued = false;
+      applyVisibility();
+    });
+  });
+  domObserver.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 /**
@@ -167,6 +198,6 @@ export function initV2StandaloneGate() {
   if (!delegatedChangeBound) {
     delegatedChangeBound = true;
     document.addEventListener("change", applyVisibility, true);
-    scheduleRescans();
+    watchForLateRenders();
   }
 }
