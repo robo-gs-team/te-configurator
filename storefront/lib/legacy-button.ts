@@ -89,8 +89,19 @@ function engage(config: LegacyConfig): void {
   const targets = findLegacyElements(config.selector);
   if (targets.length === 0) return; // nothing matched (yet) — a later re-run may find it
 
-  // Re-record from scratch each time: the theme may have re-rendered the buy box since we last
-  // hid it, which would make previously-recorded nodes stale and leave the new ones visible.
+  // Idempotent fast path. This runs from a MutationObserver, and a busy PDP mutates constantly
+  // (countdown timers, lazy images, app widgets) — so re-writing styles on every pass would be
+  // pure waste. Only act when the CURRENT matches aren't already exactly what we've hidden, which
+  // is also precisely the case that matters: an app like the merchant's own configurator that
+  // rebuilds the buy box from scratch produces NEW nodes, which fail this check and get re-hidden.
+  const unchanged =
+    hiddenRecords.length === targets.length &&
+    targets.every(
+      (el) => el.dataset.protoLegacyHidden === "true" && hiddenRecords.some((r) => r.el === el),
+    );
+  if (unchanged) return;
+
+  // Re-record from scratch: previously-recorded nodes may be stale (detached by a re-render).
   restoreHidden();
 
   hiddenRecords = targets.map((el) => {
