@@ -24,10 +24,6 @@
   <div
     class="proto-configurator-button-wrapper proto-v2-standalone-wrapper"
     data-proto-v2-standalone
-    {%- if block.settings.legacy_selector != blank %}
-      data-proto-legacy-selector="{{ block.settings.legacy_selector | escape }}"
-      data-proto-legacy-mode="{{ block.settings.legacy_mode | default: 'hide' }}"
-    {%- endif %}
     {{ block.shopify_attributes }}
   >
     <button
@@ -184,30 +180,6 @@
       "id": "show_gear",
       "label": "Show gear icon",
       "default": true
-    },
-    {
-      "type": "header",
-      "content": "Replace your existing configurator button"
-    },
-    {
-      "type": "paragraph",
-      "content": "Optional. If this product page already has another 'Configure' button from a previous app, enter its CSS selector below to hide it so only this button shows. Leave blank to change nothing. Because this setting lives on this block, it only applies to the templates you added this block to."
-    },
-    {
-      "type": "text",
-      "id": "legacy_selector",
-      "label": "CSS selector of the old button",
-      "info": "e.g. '.old-configurator-btn' or '#configure-wrap'. Right-click the old button → Inspect to find a class or id. Comma-separate multiple selectors. The old button is only hidden while THIS button is actually visible — if this racquet isn't linked to a configurator, or 'Unstrung' is selected, the old button comes straight back."
-    },
-    {
-      "type": "select",
-      "id": "legacy_mode",
-      "label": "How to replace it",
-      "default": "hide",
-      "options": [
-        { "value": "hide", "label": "Hide the old button (keep this button where I placed it)" },
-        { "value": "replace", "label": "Take the old button's exact position" }
-      ]
     },
     {
       "type": "header",

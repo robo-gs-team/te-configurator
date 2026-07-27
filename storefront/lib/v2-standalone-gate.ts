@@ -11,8 +11,6 @@
  * only ever toggles a class on our OWN wrapper. Safe to run alongside anything else on the page.
  */
 
-import { applyLegacyButtonState } from "./legacy-button";
-
 function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -128,11 +126,7 @@ function getStringingValue(): string | null {
   return readStringingValue(document);
 }
 
-/**
- * Show/hide every v2 standalone wrapper based on the current Strung/Unstrung choice, and keep the
- * merchant's legacy configurator button in the exact inverse state (only ever hidden while ours is
- * actually shown — see legacy-button.ts).
- */
+/** Show/hide every v2 standalone wrapper based on the current Strung/Unstrung choice. */
 function applyVisibility() {
   const value = getStringingValue();
   // Show when: in the theme editor (always, for placement), no stringing control found (nothing
@@ -141,11 +135,6 @@ function applyVisibility() {
   document.querySelectorAll<HTMLElement>(".proto-v2-standalone-wrapper").forEach((wrapper) => {
     wrapper.classList.toggle("proto-v2-hide-unstrung", !show);
   });
-
-  // Our button is only truly visible if linkage also confirmed it belongs here — the wrapper is
-  // display:none under html.proto-configurator-unlinked regardless of the class toggled above.
-  const linked = document.documentElement.classList.contains("proto-configurator-linked");
-  applyLegacyButtonState(show && linked);
 }
 
 let delegatedChangeBound = false;
@@ -161,9 +150,9 @@ let domObserver: MutationObserver | null = null;
  *
  * A MutationObserver is the reliable fix rather than a fixed set of timers: it catches the control
  * whenever it appears, no matter how late (slow network, heavy theme, a re-render seconds in), and
- * it also re-applies the legacy-button state if the theme rebuilds the buy box underneath us. The
- * short timer ladder is kept purely as a cheap belt-and-braces for environments where the observer
- * is unavailable. Every pass is idempotent, so extra runs are harmless.
+ * it re-applies the gate if the theme rebuilds the buy box underneath us. The short timer ladder is
+ * kept purely as a cheap belt-and-braces for environments where the observer is unavailable. Every
+ * pass is idempotent, so extra runs are harmless.
  */
 function watchForLateRenders() {
   for (const delay of [50, 150, 400, 900, 1800]) {
