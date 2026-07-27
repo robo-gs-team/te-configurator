@@ -1,4 +1,9 @@
-import { clearConfigureError, showConfigureError } from "./lib/configure-feedback";
+import {
+  clearConfigureError,
+  clearConfigureLoadingNote,
+  showConfigureError,
+  startConfigureLoadingNote,
+} from "./lib/configure-feedback";
 import { normalizeProductId } from "./lib/product-id";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import { initStringingPageGate } from "./lib/stringing-page-gate";
@@ -493,6 +498,11 @@ function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
   trigger.setAttribute("aria-busy", loading ? "true" : "false");
   trigger.style.opacity = loading ? "0.75" : "";
   trigger.style.cursor = loading ? "wait" : "pointer";
+  // `cursor: wait` is invisible on touch, so a phone shopper saw only a faint dim. Arm a delayed
+  // text note as the mobile-visible half of this state (see configure-feedback.ts — it stays
+  // silent for the fast/warmed path and only surfaces on a genuinely long wait).
+  if (loading) startConfigureLoadingNote(trigger);
+  else clearConfigureLoadingNote(trigger);
 }
 
 /**
