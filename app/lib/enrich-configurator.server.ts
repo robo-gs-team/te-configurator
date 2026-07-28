@@ -86,6 +86,8 @@ type NormalizedStringVariant = {
   availableForSale: boolean;
   gauge: string | null;
   color: string | null;
+  /** `custom.pre_order` metafield on this variant — see cart.ts for how it reaches the order. */
+  preorder?: boolean;
 };
 
 function normalizeStringVariants(
@@ -105,6 +107,7 @@ function normalizeStringVariants(
       availableForSale: v.availableForSale,
       gauge,
       color,
+      preorder: v.preorder === true,
     };
   });
 }

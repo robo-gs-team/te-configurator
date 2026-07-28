@@ -14,6 +14,9 @@ export type ProductVariantInfo = {
   price: number;
   availableForSale: boolean;
   selectedOptions: Array<{ name: string; value: string }>;
+  /** True when the merchant's `custom.pre_order` variant metafield is set. Carried through to the
+   *  cart so a preordered STRING gets the same `_pre-order` note their native Add to Cart adds. */
+  preorder?: boolean;
 };
 
 export type ProductWithImage = {
@@ -37,6 +40,7 @@ export function mapProductVariants(
         legacyResourceId?: string;
         price?: string;
         availableForSale?: boolean;
+        metafield?: { value?: string } | null;
         selectedOptions?: Array<{ name?: string; value?: string }>;
       }>
     | undefined,
@@ -47,6 +51,8 @@ export function mapProductVariants(
       variantId: String(v.legacyResourceId),
       price: parseFloat(String(v.price ?? "0")) || 0,
       availableForSale: v.availableForSale !== false,
+      // Shopify serializes boolean metafields as the strings "true"/"false".
+      preorder: String(v.metafield?.value ?? "").trim().toLowerCase() === "true",
       selectedOptions: (v.selectedOptions ?? [])
         .filter((o) => o?.name != null && o?.value != null)
         .map((o) => ({ name: String(o.name), value: String(o.value) })),
@@ -202,6 +208,9 @@ export async function getProductsDetailedByIds(
                 legacyResourceId
                 price
                 availableForSale
+                # Merchant flags preorders per VARIANT with this boolean metafield. Riding along
+                # with the variant query we already run costs one field, not an extra request.
+                metafield(namespace: "custom", key: "pre_order") { value }
                 selectedOptions {
                   name
                   value

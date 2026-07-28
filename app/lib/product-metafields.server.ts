@@ -459,3 +459,63 @@ export async function migrateLegacyRacquetTension(
 
   return result;
 }
+
+// The merchant flags a preorder at the VARIANT level with a boolean metafield. Confirmed by the
+// merchant: "Continue selling when out of stock" is on at the product level, and
+// `custom.pre_order = true` marks the specific variant as a preorder.
+export const PREORDER_NAMESPACE = "custom";
+export const PREORDER_KEY = "pre_order";
+
+/**
+ * Variant ids of the given product that are flagged as preorder.
+ *
+ * WHY THIS IS SERVER-SIDE: the flag lives in a metafield, and metafields are not present in the
+ * product JSON Shopify embeds in the page, nor in the Ajax API — so the storefront bundle cannot
+ * see it. (The merchant's theme does render its own copy into a `variantPreOrderMap`, but that
+ * sits inside a function scope we can't read.) Fetching it here is the only reliable route.
+ *
+ * Kept to ONE small query for ONE product, deliberately: this rides along with the full-catalog
+ * request, which is already intent-gated and cached (5 min server-side, 30 min per session), so it
+ * costs far less than folding it into the shop-wide snapshot would.
+ *
+ * Best-effort: any failure returns an empty list. A missing preorder note is a customer-service
+ * annoyance; a failed add-to-cart is a lost sale, so this must never be able to break checkout.
+ *
+ * @returns Normalized (bare numeric) variant ids flagged preorder. Empty when none/unavailable.
+ */
+export async function getPreorderVariantIds(
+  admin: ShopifyAdmin,
+  productId: string,
+): Promise<string[]> {
+  try {
+    const res = await admin.graphql(
+      `
+      #graphql
+      query ProtoPreorderVariants($id: ID!) {
+        product(id: $id) {
+          variants(first: 100) {
+            nodes {
+              id
+              metafield(namespace: "${PREORDER_NAMESPACE}", key: "${PREORDER_KEY}") { value }
+            }
+          }
+        }
+      }
+    `,
+      { variables: { id: toProductGid(productId) } },
+    );
+    const json = (await res.json()) as {
+      data?: {
+        product?: { variants?: { nodes?: Array<{ id: string; metafield?: { value?: string } | null }> } };
+      };
+    };
+    const nodes = json.data?.product?.variants?.nodes ?? [];
+    return nodes
+      // Shopify stores boolean metafields as the strings "true"/"false".
+      .filter((n) => String(n.metafield?.value ?? "").trim().toLowerCase() === "true")
+      .map((n) => normalizeProductId(n.id));
+  } catch (err) {
+    console.error(`getPreorderVariantIds failed for product ${productId}:`, err);
+    return [];
+  }
+}

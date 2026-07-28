@@ -16,6 +16,7 @@ import { sanitizeInput } from "~/lib/conditional-logic";
 import { enrichConfiguratorWithShopifyData } from "~/lib/enrich-configurator.server";
 import { normalizeProductId } from "~/lib/product-id";
 import {
+  getPreorderVariantIds,
   resolveRacquetTensionMap,
   resolveRecommendedStringsMap,
   type RecommendedStringsMaps,
@@ -141,6 +142,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       enrichedSnapshot?: string | null;
     }).enrichedSnapshot;
 
+    // Preorder flags are variant-level metafields, so they can't live in the per-configurator
+    // snapshot without going stale per racquet; resolved per request instead, then cached with the
+    // response below like everything else on this path.
+    const preorderVariantIds = admin ? await getPreorderVariantIds(admin, productId) : [];
+
     if (snap) {
       try {
         const stored = JSON.parse(snap) as StoredSnapshot;
@@ -160,6 +166,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             // Store-wide best-seller tally (same for every racquet) — drives best-seller sorting
             // of the string picker. Absent on pre-existing snapshots; the storefront defaults to {}.
             stringUnitsSoldByProductId: stored.stringUnitsSoldByProductId ?? {},
+            preorderVariantIds,
           },
         };
         setCachedProxyResponse(shopDomain, productId, responseData);
@@ -193,13 +200,18 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const recommendedHybridStringProductIds = recommendedMap.hybrid[productId] ?? [];
 
     const responseData = {
-      configurator: serializeConfiguratorPayload(
-        enrichedConfigurator,
-        theme,
-        tensionRange,
-        recommendedStringProductIds,
-        recommendedHybridStringProductIds,
-      ),
+      configurator: {
+        ...serializeConfiguratorPayload(
+          enrichedConfigurator,
+          theme,
+          tensionRange,
+          recommendedStringProductIds,
+          recommendedHybridStringProductIds,
+        ),
+        // Same per-request resolution as the snapshot path above — kept out of
+        // serializeConfiguratorPayload because it is product-specific, not configurator-wide.
+        preorderVariantIds,
+      },
     };
     setCachedProxyResponse(shopDomain, productId, responseData);
 
