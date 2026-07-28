@@ -190,6 +190,29 @@ let modalLoadPromise: Promise<ProtoConfiguratorModalApi> | null = null;
  *  real click), but bounded — see loadModal for why an unbounded wait is a dead button. */
 const MODAL_LOAD_TIMEOUT_MS = 20000;
 
+/**
+ * Hard ceiling on the WHOLE click → modal sequence.
+ *
+ * The per-step budgets compound badly: the catalog fetch alone retries 3x at 7s each plus backoff
+ * (~23s), and the modal script adds up to 20s on top — so a failing backend could leave a shopper
+ * staring at "Loading your options…" for the better part of a minute before anything was said. No
+ * shopper waits that long; they conclude it is broken. One overall deadline caps the whole thing
+ * and surfaces a retryable message instead. The underlying fetch is not cancelled — if it lands
+ * later it still populates the cache, so a second click is fast.
+ */
+const OPEN_DEADLINE_MS = 12000;
+
+/** Reject with `message` if `promise` has not settled within `ms`. */
+function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => { window.clearTimeout(timer); resolve(value); },
+      (error) => { window.clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 /** Resolve the modal bundle URL from embed settings (set by the App Embed liquid). */
 function getModalUrl(): string {
   return window.ProtoConfiguratorSettings?.modalUrl ?? "";
@@ -516,7 +539,22 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
   setTriggerLoading(trigger, true);
 
   try {
-    const result = await fetchAndCacheFullCatalog(productId);
+    // Theme editor: Shopify does not route App Proxy (/apps/...) requests inside the editor
+    // preview, so the catalog fetch here is guaranteed to fail — but only AFTER burning the full
+    // retry budget, which is what made the editor feel broken and slow. Say so immediately.
+    if (isThemeEditor()) {
+      showConfigureError(
+        trigger,
+        "The configurator can't open inside the theme editor — Shopify doesn't route app requests here. Use Preview to test it on your storefront.",
+      );
+      return;
+    }
+
+    const result = await withDeadline(
+      fetchAndCacheFullCatalog(productId),
+      OPEN_DEADLINE_MS,
+      "Couldn't load the configurator in time. Please try again.",
+    );
     if (result.error) {
       showConfigureError(trigger, result.error);
       return;
@@ -529,7 +567,11 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
       return;
     }
 
-    const modal = await loadModal();
+    const modal = await withDeadline(
+      loadModal(),
+      OPEN_DEADLINE_MS,
+      "Couldn't load the configurator in time. Please try again.",
+    );
     modal.open(productId, result.configurator);
   } catch (err) {
     showConfigureError(
