@@ -64,6 +64,20 @@ function poolerSafe(url) {
     : url;
 }
 
+/**
+ * Strip credentials/hosts from an error before printing. Postgres and Prisma errors routinely
+ * echo the full connection URI, and the expected workflow here is "run it, paste the output to
+ * someone for help" — so the output must be safe to share by default, not safe-if-you-remember.
+ */
+function redact(message) {
+  return String(message)
+    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s"']+/gi, "[connection-string]")
+    .replace(/\b[\w.-]+:[^\s@/]+@[\w.-]+/g, "[credentials]")
+    .replace(/\b\d{1,3}(\.\d{1,3}){3}\b/g, "[ip]")
+    // Prisma also prints a bare `host:port` (no scheme, no credentials) in reachability errors.
+    .replace(/[\w.-]*supabase\.(com|co)(:\d+)?/gi, "[db-host]");
+}
+
 const source = new PrismaClient({ datasources: { db: { url: poolerSafe(SOURCE) } } });
 const target = new PrismaClient({ datasources: { db: { url: poolerSafe(TARGET) } } });
 
@@ -136,7 +150,7 @@ async function main() {
 
 main()
   .catch((e) => {
-    console.error("\n❌ Migration failed:", e.message);
+    console.error("\n❌ Migration failed:", redact(e.message));
     process.exit(1);
   })
   .finally(async () => {
