@@ -1,4 +1,9 @@
-import { clearConfigureError, showConfigureError } from "./lib/configure-feedback";
+import {
+  clearConfigureError,
+  clearConfigureLoadingNote,
+  showConfigureError,
+  startConfigureLoadingNote,
+} from "./lib/configure-feedback";
 import { normalizeProductId } from "./lib/product-id";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import { initStringingPageGate } from "./lib/stringing-page-gate";
@@ -16,7 +21,10 @@ import {
 } from "./lib/theme-placement";
 import type { StorefrontConfigurator } from "~/lib/configurator.types";
 import type { ProtoConfiguratorModalApi } from "./modal-entry";
-import "./styles.css";
+// Page-load CSS is the tiny entry.css only. The full modal stylesheet ships inside the lazy
+// modal bundle (see modal-entry.tsx) — it used to be imported here, which put ~33KB of
+// render-blocking, modal-only CSS on every racquet PDP.
+import "./entry.css";
 
 declare global {
   interface Window {
@@ -272,7 +280,11 @@ function buildProductUrl(productId: string, suffix: "" | "/link"): string {
 /** One HTTP attempt against `url`, racing an optional early-fetch promise (kicked off inline in
  *  configurator-embed.liquid during HTML parse, before this deferred bundle even runs) — the
  *  response is typically already in flight or done by now. */
-async function fetchAttempt(url: string, early?: Promise<Response>): Promise<Response> {
+async function fetchAttempt(
+  url: string,
+  early?: Promise<Response>,
+  lowPriority = false,
+): Promise<Response> {
   if (early) {
     let timer = 0;
     const timeout = new Promise<never>((_, reject) => {
@@ -291,11 +303,15 @@ async function fetchAttempt(url: string, early?: Promise<Response>): Promise<Res
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), FETCH_ATTEMPT_TIMEOUT_MS);
   try {
-    return await fetch(url, {
+    const init: RequestInit & { priority?: "low" } = {
       credentials: "same-origin",
       signal: controller.signal,
       headers: { Accept: "application/json" },
-    });
+    };
+    // Background warm-ups yield to the page's own resources where the browser supports fetch
+    // priority (Chromium). Unknown members of RequestInit are ignored elsewhere — safe everywhere.
+    if (lowPriority) init.priority = "low";
+    return await fetch(url, init);
   } finally {
     window.clearTimeout(timeout);
   }
@@ -364,6 +380,7 @@ async function fetchLinkage(
  */
 async function fetchFullConfigurator(
   productId: string,
+  lowPriority = false,
 ): Promise<{ configurator: StorefrontConfigurator | null; error?: string; code?: string }> {
   const url = buildProductUrl(productId, "");
   let lastError = "Unable to reach the configurator. Please refresh the page and try again.";
@@ -373,7 +390,7 @@ async function fetchFullConfigurator(
       await new Promise((r) => window.setTimeout(r, FETCH_RETRY_DELAYS_MS[attempt - 1]));
     }
     try {
-      const res = await fetchAttempt(url);
+      const res = await fetchAttempt(url, undefined, lowPriority);
       const contentType = res.headers.get("content-type") ?? "";
       const raw = await res.text();
 
@@ -439,6 +456,7 @@ const fullCatalogInFlight = new Map<
  */
 function fetchAndCacheFullCatalog(
   productId: string,
+  lowPriority = false,
 ): Promise<{ configurator: StorefrontConfigurator | null; error?: string; code?: string }> {
   const cached = configuratorCache.get(productId) ?? readSessionCache(productId);
   if (cached) {
@@ -449,7 +467,7 @@ function fetchAndCacheFullCatalog(
   const inFlight = fullCatalogInFlight.get(productId);
   if (inFlight) return inFlight;
 
-  const promise = fetchFullConfigurator(productId).then((result) => {
+  const promise = fetchFullConfigurator(productId, lowPriority).then((result) => {
     if (result.configurator) {
       configuratorCache.set(productId, result.configurator);
       writeSessionCache(productId, result.configurator);
@@ -470,8 +488,8 @@ function fetchAndCacheFullCatalog(
  * rather than getting stuck on a cached failure). Safe to call unconditionally and repeatedly:
  * fetchAndCacheFullCatalog short-circuits to zero network work once cached or already in flight.
  */
-function prefetchFullCatalog(productId: string): void {
-  void fetchAndCacheFullCatalog(productId).catch(() => {});
+function prefetchFullCatalog(productId: string, lowPriority = false): void {
+  void fetchAndCacheFullCatalog(productId, lowPriority).catch(() => {});
 }
 
 /** Toggle the Configure button's loading state (disabled + busy + wait cursor) during fetch. */
@@ -480,6 +498,11 @@ function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
   trigger.setAttribute("aria-busy", loading ? "true" : "false");
   trigger.style.opacity = loading ? "0.75" : "";
   trigger.style.cursor = loading ? "wait" : "pointer";
+  // `cursor: wait` is invisible on touch, so a phone shopper saw only a faint dim. Arm a delayed
+  // text note as the mobile-visible half of this state (see configure-feedback.ts — it stays
+  // silent for the fast/warmed path and only surfaces on a genuinely long wait).
+  if (loading) startConfigureLoadingNote(trigger);
+  else clearConfigureLoadingNote(trigger);
 }
 
 /**
@@ -719,6 +742,25 @@ function whenIdle(fn: () => void): void {
   else window.setTimeout(fn, 1200);
 }
 
+/**
+ * Run a task only AFTER the page has fully loaded (window `load`), then during idle time.
+ *
+ * Why `load` matters and idle alone is not enough: requestIdleCallback fires on CPU idleness, not
+ * network idleness — on a network-bound page load the main thread goes quiet early, so an "idle"
+ * callback can start downloads that compete with the page's own images for bandwidth. And Safari
+ * has no requestIdleCallback at all, so whenIdle's fallback is a flat 1.2s timer — on a slow
+ * mobile connection that is squarely MID page load. Every automatic background warm-up (modal
+ * bundle + full catalog) goes through THIS, so it can never race the page's own resources; real
+ * shopper-intent signals (hover/touch/focus/click) still warm immediately, bypassing this wait.
+ */
+function afterLoadIdle(fn: () => void): void {
+  if (document.readyState === "complete") {
+    whenIdle(fn);
+    return;
+  }
+  window.addEventListener("load", () => whenIdle(fn), { once: true });
+}
+
 let modalPrefetched = false;
 /**
  * On a LINKED product page, warm the heavy modal bundle (~184KB of React + UI) during browser idle
@@ -751,7 +793,10 @@ function prefetchModalBundle(): void {
  */
 function warmUpForLikelyClick(productId: string): void {
   prefetchModalBundle();
-  prefetchFullCatalog(productId);
+  // Low priority: this is the automatic background warm-up — it must never outrank the page's
+  // own resources. Hover/touch intent prefetches (initConfigurePrefetchDelegation) stay normal
+  // priority, since there the shopper is about to click.
+  prefetchFullCatalog(productId, true);
 }
 
 /**
@@ -763,9 +808,11 @@ function warmUpForLikelyClick(productId: string): void {
 function applyLinkedUi(productId: string, configurator?: StorefrontConfigurator) {
   if (configurator) configuratorCache.set(productId, configurator);
   markProductLinked();
-  // A Configure click is now plausible; warm the modal bundle + full catalog when the browser is
-  // idle (a no-op for whichever of the two, if any, is already cached/in flight).
-  whenIdle(() => warmUpForLikelyClick(productId));
+  // A Configure click is now plausible; warm the modal bundle + full catalog — but only after the
+  // page itself has finished loading (see afterLoadIdle: an idle-time warm-up mid-load was
+  // stealing bandwidth from the page's own images, especially on Safari where "idle" degrades to
+  // a flat 1.2s timer). A no-op for whichever of the two, if any, is already cached/in flight.
+  afterLoadIdle(() => warmUpForLikelyClick(productId));
 
   // Standalone v2 mode: the "Configure Racquet" button is fully self-contained. Skip every piece
   // of DOM surgery (fallback injection, buy-box relocation, Strung/Unstrung gate) — the block
