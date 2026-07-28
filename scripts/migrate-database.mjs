@@ -18,13 +18,16 @@
  * USAGE
  *   SOURCE_DATABASE_URL="postgresql://…old-sydney…" \
  *   TARGET_DATABASE_URL="postgresql://…new-us…" \
- *   node scripts/migrate-database.mjs [--force]
+ *   node scripts/migrate-database.mjs [--dry-run] [--force]
  */
 import { PrismaClient } from "@prisma/client";
 
 const SOURCE = process.env.SOURCE_DATABASE_URL;
 const TARGET = process.env.TARGET_DATABASE_URL;
 const FORCE = process.argv.includes("--force");
+/** Read + report only. Proves both databases are reachable and shows exactly what WOULD be
+ *  copied, without writing a single row — worth doing first on a one-shot data move. */
+const DRY_RUN = process.argv.includes("--dry-run");
 
 if (!SOURCE || !TARGET) {
   console.error("Set both SOURCE_DATABASE_URL and TARGET_DATABASE_URL.");
@@ -68,10 +71,22 @@ const target = new PrismaClient({ datasources: { db: { url: poolerSafe(TARGET) }
 const CHUNK = 500;
 
 async function main() {
+  console.log(DRY_RUN ? "DRY RUN — nothing will be written.\n" : "");
   console.log("Connecting…");
   await source.$queryRaw`SELECT 1`;
   await target.$queryRaw`SELECT 1`;
   console.log("Both databases reachable.\n");
+
+  if (DRY_RUN) {
+    let total = 0;
+    for (const table of TABLES) {
+      const [from, to] = await Promise.all([source[table].count(), target[table].count()]);
+      total += from;
+      console.log(`${table.padEnd(20)} source=${String(from).padStart(6)}  target=${to}`);
+    }
+    console.log(`\n${total} row(s) would be copied. Re-run without --dry-run to perform it.`);
+    return;
+  }
 
   // Refuse to write into a database that already has data, unless explicitly forced.
   if (!FORCE) {
