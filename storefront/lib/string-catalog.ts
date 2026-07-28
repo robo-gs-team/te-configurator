@@ -33,6 +33,9 @@ export type StringVariant = {
   availableForSale: boolean;
   gauge: string | null;
   color: string | null;
+  /** Merchant's `custom.pre_order` flag for this exact variant. Optional — absent on payloads
+   *  built before preorder support, which simply means no note is added. */
+  preorder?: boolean;
 };
 
 export type StringProduct = {

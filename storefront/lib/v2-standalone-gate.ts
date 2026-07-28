@@ -36,17 +36,6 @@ function classifyStringing(value: string, text: string): "strung" | "unstrung" {
   return looksUnstrung(value, text) ? "unstrung" : "strung";
 }
 
-/**
- * In the Shopify Theme Editor the App Proxy round-trip that gates this button doesn't run, and
- * there may be no real Strung/Unstrung variant to select — so gating on it would leave the button
- * permanently hidden while the merchant is trying to place/style it. In the editor we always show.
- */
-function isThemeEditor(): boolean {
-  return Boolean(
-    (window as unknown as { Shopify?: { designMode?: boolean } }).Shopify?.designMode,
-  );
-}
-
 /** The theme's add-to-cart form, when present — the preferred scan root (avoids unrelated selects). */
 function findProductForm(): ParentNode | null {
   return (
@@ -129,9 +118,16 @@ function getStringingValue(): string | null {
 /** Show/hide every v2 standalone wrapper based on the current Strung/Unstrung choice. */
 function applyVisibility() {
   const value = getStringingValue();
-  // Show when: in the theme editor (always, for placement), no stringing control found (nothing
-  // to gate on), or the choice is "strung". Hide only on a definite "unstrung".
-  const show = isThemeEditor() || value === null || value === "strung";
+  // Show when there is nothing to gate on (no Strung/Unstrung control on the page), or the choice
+  // is "strung". Hide only on a definite "unstrung".
+  //
+  // NOTE: this deliberately does NOT special-case the theme editor any more. It used to force the
+  // button visible there so a merchant could always position the block — but that made the editor
+  // preview disagree with the live storefront: the button stayed visible on "Unstrung", which
+  // reads as the gate being broken. The `value === null` fail-open already covers the case the
+  // editor exception existed for (a product with no stringing control to gate on), so the editor
+  // now behaves exactly like the storefront whenever a real control is present.
+  const show = value === null || value === "strung";
   document.querySelectorAll<HTMLElement>(".proto-v2-standalone-wrapper").forEach((wrapper) => {
     wrapper.classList.toggle("proto-v2-hide-unstrung", !show);
   });

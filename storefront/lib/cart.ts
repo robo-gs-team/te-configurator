@@ -107,6 +107,30 @@ function pushVariantLine(
 }
 
 /**
+ * Does the theme already carry a preorder note into the cart?
+ *
+ * Their native Add to Cart may render its own preorder property from the same metafield. If it
+ * does, that is the wording customer service already recognises, so it wins and we add nothing —
+ * two differently-worded preorder notes on one line is worse than one.
+ */
+function themeAlreadyFlagsPreorder(properties: Record<string, string>): boolean {
+  return Object.keys(properties).some((key) => /pre[\s_-]?order/i.test(key));
+}
+
+/**
+ * Line-item property stamped on a racquet whose selected variant is flagged preorder
+ * (`custom.pre_order` metafield — resolved server-side, see product-metafields.server.ts).
+ *
+ * Key and value copied EXACTLY from what the merchant's own Add to Cart already produces (seen on
+ * order #3031919: `_pre-order: true`). Matching it verbatim matters more than picking something
+ * prettier — customer service scans for that literal string, and any existing Flow rules, filters
+ * or fulfilment tooling keyed to it keep working. Leading underscore keeps it off the shopper's
+ * cart, as it is today.
+ */
+const PREORDER_PROPERTY_KEY = "_pre-order";
+const PREORDER_PROPERTY_VALUE = "true";
+
+/**
  * Build and submit the cart for a completed configuration.
  *
  * For the stringing UI it assembles: (1) the racquet variant carrying the full spec as line-item
@@ -171,11 +195,22 @@ export async function addToShopifyCart(
   if (strungId) parentTag["Strung ID"] = strungId;
 
   // Theme properties FIRST so ours win any key collision — see readThemeLineItemProperties.
+  const themeProps = readThemeLineItemProperties();
   const racquetProps: Record<string, string> = {
-    ...readThemeLineItemProperties(),
+    ...themeProps,
     ...properties,
     _proto_session: sessionId,
   };
+
+  // Preorder note. The flag is a variant metafield the storefront cannot read, so the proxy
+  // resolves it per product and ships the affected variant ids with the catalog. Only added when
+  // the theme has not already supplied its own preorder note.
+  if (
+    configurator.preorderVariantIds?.includes(String(mainVariantId)) &&
+    !themeAlreadyFlagsPreorder(racquetProps)
+  ) {
+    racquetProps[PREORDER_PROPERTY_KEY] = PREORDER_PROPERTY_VALUE;
+  }
   if (strungId) racquetProps["Strung ID"] = strungId;
 
   const items: Array<{
@@ -207,8 +242,17 @@ export async function addToShopifyCart(
       // Charge the exact variant matching the shopper's gauge+color (falling back sensibly), not a
       // fixed first variant — that's what caused in-stock strings to fail as "already sold out".
       const stringVariantId = resolveStringVariantId(stringProduct, bed.gauge, bed.color);
+      // A STRING can itself be on preorder — the merchant's example order (#3031919) carried
+      // `_pre-order: true` on a string line, not the racquet. The flag rides along on the variant
+      // in the catalog payload, so no extra request is needed to know.
+      const stringVariant = stringProduct?.variants?.find(
+        (v) => String(v.variantId) === String(stringVariantId),
+      );
       pushVariantLine(items, stringVariantId, 1, {
         ...parentTag,
+        ...(stringVariant?.preorder
+          ? { [PREORDER_PROPERTY_KEY]: PREORDER_PROPERTY_VALUE }
+          : {}),
         _line_type: "string",
         // Staff-only (leading underscore) — the racquet line's own (customer-visible)
         // Mains/Crosses summary already tells the shopper which side is which, so the string

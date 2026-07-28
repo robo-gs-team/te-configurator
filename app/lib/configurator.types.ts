@@ -49,6 +49,11 @@ export type StorefrontConfigurator = {
   // live-enrichment fallback path and before the merchant grants the read_orders scope — the picker
   // then falls back to the merchant's default catalog order.
   stringUnitsSoldByProductId?: Record<string, number>;
+  // Variant ids of THIS racquet flagged as preorder via the `custom.pre_order` metafield. The
+  // storefront can't read metafields itself, so the proxy resolves them per request and the cart
+  // stamps a preorder note on the racquet line (see storefront/lib/cart.ts). Optional: absent when
+  // the Admin API is unavailable, in which case no note is added.
+  preorderVariantIds?: string[];
 };
 
 export type StorefrontStep = {

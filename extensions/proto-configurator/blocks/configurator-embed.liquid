@@ -11,25 +11,32 @@
   collection / cart / blog / search / 404 pages ALL downloaded our JS + CSS (and evaluated the
   inline styles) for nothing. Guarding here means every non-product page ships ZERO of our code.
 
-  Optional `product_templates` narrows further to specific product templates (e.g. a dedicated
-  "racquet" product template) so non-racquet product pages (shoes, apparel, bags) also load
-  nothing. Blank = every product page. Use "default" to match the standard product template.
+  RACQUET_TEMPLATES is the maintained list of product template suffixes that carry racquets (the
+  only products the configurator is ever relevant for). This used to be a per-theme, freeform
+  "Limit to product templates" text setting — but that meant every theme (the live theme AND every
+  draft) needed the exact same list typed in independently, and the live theme's copy silently
+  never got set, so production fell back to "load on every product page" while a draft theme where
+  someone HAD filled the field in was correctly scoped. Hardcoding the list here instead enforces
+  it identically on every theme the instant this extension is deployed — no per-theme setup step
+  to forget.
+
+  UPDATING: when a new racquet product template is created, add its suffix to this list and
+  deploy. The "Restrict to racquet templates" toggle below is an escape hatch for testing only —
+  turning it off reverts to loading on every product page (the old blank-field behavior).
 {%- endcomment -%}
+{%- assign proto_racquet_templates = 'racquet,racquet-pdp-v2' | split: ',' -%}
 {%- assign proto_should_load = false -%}
 {%- if block.settings.enabled and request.page_type == 'product' -%}
   {%- assign proto_should_load = true -%}
-  {%- assign proto_allowed = block.settings.product_templates | default: '' | strip -%}
-  {%- if proto_allowed != blank -%}
+  {%- if block.settings.restrict_to_racquet_templates -%}
     {%- if template.suffix != blank -%}
       {%- assign proto_suffix = template.suffix | downcase | strip -%}
     {%- else -%}
       {%- assign proto_suffix = 'default' -%}
     {%- endif -%}
     {%- assign proto_should_load = false -%}
-    {%- assign proto_allowed_list = proto_allowed | downcase | split: ',' -%}
-    {%- for proto_t in proto_allowed_list -%}
-      {%- assign proto_t_trim = proto_t | strip -%}
-      {%- if proto_t_trim == proto_suffix -%}
+    {%- for proto_t in proto_racquet_templates -%}
+      {%- if proto_t == proto_suffix -%}
         {%- assign proto_should_load = true -%}
       {%- endif -%}
     {%- endfor -%}
@@ -238,10 +245,11 @@
       "info": "Stable = the frozen, tested bundle. Beta = the latest build, for trying new changes on a draft theme without affecting your live theme. Set Beta ONLY on a duplicate/test theme."
     },
     {
-      "type": "text",
-      "id": "product_templates",
-      "label": "Limit to product templates (optional)",
-      "info": "The configurator only loads on product pages. To narrow further to specific product templates, list their names comma-separated (e.g. 'racquet, racket') — other product pages then load nothing. Use 'default' for the standard product template. Leave blank to load on all product pages. (The button still only appears on products actually linked to a configurator.)"
+      "type": "checkbox",
+      "id": "restrict_to_racquet_templates",
+      "label": "Restrict to racquet product templates",
+      "default": true,
+      "info": "When on (recommended), the configurator only loads on product pages using a racquet template — currently 'racquet' and 'racquet-pdp-v2', maintained in code (ask a developer to add a new one). Turn off only for testing; it reverts to loading on every product page. (The button still only appears on products actually linked to a configurator.)"
     },
     {
       "type": "text",
