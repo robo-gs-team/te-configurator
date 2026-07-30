@@ -890,7 +890,7 @@ export default function EditConfigurator() {
                   />
                   <ProductPicker
                     label={<FieldLabel facing="setup">Individual racquet products</FieldLabel>}
-                    helpText="Select one or many specific racquets (Shopify picker supports multi-select). These also show the Configure button, in addition to any racquet collections above. Each product should use a racquet product template so the app embed loads."
+                    helpText="Select one or many specific racquets (use Add more products to keep growing the list). These also show the Configure button, in addition to any racquet collections above. Each product should use a racquet product template so the app embed loads. Remember to Save changes."
                     selected={selectedProducts}
                     onChange={setSelectedProducts}
                   />
@@ -919,7 +919,7 @@ export default function EditConfigurator() {
                   />
                   <ProductPicker
                     label={<FieldLabel facing="shopper">Individual string products</FieldLabel>}
-                    helpText="These specific products also appear as string options, in addition to any string collections above."
+                    helpText="Select one or many string products (use Add more products to keep growing the list). These appear as string options in addition to any string collections above. Remember to Save changes."
                     name="stringProductIds"
                     selected={selectedStringProducts}
                     onChange={setSelectedStringProducts}

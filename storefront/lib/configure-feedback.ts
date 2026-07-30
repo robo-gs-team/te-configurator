@@ -78,17 +78,45 @@ export function showConfigureError(trigger: HTMLElement, message: string) {
   clearConfigureLoadingNote(trigger);
 
   const wrapper = feedbackHost(trigger);
-  if (!wrapper) return;
-
-  let el = wrapper.querySelector<HTMLElement>("[data-proto-configure-error]");
-  if (!el) {
-    el = document.createElement("p");
-    el.dataset.protoConfigureError = "true";
-    el.setAttribute("role", "alert");
-    el.style.cssText = "margin:8px 0 0;font-size:13px;color:#b91c1c;line-height:1.4;";
-    wrapper.appendChild(el);
+  if (wrapper) {
+    let el = wrapper.querySelector<HTMLElement>("[data-proto-configure-error]");
+    if (!el) {
+      el = document.createElement("p");
+      el.dataset.protoConfigureError = "true";
+      el.setAttribute("role", "alert");
+      el.style.cssText = "margin:8px 0 0;font-size:13px;color:#b91c1c;line-height:1.4;";
+      wrapper.appendChild(el);
+    }
+    el.textContent = message;
   }
-  el.textContent = message;
+
+  // Always also flash a fixed toast — buy-box DOM moves can leave the inline host detached /
+  // scrolled away, which made failures look like "nothing happened".
+  showFixedConfigureToast(message, true);
+}
+
+function showFixedConfigureToast(message: string, isError: boolean) {
+  const existing = document.getElementById("proto-configure-toast");
+  existing?.remove();
+  const toast = document.createElement("div");
+  toast.id = "proto-configure-toast";
+  toast.setAttribute("role", isError ? "alert" : "status");
+  toast.textContent = message;
+  toast.style.cssText = [
+    "position:fixed",
+    "left:50%",
+    "bottom:24px",
+    "transform:translateX(-50%)",
+    "z-index:2147483647",
+    "max-width:min(420px,calc(100vw - 32px))",
+    "padding:12px 16px",
+    "border-radius:8px",
+    "font:14px/1.4 system-ui,sans-serif",
+    "box-shadow:0 8px 24px rgba(0,0,0,.18)",
+    isError ? "background:#7f1d1d;color:#fff" : "background:#111;color:#fff",
+  ].join(";");
+  document.body.appendChild(toast);
+  window.setTimeout(() => toast.remove(), 6000);
 }
 
 export function clearConfigureError(trigger: HTMLElement) {

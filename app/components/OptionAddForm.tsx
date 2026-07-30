@@ -55,39 +55,46 @@ export function OptionAddForm({
   }, [fetcher.state, fetcher.data]);
 
   async function openProductPicker() {
-    const picker = await shopify.resourcePicker({
-      type: "product",
-      multiple: true,
-      selectionIds: selectedProducts.map(
-        (product) => `gid://shopify/Product/${product.id}`,
-      ),
-    });
+    try {
+      const picker = await shopify.resourcePicker({
+        type: "product",
+        multiple: true,
+        action: "add",
+        filter: { variants: false },
+        selectionIds: selectedProducts.map((product) => ({
+          id: `gid://shopify/Product/${product.id}`,
+        })),
+      });
 
-    const result = Array.isArray(picker)
-      ? picker
-      : ((picker as { selection?: PickerProduct[] } | undefined)?.selection ?? []);
+      // Cancel → undefined; keep current picks.
+      if (picker === undefined) return;
 
-    if (!result.length) return;
+      const result = Array.isArray(picker)
+        ? picker
+        : ((picker as { selection?: PickerProduct[] } | undefined)?.selection ?? []);
 
-    const next = result.map((product) => {
-      const id = String(product.id).replace("gid://shopify/Product/", "");
-      const title = product.title ?? "Product";
-      const variantPrice = product.variants?.[0]?.price;
-      return {
-        id,
-        title,
-        price: variantPrice ? parseFloat(variantPrice) || 0 : undefined,
-      };
-    });
+      const next = result.map((product) => {
+        const id = String(product.id).replace("gid://shopify/Product/", "");
+        const title = product.title ?? "Product";
+        const variantPrice = product.variants?.[0]?.price;
+        return {
+          id,
+          title,
+          price: variantPrice ? parseFloat(variantPrice) || 0 : undefined,
+        };
+      });
 
-    setSelectedProducts(next);
+      setSelectedProducts(next);
 
-    // Single-product convenience: keep label/price fields in sync for a manual tweak before add.
-    if (next.length === 1) {
-      if (!optionLabel.trim()) setOptionLabel(next[0].title);
-      if (priceAdjust === "0" && next[0].price !== undefined) {
-        setPriceAdjust(String(next[0].price));
+      // Single-product convenience: keep label/price fields in sync for a manual tweak before add.
+      if (next.length === 1) {
+        if (!optionLabel.trim()) setOptionLabel(next[0].title);
+        if (priceAdjust === "0" && next[0].price !== undefined) {
+          setPriceAdjust(String(next[0].price));
+        }
       }
+    } catch (error) {
+      console.error("Option product picker failed", error);
     }
   }
 

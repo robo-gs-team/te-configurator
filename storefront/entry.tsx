@@ -603,15 +603,20 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
 function isConfigureTriggerVisible(trigger: HTMLElement): boolean {
   // The v2 "Configure Racquet" standalone button isn't part of the Strung/Unstrung gate and is
   // never wrapped in a gated actions container, so those checks don't apply to it — only its own
-  // computed visibility matters.
+  // presence / hidden flag matters. Avoid getComputedStyle for standalone: during buy-box
+  // relocation / theme re-renders, computed pointer-events briefly flips and was aborting opens.
   const standalone = trigger.hasAttribute("data-proto-v2-standalone");
-  if (!standalone) {
-    if (document.documentElement.dataset.protoStringingState === "unstrung") {
-      return false;
-    }
-    const actions = trigger.closest("[data-proto-configurator-actions]");
-    if (actions?.hasAttribute("hidden")) return false;
+  if (standalone) {
+    if (trigger.hasAttribute("hidden")) return false;
+    if (trigger.closest(".proto-v2-hide-unstrung")) return false;
+    return trigger.isConnected;
   }
+
+  if (document.documentElement.dataset.protoStringingState === "unstrung") {
+    return false;
+  }
+  const actions = trigger.closest("[data-proto-configurator-actions]");
+  if (actions?.hasAttribute("hidden")) return false;
   if (trigger.hasAttribute("hidden")) return false;
   const style = window.getComputedStyle(trigger);
   return style.display !== "none" && style.visibility !== "hidden" && style.pointerEvents !== "none";
@@ -645,11 +650,15 @@ function isThemeEditor(): boolean {
  * then resolve the product id and open the configurator.
  */
 function handleConfigureClick(trigger: HTMLElement, event: Event) {
-  // Always stop the event when the click landed on our trigger — even if we then decide not to
-  // open. A silent early return used to leave preventDefault uncalled, so a half-hidden / mid-
-  // relocate button could look clickable and do nothing (or let a theme Configure win).
+  // Always claim the click on our trigger — even if we then decide not to open. A silent early
+  // return used to leave preventDefault uncalled, so a half-hidden / mid-relocate button could
+  // look clickable and do nothing (or let a theme Configure win). stopImmediatePropagation so
+  // theme listeners on the same node/ancestors cannot open the legacy popup instead.
   event.preventDefault();
   event.stopPropagation();
+  if (typeof event.stopImmediatePropagation === "function") {
+    event.stopImmediatePropagation();
+  }
 
   if (trigger.getAttribute("aria-busy") === "true" || openInFlight) return;
 
@@ -886,6 +895,11 @@ function applyLinkedUi(productId: string, configurator?: StorefrontConfigurator)
   // stealing bandwidth from the page's own images, especially on Safari where "idle" degrades to
   // a flat 1.2s timer). A no-op for whichever of the two, if any, is already cached/in flight.
   afterLoadIdle(() => warmUpForLikelyClick(productId));
+  // Also start actually loading (not just prefetching) the modal bundle once the page is idle —
+  // prefetch alone still left first click paying parse/execute cost, which felt like a hang.
+  afterLoadIdle(() => {
+    void loadModal().catch(() => {});
+  });
 
   // Standalone v2 mode: the "Configure Racquet" button is fully self-contained. Skip every piece
   // of DOM surgery (fallback injection, buy-box relocation, Strung/Unstrung gate) — the block

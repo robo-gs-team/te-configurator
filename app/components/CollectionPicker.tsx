@@ -17,6 +17,21 @@ type PickerCollection = {
   title?: string;
 };
 
+function mapPickerCollections(result: PickerCollection[]): CollectionSummary[] {
+  return result.map((collection) => ({
+    id: String(collection.id).replace("gid://shopify/Collection/", ""),
+    title: collection.title ?? "Collection",
+  }));
+}
+
+function dedupeById(collections: CollectionSummary[]): CollectionSummary[] {
+  const byId = new Map<string, CollectionSummary>();
+  for (const collection of collections) {
+    byId.set(collection.id, collection);
+  }
+  return [...byId.values()];
+}
+
 export function CollectionPicker({
   label = "Collections",
   helpText,
@@ -26,25 +41,42 @@ export function CollectionPicker({
 }: Props) {
   const shopify = useAppBridge();
 
-  async function openPicker() {
-    const picker = await shopify.resourcePicker({
-      type: "collection",
-      multiple: true,
-      selectionIds: selected.map((collection) => toCollectionGid(collection.id)),
-    });
+  async function openPicker(mode: "replace" | "add") {
+    try {
+      const picker = await shopify.resourcePicker({
+        type: "collection",
+        multiple: true,
+        action: mode === "add" ? "add" : "select",
+        selectionIds:
+          mode === "replace"
+            ? selected.map((collection) => ({ id: toCollectionGid(collection.id) }))
+            : [],
+      });
 
-    const result = Array.isArray(picker)
-      ? picker
-      : ((picker as { selection?: PickerCollection[] } | undefined)?.selection ?? []);
+      if (picker === undefined) return;
 
-    if (!result.length) return;
+      const result = Array.isArray(picker)
+        ? picker
+        : ((picker as { selection?: PickerCollection[] } | undefined)?.selection ?? []);
 
-    onChange(
-      result.map((collection) => ({
-        id: String(collection.id).replace("gid://shopify/Collection/", ""),
-        title: collection.title ?? "Collection",
-      })),
-    );
+      const mapped = mapPickerCollections(result);
+
+      if (mode === "add") {
+        onChange(dedupeById([...selected, ...mapped]));
+        return;
+      }
+
+      onChange(mapped);
+    } catch (error) {
+      console.error("Collection picker failed", error);
+      try {
+        shopify.toast?.show("Couldn't open the collection picker. Please try again.", {
+          isError: true,
+        });
+      } catch {
+        // toast optional
+      }
+    }
   }
 
   return (
@@ -80,12 +112,17 @@ export function CollectionPicker({
         </Text>
       )}
       <InlineStack gap="200">
-        <Button onClick={() => void openPicker()}>Select collections</Button>
-        {selected.length > 0 ? (
-          <Button variant="plain" onClick={() => onChange([])}>
-            Clear all
-          </Button>
-        ) : null}
+        {selected.length === 0 ? (
+          <Button onClick={() => void openPicker("replace")}>Select collections</Button>
+        ) : (
+          <>
+            <Button onClick={() => void openPicker("add")}>Add more collections</Button>
+            <Button onClick={() => void openPicker("replace")}>Change selection</Button>
+            <Button variant="plain" onClick={() => onChange([])}>
+              Clear all
+            </Button>
+          </>
+        )}
       </InlineStack>
       <input
         type="hidden"

@@ -18,6 +18,21 @@ type PickerProduct = {
   title?: string;
 };
 
+function mapPickerProducts(result: PickerProduct[]): ProductSummary[] {
+  return result.map((product) => ({
+    id: String(product.id).replace("gid://shopify/Product/", ""),
+    title: product.title ?? "Product",
+  }));
+}
+
+function dedupeById(products: ProductSummary[]): ProductSummary[] {
+  const byId = new Map<string, ProductSummary>();
+  for (const product of products) {
+    byId.set(product.id, product);
+  }
+  return [...byId.values()];
+}
+
 export function ProductPicker({
   label = "Products",
   helpText,
@@ -28,25 +43,53 @@ export function ProductPicker({
 }: Props) {
   const shopify = useAppBridge();
 
-  async function openPicker() {
-    const picker = await shopify.resourcePicker({
-      type: "product",
-      multiple,
-      selectionIds: selected.map((product) => toProductGid(product.id)),
-    });
+  /**
+   * Open Shopify's resource picker.
+   * - `replace`: edit the full list (preselects current products).
+   * - `add`: append more products without wiping the current list (empty preselection).
+   *
+   * selectionIds MUST be `{ id: gid }[]` — passing bare GID strings breaks multi-select /
+   * preselection in App Bridge and is why "Individual string products" felt single-select only.
+   */
+  async function openPicker(mode: "replace" | "add") {
+    try {
+      const picker = await shopify.resourcePicker({
+        type: "product",
+        multiple: multiple ? true : false,
+        action: mode === "add" ? "add" : "select",
+        filter: { variants: false },
+        selectionIds:
+          mode === "replace"
+            ? selected.map((product) => ({ id: toProductGid(product.id) }))
+            : [],
+      });
 
-    const result = Array.isArray(picker)
-      ? picker
-      : ((picker as { selection?: PickerProduct[] } | undefined)?.selection ?? []);
+      // Cancel returns undefined — do not clear the current selection.
+      if (picker === undefined) return;
 
-    if (!result.length) return;
+      const result = Array.isArray(picker)
+        ? picker
+        : ((picker as { selection?: PickerProduct[] } | undefined)?.selection ?? []);
 
-    onChange(
-      result.map((product) => ({
-        id: String(product.id).replace("gid://shopify/Product/", ""),
-        title: product.title ?? "Product",
-      })),
-    );
+      const mapped = mapPickerProducts(result);
+
+      if (mode === "add") {
+        onChange(dedupeById([...selected, ...mapped]));
+        return;
+      }
+
+      // Replace mode: empty confirm means clear (merchant deselected everything).
+      onChange(mapped);
+    } catch (error) {
+      console.error("Product picker failed", error);
+      try {
+        shopify.toast?.show("Couldn't open the product picker. Please try again.", {
+          isError: true,
+        });
+      } catch {
+        // toast optional
+      }
+    }
   }
 
   return (
@@ -80,12 +123,19 @@ export function ProductPicker({
         </Text>
       )}
       <InlineStack gap="200">
-        <Button onClick={() => void openPicker()}>Select products</Button>
-        {selected.length > 0 ? (
-          <Button variant="plain" onClick={() => onChange([])}>
-            Clear all
-          </Button>
-        ) : null}
+        {selected.length === 0 ? (
+          <Button onClick={() => void openPicker("replace")}>Select products</Button>
+        ) : (
+          <>
+            {multiple ? (
+              <Button onClick={() => void openPicker("add")}>Add more products</Button>
+            ) : null}
+            <Button onClick={() => void openPicker("replace")}>Change selection</Button>
+            <Button variant="plain" onClick={() => onChange([])}>
+              Clear all
+            </Button>
+          </>
+        )}
       </InlineStack>
       <input
         type="hidden"

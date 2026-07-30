@@ -43,25 +43,33 @@ export function AddonAddForm() {
   }, [fetcher.state, fetcher.data]);
 
   async function openProductPicker() {
-    const picker = await shopify.resourcePicker({
-      type: "product",
-      multiple: true,
-      selectionIds: selectedProducts.map((p) => `gid://shopify/Product/${p.id}`),
-    });
+    try {
+      const picker = await shopify.resourcePicker({
+        type: "product",
+        multiple: true,
+        action: "add",
+        filter: { variants: false },
+        selectionIds: selectedProducts.map((p) => ({
+          id: `gid://shopify/Product/${p.id}`,
+        })),
+      });
 
-    const result = Array.isArray(picker)
-      ? picker
-      : ((picker as { selection?: Array<{ id: string; title?: string }> } | undefined)
-          ?.selection ?? []);
+      if (picker === undefined) return;
 
-    if (!result.length) return;
+      const result = Array.isArray(picker)
+        ? picker
+        : ((picker as { selection?: Array<{ id: string; title?: string }> } | undefined)
+            ?.selection ?? []);
 
-    setSelectedProducts(
-      result.map((product) => ({
-        id: String(product.id).replace("gid://shopify/Product/", ""),
-        title: product.title ?? "Product",
-      })),
-    );
+      setSelectedProducts(
+        result.map((product) => ({
+          id: String(product.id).replace("gid://shopify/Product/", ""),
+          title: product.title ?? "Product",
+        })),
+      );
+    } catch (error) {
+      console.error("Addon product picker failed", error);
+    }
   }
 
   const handleSubmit = () => {
