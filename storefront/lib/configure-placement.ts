@@ -23,8 +23,10 @@ const ADD_TO_CART_SELECTORS = [
   "[data-add-to-cart]",
   'button[type="submit"].button--add-to-cart',
   "#ProductSubmitButton",
+  "#AddToCart",
   ".product-form__cart-submit",
   "button.add-to-cart",
+  ".single-add-to-cart-button",
 ];
 
 /** Marker attribute set on theme buttons we've hidden, so we can find and restore them later. */
@@ -76,6 +78,8 @@ function queryAddToCartButtons(root: ParentNode = document): HTMLElement[] {
     root.querySelectorAll(selector).forEach((node) => {
       if (!(node instanceof HTMLElement)) return;
       if (node.closest(".proto-configurator-button-wrapper")) return;
+      if (node.closest(".proto-v2-standalone-wrapper")) return;
+      if (node.hasAttribute("data-proto-configurator-trigger")) return;
       found.add(node);
     });
   }
@@ -184,6 +188,53 @@ export function syncConfigureButtonSlot(
   const anchor = actionsAnchors.get(actions);
   if (anchor && actions.parentElement !== anchor.parent) {
     anchor.parent.insertBefore(actions, anchor.nextSibling);
+  }
+
+  restoreAddToCartButtons();
+}
+
+/**
+ * Relocate the v2 gear Configure button into the theme Add-to-Cart slot when Strung, and put
+ * it back when Unstrung. Used by `v2-standalone-gate` so shoppers see one gear CTA where ATC
+ * normally sits (instead of a plain theme Configure beside quantity).
+ */
+export function syncStandaloneConfigureSlot(showConfigure: boolean) {
+  const standalone = document.querySelector<HTMLElement>(
+    ".proto-v2-standalone-wrapper",
+  );
+  if (!standalone) return;
+
+  if (showConfigure) {
+    const addToCart = findAddToCartButton();
+    const slot = addToCart?.parentElement;
+    if (!slot) return;
+
+    if (!actionsAnchors.has(standalone)) {
+      actionsAnchors.set(standalone, {
+        parent: standalone.parentElement ?? document.body,
+        nextSibling: standalone.nextSibling,
+      });
+    }
+
+    suppressAddToCartButtons();
+
+    standalone.classList.remove("proto-v2-hide-unstrung");
+    standalone.classList.add("proto-v2-inline-slot");
+    standalone.hidden = false;
+    standalone.style.removeProperty("display");
+    standalone.style.removeProperty("visibility");
+
+    if (standalone.parentElement !== slot) {
+      slot.insertBefore(standalone, addToCart?.nextSibling ?? null);
+    }
+    return;
+  }
+
+  standalone.classList.remove("proto-v2-inline-slot");
+
+  const anchor = actionsAnchors.get(standalone);
+  if (anchor && standalone.parentElement !== anchor.parent) {
+    anchor.parent.insertBefore(standalone, anchor.nextSibling);
   }
 
   restoreAddToCartButtons();

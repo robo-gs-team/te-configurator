@@ -1,15 +1,18 @@
 /**
  * v2-standalone-gate.ts
  *
- * Purely additive, read-only visibility for the v2 standalone "Configure Racquet" button:
+ * Visibility + ATC-slot placement for the v2 standalone "Configure Racquet" (gear) button:
  * shows it only when the shopper has the page's real Strung/Unstrung control set to "Strung" —
- * stringing this app configures doesn't apply to an unstrung racquet, so the button shouldn't
- * appear for that choice.
+ * and when shown, moves that gear button into the theme Add-to-Cart slot so it replaces the
+ * plain Configure / ATC beside quantity. On Unstrung it returns to its original spot and
+ * restores the theme buy button.
  *
- * Deliberately NOT the old stringing-page-gate: this never touches the legacy configurator, the
- * theme's buy box, or the native Add to Cart, and it never writes to the control it reads — it
- * only ever toggles a class on our OWN wrapper. Safe to run alongside anything else on the page.
+ * Never writes to the Strung/Unstrung control it reads. Safe alongside the theme's own picker.
  */
+
+import {
+  syncStandaloneConfigureSlot,
+} from "./configure-placement";
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
@@ -131,6 +134,8 @@ function applyVisibility() {
   document.querySelectorAll<HTMLElement>(".proto-v2-standalone-wrapper").forEach((wrapper) => {
     wrapper.classList.toggle("proto-v2-hide-unstrung", !show);
   });
+  // Strung → gear Configure sits in the ATC slot; Unstrung → restore theme ATC.
+  syncStandaloneConfigureSlot(show);
 }
 
 let delegatedChangeBound = false;

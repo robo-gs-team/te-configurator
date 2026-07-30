@@ -176,10 +176,28 @@
     }
 
     /* Applied by v2-standalone-gate.ts: hidden while the shopper's Strung/Unstrung choice is on
-       Unstrung, since there's nothing to configure for an unstrung racquet. Read-only against
-       that control — never written to, never relocated, never hidden. */
+       Unstrung, since there's nothing to configure for an unstrung racquet. */
     .proto-v2-standalone-wrapper.proto-v2-hide-unstrung {
       display: none !important;
+    }
+
+    /* When Strung, the gear button is moved into the Add-to-Cart slot beside quantity. */
+    .proto-v2-standalone-wrapper.proto-v2-inline-slot {
+      margin-top: 0 !important;
+      margin-bottom: 0 !important;
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+      visibility: visible !important;
+      display: block !important;
+    }
+
+    .proto-v2-inline-slot .proto-v2-configure-trigger {
+      width: 100% !important;
+    }
+
+    .proto-v2-inline-slot .proto-v2-standalone-subtext {
+      display: none;
     }
   </style>
 {% endif %}
