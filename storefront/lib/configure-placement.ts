@@ -19,11 +19,14 @@
 /** Known theme selectors for the product's Add-to-Cart button, tried in order. */
 const ADD_TO_CART_SELECTORS = [
   'button[name="add"]',
+  'button[name="configure"]',
   ".product-form__submit",
   "[data-add-to-cart]",
   'button[type="submit"].button--add-to-cart',
   "#ProductSubmitButton",
   "#AddToCart",
+  "#ProductPopup-Configurator",
+  "#ProductPopup-Configurator-Hybrid",
   ".product-form__cart-submit",
   "button.add-to-cart",
   ".single-add-to-cart-button",
@@ -193,21 +196,106 @@ export function syncConfigureButtonSlot(
   restoreAddToCartButtons();
 }
 
+/** Marker for theme buy-button regions we hide while the gear CTA is slotted. */
+const BUY_BUTTONS_SUPPRESSED_ATTR = "data-proto-buy-buttons-suppressed";
+
+/** Theme selectors for the legacy product-configurator "Configure" button (not our app). */
+const THEME_CONFIGURE_SELECTORS = [
+  'button[name="configure"]',
+  "#ProductPopup-Configurator",
+  "#ProductPopup-Configurator-Hybrid",
+  ".product-popup-modal__opener[data-modal*='Configurator']",
+  '.add_to_cart_holder.product-popup-modal__opener',
+];
+
 /**
- * Relocate the v2 gear Configure button into the theme Add-to-Cart slot when Strung, and put
- * it back when Unstrung. Used by `v2-standalone-gate` so shoppers see one gear CTA where ATC
- * normally sits (instead of a plain theme Configure beside quantity).
+ * Tennis Express theme `product-configurator.js` does:
+ *   buttonOuter = .product-buy-buttons
+ *   on Strung: buttonOuter.innerHTML = configureButtonHTML
+ * So anything we insert *inside* `.product-buy-buttons` is destroyed. Place the gear CTA as a
+ * sibling *after* that container instead, and hide the theme's Configure / ATC region.
+ */
+function findStandaloneSlotTarget(): {
+  insertParent: HTMLElement;
+  beforeNode: ChildNode | null;
+  hideRoots: HTMLElement[];
+} | null {
+  const buyButtons = document.querySelector<HTMLElement>(".product-buy-buttons");
+  if (buyButtons?.parentElement) {
+    return {
+      insertParent: buyButtons.parentElement,
+      beforeNode: buyButtons.nextSibling,
+      hideRoots: [buyButtons],
+    };
+  }
+
+  const addToCart = findAddToCartButton();
+  const holder =
+    addToCart?.closest<HTMLElement>(".add_to_cart_holder") ??
+    addToCart?.parentElement;
+  if (holder?.parentElement) {
+    return {
+      insertParent: holder.parentElement,
+      beforeNode: holder.nextSibling,
+      hideRoots: [holder],
+    };
+  }
+
+  return null;
+}
+
+function suppressThemeConfigureUi(hideRoots: HTMLElement[]) {
+  for (const root of hideRoots) {
+    if (root.getAttribute(BUY_BUTTONS_SUPPRESSED_ATTR) === "true") continue;
+    root.setAttribute(BUY_BUTTONS_SUPPRESSED_ATTR, "true");
+    root.setAttribute("aria-hidden", "true");
+    root.style.setProperty("display", "none", "important");
+  }
+
+  for (const selector of THEME_CONFIGURE_SELECTORS) {
+    document.querySelectorAll(selector).forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      if (node.closest(".proto-v2-standalone-wrapper")) return;
+      if (node.getAttribute(SUPPRESSED_ATTR) === "true") return;
+      node.setAttribute(SUPPRESSED_ATTR, "true");
+      node.hidden = true;
+      node.setAttribute("aria-hidden", "true");
+      node.style.setProperty("display", "none", "important");
+    });
+  }
+
+  suppressAddToCartButtons();
+}
+
+function restoreThemeBuyButtonsRegion() {
+  document
+    .querySelectorAll<HTMLElement>(`[${BUY_BUTTONS_SUPPRESSED_ATTR}="true"]`)
+    .forEach((el) => {
+      el.removeAttribute(BUY_BUTTONS_SUPPRESSED_ATTR);
+      el.removeAttribute("aria-hidden");
+      el.style.removeProperty("display");
+    });
+}
+
+/**
+ * Relocate the v2 gear Configure button into the buy area when Strung, and put it back when
+ * Unstrung. Hides the theme's legacy Configure (product-configurator.js) which opens the old
+ * popup — not our app modal.
+ *
+ * IMPORTANT: never insert inside `.product-buy-buttons` — the theme replaces that node's
+ * innerHTML on every Strung/Unstrung change and would destroy our button.
  */
 export function syncStandaloneConfigureSlot(showConfigure: boolean) {
   const standalone = document.querySelector<HTMLElement>(
     ".proto-v2-standalone-wrapper",
   );
-  if (!standalone) return;
+  if (!standalone || !standalone.isConnected) return;
+
+  document.documentElement.toggleAttribute("data-proto-v2-atc-slot", showConfigure);
 
   if (showConfigure) {
-    const addToCart = findAddToCartButton();
-    const slot = addToCart?.parentElement;
-    if (!slot) return;
+    const target = findStandaloneSlotTarget();
+    if (!target) return;
 
     if (!actionsAnchors.has(standalone)) {
       actionsAnchors.set(standalone, {
@@ -216,7 +304,15 @@ export function syncStandaloneConfigureSlot(showConfigure: boolean) {
       });
     }
 
-    suppressAddToCartButtons();
+    // If we previously parked inside a wiped container, pull back to the saved anchor first.
+    if (standalone.closest(".product-buy-buttons")) {
+      const anchor = actionsAnchors.get(standalone);
+      if (anchor) {
+        anchor.parent.insertBefore(standalone, anchor.nextSibling);
+      }
+    }
+
+    suppressThemeConfigureUi(target.hideRoots);
 
     standalone.classList.remove("proto-v2-hide-unstrung");
     standalone.classList.add("proto-v2-inline-slot");
@@ -224,8 +320,11 @@ export function syncStandaloneConfigureSlot(showConfigure: boolean) {
     standalone.style.removeProperty("display");
     standalone.style.removeProperty("visibility");
 
-    if (standalone.parentElement !== slot) {
-      slot.insertBefore(standalone, addToCart?.nextSibling ?? null);
+    if (
+      standalone.parentElement !== target.insertParent ||
+      standalone.nextSibling !== target.beforeNode
+    ) {
+      target.insertParent.insertBefore(standalone, target.beforeNode);
     }
     return;
   }
@@ -237,5 +336,6 @@ export function syncStandaloneConfigureSlot(showConfigure: boolean) {
     anchor.parent.insertBefore(standalone, anchor.nextSibling);
   }
 
+  restoreThemeBuyButtonsRegion();
   restoreAddToCartButtons();
 }
