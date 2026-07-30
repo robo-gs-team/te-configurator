@@ -286,6 +286,11 @@ function restoreThemeBuyButtonsRegion() {
  * innerHTML on every Strung/Unstrung change and would destroy our button.
  */
 export function syncStandaloneConfigureSlot(showConfigure: boolean) {
+  // While a Configure open is in flight, do not relocate/hide the button — mid-open DOM surgery
+  // was a common cause of "I tapped Configure and nothing happened" (trigger detached, feedback
+  // host lost, or visibility check racing the MutationObserver).
+  if (document.documentElement.hasAttribute("data-proto-configuring")) return;
+
   const standalone = document.querySelector<HTMLElement>(
     ".proto-v2-standalone-wrapper",
   );
@@ -295,7 +300,12 @@ export function syncStandaloneConfigureSlot(showConfigure: boolean) {
 
   if (showConfigure) {
     const target = findStandaloneSlotTarget();
-    if (!target) return;
+    if (!target) {
+      // Still suppress the theme's legacy Configure so shoppers don't hit a button that looks
+      // identical but never opens our modal.
+      suppressThemeConfigureUi([]);
+      return;
+    }
 
     if (!actionsAnchors.has(standalone)) {
       actionsAnchors.set(standalone, {

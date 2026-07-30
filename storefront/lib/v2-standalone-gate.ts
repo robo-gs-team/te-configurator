@@ -120,6 +120,11 @@ function getStringingValue(): string | null {
 
 /** Show/hide every v2 standalone wrapper based on the current Strung/Unstrung choice. */
 function applyVisibility() {
+  // Skip class + slot updates while Configure is opening — relocating the button mid-open races
+  // the click handler and can drop the modal open / loading feedback (see data-proto-configuring
+  // in entry.tsx openConfigurator).
+  if (document.documentElement.hasAttribute("data-proto-configuring")) return;
+
   const value = getStringingValue();
   // Show when there is nothing to gate on (no Strung/Unstrung control on the page), or the choice
   // is "strung". Hide only on a definite "unstrung".

@@ -446,11 +446,39 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const colorHex = String(form.get("colorHex") || "").trim() || null;
     const productId = String(form.get("productId") || "").trim() || null;
     const priceAdjust = parseFloat(String(form.get("priceAdjust") || "0")) || 0;
+    // Batch path: JSON array of { id, title?, price? } from multi-product picker.
+    const productsRaw = String(form.get("productsJson") || "").trim();
+    let batchProducts: Array<{ id: string; title: string; price?: number }> = [];
+    if (productsRaw) {
+      try {
+        const parsed = JSON.parse(productsRaw) as unknown;
+        if (Array.isArray(parsed)) {
+          batchProducts = parsed
+            .map((item) => {
+              if (!item || typeof item !== "object") return null;
+              const row = item as { id?: unknown; title?: unknown; price?: unknown };
+              const id = String(row.id ?? "").replace("gid://shopify/Product/", "").trim();
+              if (!id) return null;
+              return {
+                id,
+                title: String(row.title ?? "Option").trim() || "Option",
+                price:
+                  row.price !== undefined && row.price !== null && row.price !== ""
+                    ? parseFloat(String(row.price)) || 0
+                    : undefined,
+              };
+            })
+            .filter((item): item is { id: string; title: string; price?: number } => item !== null);
+        }
+      } catch {
+        return json({ error: "Invalid products list", intent }, { status: 400 });
+      }
+    }
 
     if (!stepId) {
       return json({ error: "Step is required", intent }, { status: 400 });
     }
-    if (!optionLabel && !productId) {
+    if (batchProducts.length === 0 && !optionLabel && !productId) {
       return json({ error: "Option label or product is required", intent }, { status: 400 });
     }
 
@@ -486,28 +514,58 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
-    const optionCount = await prisma.option.count({
+    let optionCount = await prisma.option.count({
       where: { optionGroupId: group.id },
     });
 
-    await prisma.option.create({
-      data: {
-        optionGroupId: group.id,
-        label: optionLabel || "Option",
-        value: optionValue,
-        priceAdjust,
-        colorHex,
-        imageUrl: null,
-        previewLayer: null,
-        variantId: null,
-        productId,
-        sortOrder: optionCount,
-        isDefault: optionCount === 0,
-      },
-    });
+    const toCreate =
+      batchProducts.length > 0
+        ? batchProducts.map((product) => {
+            const label = product.title;
+            const value = label.toLowerCase().replace(/\s+/g, "_");
+            return {
+              optionGroupId: group!.id,
+              label,
+              value,
+              priceAdjust: product.price ?? priceAdjust,
+              colorHex,
+              imageUrl: null as string | null,
+              previewLayer: null as string | null,
+              variantId: null as string | null,
+              productId: product.id,
+              sortOrder: 0,
+              isDefault: false,
+            };
+          })
+        : [
+            {
+              optionGroupId: group.id,
+              label: optionLabel || "Option",
+              value: optionValue,
+              priceAdjust,
+              colorHex,
+              imageUrl: null as string | null,
+              previewLayer: null as string | null,
+              variantId: null as string | null,
+              productId,
+              sortOrder: 0,
+              isDefault: false,
+            },
+          ];
+
+    for (const row of toCreate) {
+      await prisma.option.create({
+        data: {
+          ...row,
+          sortOrder: optionCount,
+          isDefault: optionCount === 0,
+        },
+      });
+      optionCount += 1;
+    }
 
     runAfterResponse(() => refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop));
-    return json({ success: true, intent });
+    return json({ success: true, intent, added: toCreate.length });
   }
 
   if (intent === "delete_step") {
@@ -832,7 +890,7 @@ export default function EditConfigurator() {
                   />
                   <ProductPicker
                     label={<FieldLabel facing="setup">Individual racquet products</FieldLabel>}
-                    helpText="These specific products will also show the Configure button."
+                    helpText="Select one or many specific racquets (Shopify picker supports multi-select). These also show the Configure button, in addition to any racquet collections above. Each product should use a racquet product template so the app embed loads."
                     selected={selectedProducts}
                     onChange={setSelectedProducts}
                   />

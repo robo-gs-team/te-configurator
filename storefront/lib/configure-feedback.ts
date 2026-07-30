@@ -11,11 +11,11 @@
  *
  * Deliberately not zero. In the common case the catalog is already warmed and the modal opens in
  * ~250-350ms, so a note shown immediately would flash in and straight back out — worse than
- * silence. This delay is longer than that warmed path, so the note only ever appears when the wait
- * is genuinely long enough for a shopper to wonder whether their tap registered (a cold backend, a
- * slow connection).
+ * silence. This delay is slightly longer than that warmed path, so the note only ever appears when
+ * the wait is long enough for a shopper to wonder whether their tap registered (a cold backend, a
+ * slow connection). Kept short (~300ms) so cold mobile taps get visible feedback quickly.
  */
-const LOADING_NOTE_DELAY_MS = 800;
+const LOADING_NOTE_DELAY_MS = 300;
 
 /** Pending "show the note" timers, keyed by trigger so multiple buttons stay independent. */
 const loadingTimers = new WeakMap<HTMLElement, number>();
@@ -23,7 +23,10 @@ const loadingTimers = new WeakMap<HTMLElement, number>();
 /** The wrapper that hosts a trigger's inline messages. */
 function feedbackHost(trigger: HTMLElement): HTMLElement | null {
   return (
-    trigger.closest<HTMLElement>(".proto-configurator-button-wrapper") ?? trigger.parentElement
+    trigger.closest<HTMLElement>(".proto-v2-standalone-wrapper") ??
+    trigger.closest<HTMLElement>(".proto-configurator-button-wrapper") ??
+    trigger.parentElement ??
+    document.querySelector<HTMLElement>(".proto-v2-standalone-wrapper")
   );
 }
 

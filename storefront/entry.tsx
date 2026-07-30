@@ -191,16 +191,17 @@ let modalLoadPromise: Promise<ProtoConfiguratorModalApi> | null = null;
 const MODAL_LOAD_TIMEOUT_MS = 20000;
 
 /**
- * Hard ceiling on the WHOLE click → modal sequence.
+ * Hard ceiling on the WHOLE click → modal sequence (catalog + modal bundle in parallel).
  *
- * The per-step budgets compound badly: the catalog fetch alone retries 3x at 7s each plus backoff
- * (~23s), and the modal script adds up to 20s on top — so a failing backend could leave a shopper
- * staring at "Loading your options…" for the better part of a minute before anything was said. No
- * shopper waits that long; they conclude it is broken. One overall deadline caps the whole thing
- * and surfaces a retryable message instead. The underlying fetch is not cancelled — if it lands
- * later it still populates the cache, so a second click is fast.
+ * The per-step budgets compound badly without a wall clock: the catalog fetch alone retries 3x at
+ * 7s each plus backoff (~23s), and the modal script adds up to 20s on top. One overall deadline
+ * from click time caps the wait and surfaces a retryable message. The underlying fetch is not
+ * cancelled — if it lands later it still populates the cache, so a second click is fast.
  */
 const OPEN_DEADLINE_MS = 12000;
+
+/** True while openConfigurator is running — blocks duplicate opens and freezes buy-box relocation. */
+let openInFlight: Promise<void> | null = null;
 
 /** Reject with `message` if `promise` has not settled within `ms`. */
 function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -533,10 +534,17 @@ function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
  * started by hover/idle) for an instant-or-near-instant open in the common case; otherwise shows
  * a loading state on the button while fetchAndCacheFullCatalog does a fresh fetch. Surfaces any
  * error inline on the button.
+ *
+ * Catalog fetch and modal-bundle load run in PARALLEL under one shared wall-clock deadline from
+ * click time — sequential awaits used to stack two 12s caps (~24s cold worst case) and paid
+ * modal download only after the catalog finished.
  */
 async function openConfigurator(productId: string, trigger: HTMLElement) {
   clearConfigureError(trigger);
   setTriggerLoading(trigger, true);
+  // Freeze v2 buy-box relocation while we open — MutationObserver re-runs can move/hide the
+  // trigger mid-click and make the open look like a no-op, or detach the feedback host.
+  document.documentElement.dataset.protoConfiguring = "1";
 
   try {
     // Theme editor: Shopify does not route App Proxy (/apps/...) requests inside the editor
@@ -550,11 +558,19 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
       return;
     }
 
-    const result = await withDeadline(
-      fetchAndCacheFullCatalog(productId),
-      OPEN_DEADLINE_MS,
-      "Couldn't load the configurator in time. Please try again.",
-    );
+    const started = Date.now();
+    const deadlineMsg = "Couldn't load the configurator in time. Please try again.";
+    const remaining = () => Math.max(500, OPEN_DEADLINE_MS - (Date.now() - started));
+
+    // Kick both off immediately so the modal script downloads while the catalog is fetching.
+    const catalogPromise = fetchAndCacheFullCatalog(productId);
+    const modalPromise = loadModal();
+
+    const [result, modal] = await Promise.all([
+      withDeadline(catalogPromise, remaining(), deadlineMsg),
+      withDeadline(modalPromise, remaining(), deadlineMsg),
+    ]);
+
     if (result.error) {
       showConfigureError(trigger, result.error);
       return;
@@ -567,11 +583,6 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
       return;
     }
 
-    const modal = await withDeadline(
-      loadModal(),
-      OPEN_DEADLINE_MS,
-      "Couldn't load the configurator in time. Please try again.",
-    );
     modal.open(productId, result.configurator);
   } catch (err) {
     showConfigureError(
@@ -579,6 +590,7 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
       err instanceof Error ? err.message : "Failed to open configurator.",
     );
   } finally {
+    delete document.documentElement.dataset.protoConfiguring;
     setTriggerLoading(trigger, false);
   }
 }
@@ -628,14 +640,28 @@ function isThemeEditor(): boolean {
 }
 
 /**
- * Handle a Configure click: bail if not visible, otherwise prevent the default/native action,
- * resolve the product id (from the button or embed settings), and open the configurator.
+ * Handle a Configure click: always claim the event on our trigger (so theme handlers don't also
+ * fire), skip duplicate opens, bail with feedback when the button isn't meant to be interactive,
+ * then resolve the product id and open the configurator.
  */
 function handleConfigureClick(trigger: HTMLElement, event: Event) {
-  if (!isConfigureTriggerVisible(trigger)) return;
-
+  // Always stop the event when the click landed on our trigger — even if we then decide not to
+  // open. A silent early return used to leave preventDefault uncalled, so a half-hidden / mid-
+  // relocate button could look clickable and do nothing (or let a theme Configure win).
   event.preventDefault();
   event.stopPropagation();
+
+  if (trigger.getAttribute("aria-busy") === "true" || openInFlight) return;
+
+  if (!isConfigureTriggerVisible(trigger)) {
+    const unstrung =
+      document.documentElement.dataset.protoStringingState === "unstrung" ||
+      Boolean(trigger.closest(".proto-v2-hide-unstrung"));
+    if (unstrung) {
+      showConfigureError(trigger, "Select Strung to configure this racquet.");
+    }
+    return;
+  }
 
   const productId =
     trigger.dataset.productId ??
@@ -647,7 +673,9 @@ function handleConfigureClick(trigger: HTMLElement, event: Event) {
     return;
   }
 
-  void openConfigurator(productId, trigger);
+  openInFlight = openConfigurator(productId, trigger).finally(() => {
+    openInFlight = null;
+  });
 }
 
 /**
@@ -693,6 +721,9 @@ function initConfigurePrefetchDelegation() {
     const productId =
       trigger.dataset.productId ?? window.ProtoConfiguratorSettings?.productId ?? "";
     if (!productId) return;
+    // Start both catalog + modal bundle on intent — openConfigurator runs them in parallel too,
+    // but a head start on hover/touch is what makes the common click feel instant.
+    prefetchModalBundle();
     prefetchFullCatalog(productId);
   };
 

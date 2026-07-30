@@ -23,11 +23,17 @@ type PickerProduct = {
   variants?: Array<{ id: string; price?: string }>;
 };
 
+type SelectedProduct = {
+  id: string;
+  title: string;
+  price?: number;
+};
+
 export function OptionAddForm({
   stepId,
   defaultGroupName = "String",
 }: OptionAddFormProps) {
-  const fetcher = useFetcher<{ error?: string; success?: boolean }>();
+  const fetcher = useFetcher<{ error?: string; success?: boolean; added?: number }>();
   const shopify = useAppBridge();
   const isSubmitting = fetcher.state !== "idle";
 
@@ -36,10 +42,7 @@ export function OptionAddForm({
   const [optionValue, setOptionValue] = useState("");
   const [colorHex, setColorHex] = useState("");
   const [priceAdjust, setPriceAdjust] = useState("0");
-  const [selectedProduct, setSelectedProduct] = useState<{
-    id: string;
-    title: string;
-  } | null>(null);
+  const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.success) {
@@ -47,58 +50,79 @@ export function OptionAddForm({
       setOptionValue("");
       setColorHex("");
       setPriceAdjust("0");
-      setSelectedProduct(null);
+      setSelectedProducts([]);
     }
   }, [fetcher.state, fetcher.data]);
 
   async function openProductPicker() {
     const picker = await shopify.resourcePicker({
       type: "product",
-      multiple: false,
-      selectionIds: selectedProduct
-        ? [`gid://shopify/Product/${selectedProduct.id}`]
-        : [],
+      multiple: true,
+      selectionIds: selectedProducts.map(
+        (product) => `gid://shopify/Product/${product.id}`,
+      ),
     });
 
     const result = Array.isArray(picker)
-      ? picker[0]
-      : ((picker as { selection?: PickerProduct[] } | undefined)?.selection?.[0] ??
-        null);
+      ? picker
+      : ((picker as { selection?: PickerProduct[] } | undefined)?.selection ?? []);
 
-    if (!result) return;
+    if (!result.length) return;
 
-    const id = String(result.id).replace("gid://shopify/Product/", "");
-    const title = result.title ?? "Product";
-    setSelectedProduct({ id, title });
-    if (!optionLabel.trim()) setOptionLabel(title);
+    const next = result.map((product) => {
+      const id = String(product.id).replace("gid://shopify/Product/", "");
+      const title = product.title ?? "Product";
+      const variantPrice = product.variants?.[0]?.price;
+      return {
+        id,
+        title,
+        price: variantPrice ? parseFloat(variantPrice) || 0 : undefined,
+      };
+    });
 
-    const variantPrice = result.variants?.[0]?.price;
-    if (variantPrice && priceAdjust === "0") {
-      setPriceAdjust(String(parseFloat(variantPrice) || 0));
+    setSelectedProducts(next);
+
+    // Single-product convenience: keep label/price fields in sync for a manual tweak before add.
+    if (next.length === 1) {
+      if (!optionLabel.trim()) setOptionLabel(next[0].title);
+      if (priceAdjust === "0" && next[0].price !== undefined) {
+        setPriceAdjust(String(next[0].price));
+      }
     }
   }
 
   const handleSubmit = () => {
-    if (!selectedProduct && !optionLabel.trim()) return;
+    if (selectedProducts.length === 0 && !optionLabel.trim()) return;
 
-    fetcher.submit(
-      {
-        intent: "add_option",
-        stepId,
-        groupName: groupName.trim() || defaultGroupName,
-        optionLabel: optionLabel.trim() || selectedProduct?.title || "",
-        optionValue:
-          optionValue.trim() ||
-          (optionLabel.trim() || selectedProduct?.title || "")
-            .toLowerCase()
-            .replace(/\s+/g, "_"),
-        colorHex: colorHex.trim(),
-        priceAdjust,
-        productId: selectedProduct?.id ?? "",
-      },
-      { method: "post" },
-    );
+    const payload: Record<string, string> = {
+      intent: "add_option",
+      stepId,
+      groupName: groupName.trim() || defaultGroupName,
+      optionLabel: optionLabel.trim(),
+      optionValue: optionValue.trim(),
+      colorHex: colorHex.trim(),
+      priceAdjust,
+      productId: "",
+      productsJson: "",
+    };
+
+    if (selectedProducts.length > 0) {
+      payload.productsJson = JSON.stringify(selectedProducts);
+    } else {
+      payload.optionLabel = optionLabel.trim();
+      payload.optionValue =
+        optionValue.trim() ||
+        optionLabel.trim().toLowerCase().replace(/\s+/g, "_");
+    }
+
+    fetcher.submit(payload, { method: "post" });
   };
+
+  const canSubmit = selectedProducts.length > 0 || Boolean(optionLabel.trim());
+  const addLabel =
+    selectedProducts.length > 1
+      ? `Add ${selectedProducts.length} options`
+      : "Add option";
 
   return (
     <BlockStack gap="200">
@@ -121,36 +145,64 @@ export function OptionAddForm({
             value={optionLabel}
             onChange={setOptionLabel}
             autoComplete="off"
-            helpText="Auto-filled when you pick a product."
+            helpText={
+              selectedProducts.length > 1
+                ? "Ignored when adding multiple products — each product title is used."
+                : "Auto-filled when you pick a single product."
+            }
+            disabled={selectedProducts.length > 1}
           />
           <TextField
             label="Value"
             value={optionValue}
             onChange={setOptionValue}
-            helpText="Leave blank to auto-generate from label"
+            helpText={
+              selectedProducts.length > 1
+                ? "Ignored when adding multiple products — auto-generated per product."
+                : "Leave blank to auto-generate from label"
+            }
             autoComplete="off"
+            disabled={selectedProducts.length > 1}
           />
         </FormLayout.Group>
         <BlockStack gap="200">
           <Text as="p" variant="bodySm" fontWeight="semibold">
-            Shopify product
+            Shopify product(s)
           </Text>
           <Text as="p" variant="bodySm" tone="subdued">
-            Featured image and variant ID are pulled from the assigned product
-            automatically.
+            Select one or many products. Each becomes its own option; featured image and
+            variant ID are pulled from Shopify automatically.
           </Text>
-          {selectedProduct ? (
-            <InlineStack gap="200">
-              <Tag onRemove={() => setSelectedProduct(null)}>{selectedProduct.title}</Tag>
+          {selectedProducts.length > 0 ? (
+            <InlineStack gap="200" wrap>
+              {selectedProducts.map((product) => (
+                <Tag
+                  key={product.id}
+                  onRemove={() =>
+                    setSelectedProducts((items) =>
+                      items.filter((item) => item.id !== product.id),
+                    )
+                  }
+                >
+                  {product.title}
+                </Tag>
+              ))}
             </InlineStack>
           ) : (
             <Text as="p" variant="bodySm" tone="subdued">
-              No product linked yet.
+              No products linked yet.
             </Text>
           )}
-          <Button onClick={() => void openProductPicker()} size="slim">
-            {selectedProduct ? "Change product" : "Select product"}
-          </Button>
+          <InlineStack gap="200">
+            <Button onClick={() => void openProductPicker()} size="slim">
+              {selectedProducts.length > 0 ? "Change products" : "Select products"}
+            </Button>
+            {selectedProducts.length > 0 ? (
+              <Button variant="plain" size="slim" onClick={() => setSelectedProducts([])}>
+                Clear
+              </Button>
+            ) : null}
+          </InlineStack>
         </BlockStack>
         <FormLayout.Group>
           <TextField
@@ -166,6 +218,11 @@ export function OptionAddForm({
             onChange={setPriceAdjust}
             type="number"
             autoComplete="off"
+            helpText={
+              selectedProducts.length > 1
+                ? "Used only when a product has no Shopify price; otherwise each product’s price is used."
+                : undefined
+            }
           />
         </FormLayout.Group>
       </FormLayout>
@@ -175,9 +232,9 @@ export function OptionAddForm({
           size="slim"
           variant="primary"
           loading={isSubmitting}
-          disabled={!selectedProduct && !optionLabel.trim()}
+          disabled={!canSubmit}
         >
-          Add option
+          {addLabel}
         </Button>
       </Box>
     </BlockStack>
