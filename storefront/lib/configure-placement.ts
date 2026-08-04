@@ -229,6 +229,8 @@ export function syncConfigureButtonSlot(
 
 /** Marker for theme buy-button regions we hide while the gear CTA is slotted. */
 const BUY_BUTTONS_SUPPRESSED_ATTR = "data-proto-buy-buttons-suppressed";
+/** Legacy theme Configure popup triggers — kept suppressed even when ATC is restored. */
+const LEGACY_CONFIGURE_SUPPRESSED_ATTR = "data-proto-legacy-configure-suppressed";
 
 /** Theme selectors for the legacy product-configurator "Configure" button (not our app). */
 const THEME_CONFIGURE_SELECTORS = [
@@ -240,23 +242,34 @@ const THEME_CONFIGURE_SELECTORS = [
 ];
 
 /**
- * Tennis Express theme `product-configurator.js` does:
- *   buttonOuter = .product-buy-buttons
- *   on Strung: buttonOuter.innerHTML = configureButtonHTML
- * So anything we insert *inside* `.product-buy-buttons` is destroyed. Place the gear CTA as a
- * sibling *after* that container instead, and hide the theme's Configure / ATC region.
+ * Tennis Express buy row is a CSS grid:
+ *   "configurator configurator"
+ *   "quantity buy-buttons"
+ * Theme `product-configurator.js` wipes `.product-buy-buttons` innerHTML on Strung/Unstrung, so we
+ * never mount inside that node. Prefer the dedicated `configurator` row (always visible above
+ * quantity on mobile + desktop); fall back to sitting beside buy-buttons.
  */
 function findStandaloneSlotTarget(): {
   insertParent: HTMLElement;
   beforeNode: ChildNode | null;
   hideRoots: HTMLElement[];
+  gridArea: "configurator" | "buy-buttons";
 } | null {
   const buyButtons = document.querySelector<HTMLElement>(".product-buy-buttons");
-  if (buyButtons?.parentElement) {
+  const grid =
+    buyButtons?.closest<HTMLElement>(
+      ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons",
+    ) ?? buyButtons?.parentElement;
+
+  if (grid) {
+    const areas = (window.getComputedStyle(grid).gridTemplateAreas || "").toLowerCase();
+    const gridArea = areas.includes("configurator") ? "configurator" : "buy-buttons";
     return {
-      insertParent: buyButtons.parentElement,
-      beforeNode: buyButtons.nextSibling,
-      hideRoots: [buyButtons],
+      insertParent: grid,
+      // Keep quantity / buy-buttons nodes in place; our wrapper is a grid item via CSS grid-area.
+      beforeNode: buyButtons ?? grid.firstChild,
+      hideRoots: buyButtons ? [buyButtons] : [],
+      gridArea,
     };
   }
 
@@ -269,10 +282,26 @@ function findStandaloneSlotTarget(): {
       insertParent: holder.parentElement,
       beforeNode: holder.nextSibling,
       hideRoots: [holder],
+      gridArea: "buy-buttons",
     };
   }
 
   return null;
+}
+
+/** Hide the theme's legacy Configure popup triggers without touching Add to cart. */
+function suppressLegacyConfigureOnly() {
+  for (const selector of THEME_CONFIGURE_SELECTORS) {
+    document.querySelectorAll(selector).forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      if (node.closest(".proto-v2-standalone-wrapper")) return;
+      if (node.getAttribute(LEGACY_CONFIGURE_SUPPRESSED_ATTR) === "true") return;
+      node.setAttribute(LEGACY_CONFIGURE_SUPPRESSED_ATTR, "true");
+      node.hidden = true;
+      node.setAttribute("aria-hidden", "true");
+      node.style.setProperty("display", "none", "important");
+    });
+  }
 }
 
 function suppressThemeConfigureUi(hideRoots: HTMLElement[]) {
@@ -283,18 +312,7 @@ function suppressThemeConfigureUi(hideRoots: HTMLElement[]) {
     root.style.setProperty("display", "none", "important");
   }
 
-  for (const selector of THEME_CONFIGURE_SELECTORS) {
-    document.querySelectorAll(selector).forEach((node) => {
-      if (!(node instanceof HTMLElement)) return;
-      if (node.closest(".proto-v2-standalone-wrapper")) return;
-      if (node.getAttribute(SUPPRESSED_ATTR) === "true") return;
-      node.setAttribute(SUPPRESSED_ATTR, "true");
-      node.hidden = true;
-      node.setAttribute("aria-hidden", "true");
-      node.style.setProperty("display", "none", "important");
-    });
-  }
-
+  suppressLegacyConfigureOnly();
   suppressAddToCartButtons();
 }
 
@@ -309,14 +327,17 @@ function restoreThemeBuyButtonsRegion() {
 }
 
 /**
- * Relocate the v2 gear Configure button into the buy area when Strung, and put it back when
- * Unstrung. Hides the theme's legacy Configure (product-configurator.js) which opens the old
- * popup — not our app modal.
+ * Keep the v2 gear Configure button in the buy-box grid whenever the product is linked.
+ *
+ * - Always visible in the theme's `configurator` grid row (above quantity) so mobile shoppers
+ *   see it even while the default "Unstrung" choice is selected.
+ * - When Strung: also suppress the theme ATC / legacy Configure in the buy-buttons cell.
+ * - When Unstrung: restore ATC so unstrung checkout still works; legacy Configure stays hidden.
  *
  * IMPORTANT: never insert inside `.product-buy-buttons` — the theme replaces that node's
  * innerHTML on every Strung/Unstrung change and would destroy our button.
  */
-export function syncStandaloneConfigureSlot(showConfigure: boolean) {
+export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
   // While a Configure open is in flight, do not relocate/hide the button — mid-open DOM surgery
   // was a common cause of "I tapped Configure and nothing happened" (trigger detached, feedback
   // host lost, or visibility check racing the MutationObserver).
@@ -327,56 +348,51 @@ export function syncStandaloneConfigureSlot(showConfigure: boolean) {
   );
   if (!standalone || !standalone.isConnected) return;
 
-  document.documentElement.toggleAttribute("data-proto-v2-atc-slot", showConfigure);
+  document.documentElement.toggleAttribute("data-proto-v2-atc-slot", replaceAddToCart);
 
-  if (showConfigure) {
-    const target = findStandaloneSlotTarget();
-    if (!target) {
-      // Still suppress the theme's legacy Configure so shoppers don't hit a button that looks
-      // identical but never opens our modal.
-      suppressThemeConfigureUi([]);
-      return;
+  if (!actionsAnchors.has(standalone)) {
+    actionsAnchors.set(standalone, {
+      parent: standalone.parentElement ?? document.body,
+      nextSibling: standalone.nextSibling,
+    });
+  }
+
+  // If we previously parked inside a wiped container, pull back to the saved anchor first.
+  if (standalone.closest(".product-buy-buttons")) {
+    const anchor = actionsAnchors.get(standalone);
+    if (anchor) {
+      anchor.parent.insertBefore(standalone, anchor.nextSibling);
     }
+  }
 
-    if (!actionsAnchors.has(standalone)) {
-      actionsAnchors.set(standalone, {
-        parent: standalone.parentElement ?? document.body,
-        nextSibling: standalone.nextSibling,
-      });
-    }
-
-    // If we previously parked inside a wiped container, pull back to the saved anchor first.
-    if (standalone.closest(".product-buy-buttons")) {
-      const anchor = actionsAnchors.get(standalone);
-      if (anchor) {
-        anchor.parent.insertBefore(standalone, anchor.nextSibling);
-      }
-    }
-
-    suppressThemeConfigureUi(target.hideRoots);
-
+  const target = findStandaloneSlotTarget();
+  if (!target) {
+    suppressLegacyConfigureOnly();
     standalone.classList.remove("proto-v2-hide-unstrung");
-    standalone.classList.add("proto-v2-inline-slot");
     standalone.hidden = false;
-    standalone.style.removeProperty("display");
-    standalone.style.removeProperty("visibility");
-
-    if (
-      standalone.parentElement !== target.insertParent ||
-      standalone.nextSibling !== target.beforeNode
-    ) {
-      target.insertParent.insertBefore(standalone, target.beforeNode);
-    }
     return;
   }
 
-  standalone.classList.remove("proto-v2-inline-slot");
+  standalone.classList.remove("proto-v2-hide-unstrung");
+  standalone.classList.add("proto-v2-inline-slot");
+  standalone.dataset.protoGridArea = target.gridArea;
+  standalone.style.gridArea = target.gridArea;
+  standalone.hidden = false;
+  standalone.style.removeProperty("display");
+  standalone.style.removeProperty("visibility");
 
-  const anchor = actionsAnchors.get(standalone);
-  if (anchor && standalone.parentElement !== anchor.parent) {
-    anchor.parent.insertBefore(standalone, anchor.nextSibling);
+  if (
+    standalone.parentElement !== target.insertParent ||
+    standalone.nextSibling !== target.beforeNode
+  ) {
+    target.insertParent.insertBefore(standalone, target.beforeNode);
   }
 
-  restoreThemeBuyButtonsRegion();
-  restoreAddToCartButtons();
+  if (replaceAddToCart) {
+    suppressThemeConfigureUi(target.hideRoots);
+  } else {
+    restoreThemeBuyButtonsRegion();
+    restoreAddToCartButtons();
+    suppressLegacyConfigureOnly();
+  }
 }

@@ -8,7 +8,7 @@ import {
 import { normalizeProductId } from "./lib/product-id";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import { initStringingPageGate } from "./lib/stringing-page-gate";
-import { initV2StandaloneGate } from "./lib/v2-standalone-gate";
+import { initV2StandaloneGate, ensureStringingIsStrung } from "./lib/v2-standalone-gate";
 import {
   getPageProductId,
   markProductLinked,
@@ -628,14 +628,14 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
  * button — prevents acting on a click that landed on a visually-hidden button.
  */
 function isConfigureTriggerVisible(trigger: HTMLElement): boolean {
-  // The v2 "Configure Racquet" standalone button isn't part of the Strung/Unstrung gate and is
-  // never wrapped in a gated actions container, so those checks don't apply to it — only its own
-  // presence / hidden flag matters. Avoid getComputedStyle for standalone: during buy-box
-  // relocation / theme re-renders, computed pointer-events briefly flips and was aborting opens.
+  // Standalone Configure stays visible whenever linked (including default Unstrung). Only the
+  // wrapper's own hidden flag / disconnection matters — do not treat proto-v2-hide-unstrung as
+  // a hard block (that class is no longer applied for hide, but may linger from older sessions).
   const standalone = trigger.hasAttribute("data-proto-v2-standalone");
   if (standalone) {
     if (trigger.hasAttribute("hidden")) return false;
-    if (trigger.closest(".proto-v2-hide-unstrung")) return false;
+    const wrap = trigger.closest<HTMLElement>(".proto-v2-standalone-wrapper");
+    if (wrap?.hasAttribute("hidden")) return false;
     return trigger.isConnected;
   }
 
@@ -690,12 +690,26 @@ function handleConfigureClick(trigger: HTMLElement, event: Event) {
   if (trigger.getAttribute("aria-busy") === "true" || openInFlight) return;
 
   if (!isConfigureTriggerVisible(trigger)) {
-    const unstrung =
-      document.documentElement.dataset.protoStringingState === "unstrung" ||
-      Boolean(trigger.closest(".proto-v2-hide-unstrung"));
-    if (unstrung) {
-      showConfigureError(trigger, "Select Strung to configure this racquet.");
-    }
+    return;
+  }
+
+  // Default stringing is Unstrung — switch to Strung so theme ATC state matches a configured buy.
+  if (ensureStringingIsStrung()) {
+    // Let theme product-configurator.js react before we open (it rewrites buy-buttons).
+    window.setTimeout(() => {
+      if (openInFlight || trigger.getAttribute("aria-busy") === "true") return;
+      const productId =
+        trigger.dataset.productId ??
+        window.ProtoConfiguratorSettings?.productId ??
+        "";
+      if (!productId) {
+        showConfigureError(trigger, "Product ID is missing on this page.");
+        return;
+      }
+      openInFlight = openConfigurator(String(productId), trigger).finally(() => {
+        openInFlight = null;
+      });
+    }, 50);
     return;
   }
 
@@ -709,7 +723,7 @@ function handleConfigureClick(trigger: HTMLElement, event: Event) {
     return;
   }
 
-  openInFlight = openConfigurator(productId, trigger).finally(() => {
+  openInFlight = openConfigurator(String(productId), trigger).finally(() => {
     openInFlight = null;
   });
 }

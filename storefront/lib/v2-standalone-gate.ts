@@ -118,7 +118,46 @@ function getStringingValue(): string | null {
   return readStringingValue(document);
 }
 
-/** Show/hide every v2 standalone wrapper based on the current Strung/Unstrung choice. */
+/**
+ * If the page stringing control is currently Unstrung, switch it to Strung so Configure can
+ * proceed. Returns true when a change was made (caller may want to wait a tick for theme JS).
+ */
+export function ensureStringingIsStrung(): boolean {
+  const form =
+    document.querySelector("product-form form") ??
+    document.querySelector('form[action*="/cart/add"]');
+  const roots: ParentNode[] = form ? [form, document] : [document];
+
+  for (const root of roots) {
+    for (const select of Array.from(root.querySelectorAll<HTMLSelectElement>("select"))) {
+      if (select.closest("[data-proto-v2-standalone]")) continue;
+      const opts = Array.from(select.options);
+      const hasUnstrung = opts.some((o) =>
+        looksUnstrung(normalize(o.value), normalize(o.textContent || "")),
+      );
+      if (!hasUnstrung) continue;
+
+      const current = select.selectedOptions[0] ?? select.options[select.selectedIndex];
+      if (
+        current &&
+        looksUnstrung(normalize(current.value), normalize(current.textContent || ""))
+      ) {
+        const strung = opts.find(
+          (o) => !looksUnstrung(normalize(o.value), normalize(o.textContent || "")),
+        );
+        if (!strung) return false;
+        select.value = strung.value;
+        select.dispatchEvent(new Event("input", { bubbles: true }));
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+/** Show/hide ATC replacement based on Strung/Unstrung — Configure itself stays visible when linked. */
 function applyVisibility() {
   // Skip class + slot updates while Configure is opening — relocating the button mid-open races
   // the click handler and can drop the modal open / loading feedback (see data-proto-configuring
@@ -126,21 +165,14 @@ function applyVisibility() {
   if (document.documentElement.hasAttribute("data-proto-configuring")) return;
 
   const value = getStringingValue();
-  // Show when there is nothing to gate on (no Strung/Unstrung control on the page), or the choice
-  // is "strung". Hide only on a definite "unstrung".
-  //
-  // NOTE: this deliberately does NOT special-case the theme editor any more. It used to force the
-  // button visible there so a merchant could always position the block — but that made the editor
-  // preview disagree with the live storefront: the button stayed visible on "Unstrung", which
-  // reads as the gate being broken. The `value === null` fail-open already covers the case the
-  // editor exception existed for (a product with no stringing control to gate on), so the editor
-  // now behaves exactly like the storefront whenever a real control is present.
-  const show = value === null || value === "strung";
+  // Replace ATC only when Strung (or when there is no stringing control). Unstrung keeps ATC so
+  // shoppers can still buy without stringing — but the Configure button stays visible either way
+  // (default Unstrung used to hide it entirely, which looked like a missing button on mobile).
+  const replaceAddToCart = value === null || value === "strung";
   document.querySelectorAll<HTMLElement>(".proto-v2-standalone-wrapper").forEach((wrapper) => {
-    wrapper.classList.toggle("proto-v2-hide-unstrung", !show);
+    wrapper.classList.remove("proto-v2-hide-unstrung");
   });
-  // Strung → gear Configure sits in the ATC slot; Unstrung → restore theme ATC.
-  syncStandaloneConfigureSlot(show);
+  syncStandaloneConfigureSlot(replaceAddToCart);
 }
 
 let delegatedChangeBound = false;
