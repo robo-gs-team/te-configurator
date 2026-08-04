@@ -518,8 +518,10 @@ function prefetchFullCatalog(productId: string, lowPriority = false): void {
 
 /** Toggle the Configure button's loading state (disabled + busy + wait cursor) during fetch. */
 function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
-  trigger.toggleAttribute("disabled", loading);
+  // Set aria-busy BEFORE disabled so protectConfigureTrigger (MutationObserver) won't clear a
+  // legitimate loading disable — it bails when aria-busy="true".
   trigger.setAttribute("aria-busy", loading ? "true" : "false");
+  trigger.toggleAttribute("disabled", loading);
   trigger.style.opacity = loading ? "0.75" : "";
   trigger.style.cursor = loading ? "wait" : "pointer";
   // `cursor: wait` is invisible on touch, so a phone shopper saw only a faint dim. Arm a delayed
@@ -747,6 +749,63 @@ function initConfigurePrefetchDelegation() {
 function initButtons() {
   document.querySelectorAll("[data-proto-configurator-trigger]").forEach((el) => {
     (el as HTMLElement).dataset.protoBound = "true";
+    protectConfigureTrigger(el as HTMLElement);
+  });
+  watchConfigureTriggersForThemeInterference();
+}
+
+/**
+ * Theme product JS + Sticky ATC apps treat `.single-add-to-cart-button` as the real cart CTA:
+ * they disable it and rewrite the label to "Sold out" when the selected variant is unavailable.
+ * Our Configure button used to share that class for styling, so shoppers saw a dead "Sold out"
+ * Configure control. Strip those classes, undo sold-out mutations, and restore the label —
+ * except while we ourselves have the button in a loading state (aria-busy).
+ */
+function protectConfigureTrigger(trigger: HTMLElement) {
+  if (trigger.getAttribute("aria-busy") === "true") return;
+  if (document.documentElement.hasAttribute("data-proto-configuring")) return;
+
+  trigger.classList.remove(
+    "single-add-to-cart-button",
+    "product-form__submit",
+    "add-to-cart",
+  );
+  if (trigger.hasAttribute("disabled")) {
+    trigger.removeAttribute("disabled");
+  }
+  trigger.removeAttribute("aria-disabled");
+
+  const expected =
+    trigger.dataset.protoButtonLabel?.trim() ||
+    trigger.getAttribute("data-proto-button-label")?.trim() ||
+    "Configure";
+  const label = trigger.querySelector(".proto-v2-label");
+  if (label) {
+    const text = (label.textContent || "").trim();
+    if (text !== expected && !/loading|adding/i.test(text)) {
+      label.textContent = expected;
+    }
+  } else if (/sold out/i.test((trigger.textContent || "").trim())) {
+    // Fallback inject path has no .proto-v2-label — restore plain text content.
+    trigger.textContent = expected;
+  }
+}
+
+let configureTriggerGuard: MutationObserver | null = null;
+
+function watchConfigureTriggersForThemeInterference() {
+  if (configureTriggerGuard || typeof MutationObserver === "undefined") return;
+  configureTriggerGuard = new MutationObserver(() => {
+    document
+      .querySelectorAll<HTMLElement>("[data-proto-configurator-trigger]")
+      .forEach(protectConfigureTrigger);
+  });
+  configureTriggerGuard.observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["disabled", "aria-disabled", "class"],
+    characterData: true,
   });
 }
 

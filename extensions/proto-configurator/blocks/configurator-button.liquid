@@ -64,10 +64,11 @@
   >
     <button
       type="button"
-      class="proto-v2-configure-trigger button accent single-add-to-cart-button"
+      class="proto-v2-configure-trigger button accent"
       data-proto-configurator-trigger
       data-proto-v2-standalone
       data-product-id="{{ product.id }}"
+      data-proto-button-label="{{ button_label | escape }}"
       {% if block.settings.button_bg != blank %}
         style="background-color: {{ block.settings.button_bg }}; color: {{ block.settings.button_text | default: '#ffffff' }}; border-color: {{ block.settings.button_bg }};"
       {% endif %}
@@ -90,7 +91,7 @@
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
       {% endif %}
-      <span class="single-add-to-cart-button--text proto-v2-label">{{ button_label }}</span>
+      <span class="proto-v2-label">{{ button_label }}</span>
     </button>
 
     {% if block.settings.subtext != blank %}
@@ -105,11 +106,9 @@
       max-width: 100%;
     }
 
-    /* Inherit the theme's button look (color, font, radius, border) via the theme's own button
-       classes; force layout ourselves with !important, since this block can be placed inside
-       containers whose own CSS targets those same theme classes with higher specificity than a
-       plain class rule here (that's what shrank the button when placed under Quantity/Add to
-       cart — a theme rule sized for a different original layout was winning the cascade). */
+    /* Inherit the theme's button look (color, font, radius, border) via `button accent`.
+       Do NOT use `.single-add-to-cart-button` — the theme (and Sticky ATC apps) treat that class
+       as the real Add to cart control and will disable it / rewrite the label to "Sold out". */
     .proto-v2-configure-trigger {
       display: inline-flex !important;
       align-items: center !important;
@@ -119,7 +118,17 @@
       max-width: none !important;
       flex: 1 1 100% !important;
       white-space: nowrap;
-      cursor: pointer;
+      cursor: pointer !important;
+      pointer-events: auto !important;
+      opacity: 1 !important;
+    }
+
+    /* Theme sold-out CSS often targets button[disabled] — keep ours looking live even if a
+       race briefly sets disabled before our protector clears it. */
+    .proto-v2-configure-trigger[disabled]:not([aria-busy="true"]) {
+      opacity: 1 !important;
+      cursor: pointer !important;
+      filter: none !important;
     }
 
     .proto-v2-gear {
