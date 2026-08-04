@@ -517,19 +517,38 @@ function prefetchFullCatalog(productId: string, lowPriority = false): void {
   void fetchAndCacheFullCatalog(productId, lowPriority).catch(() => {});
 }
 
-/** Toggle the Configure button's loading state (disabled + busy + wait cursor) during fetch. */
+/** Toggle the Configure button's loading state during fetch.
+ *
+ * Do NOT use the HTML `disabled` attribute here — the theme's sold-out / Sticky ATC scripts also
+ * write `disabled`, and fighting that in a MutationObserver either freezes the PDP or gives up
+ * and leaves Configure permanently unclickable. Loading is signaled with aria-busy + a class
+ * (pointer-events: none via entry.css) instead.
+ */
 function setTriggerLoading(trigger: HTMLElement, loading: boolean) {
-  // Set aria-busy BEFORE disabled so protectConfigureTrigger (MutationObserver) won't clear a
-  // legitimate loading disable — it bails when aria-busy="true".
   trigger.setAttribute("aria-busy", loading ? "true" : "false");
-  trigger.toggleAttribute("disabled", loading);
+  trigger.classList.toggle("proto-configure-loading", loading);
   trigger.style.opacity = loading ? "0.75" : "";
   trigger.style.cursor = loading ? "wait" : "pointer";
+  // Ensure theme-applied disabled never blocks the next click after loading ends.
+  if (!loading) {
+    trigger.removeAttribute("disabled");
+    trigger.removeAttribute("aria-disabled");
+  }
   // `cursor: wait` is invisible on touch, so a phone shopper saw only a faint dim. Arm a delayed
   // text note as the mobile-visible half of this state (see configure-feedback.ts — it stays
   // silent for the fast/warmed path and only surfaces on a genuinely long wait).
   if (loading) startConfigureLoadingNote(trigger);
   else clearConfigureLoadingNote(trigger);
+}
+
+/** Resolve a Configure trigger from a click/pointer target (button, label child, or wrapper). */
+function resolveConfigureTrigger(target: Element): HTMLElement | null {
+  const direct = target.closest<HTMLElement>("[data-proto-configurator-trigger]");
+  if (direct) return direct;
+  const wrap = target.closest<HTMLElement>(
+    ".proto-v2-standalone-wrapper, .proto-configurator-button-wrapper",
+  );
+  return wrap?.querySelector<HTMLElement>("[data-proto-configurator-trigger]") ?? null;
 }
 
 /**
@@ -704,13 +723,27 @@ function initConfigureClickDelegation() {
   if (document.documentElement.dataset.protoClickDelegated) return;
   document.documentElement.dataset.protoClickDelegated = "true";
 
+  // Undo theme sold-out disables on the way in — before click — so a disabled <button> still
+  // receives the subsequent click (disabled controls skip pointer events otherwise).
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const trigger = resolveConfigureTrigger(target);
+      if (!trigger || trigger.getAttribute("aria-busy") === "true") return;
+      protectConfigureTrigger(trigger);
+    },
+    true,
+  );
+
   document.addEventListener(
     "click",
     (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
 
-      const trigger = target.closest<HTMLElement>("[data-proto-configurator-trigger]");
+      const trigger = resolveConfigureTrigger(target);
       if (!trigger) return;
 
       handleConfigureClick(trigger, event);
@@ -738,10 +771,10 @@ function initConfigurePrefetchDelegation() {
     const productId =
       trigger.dataset.productId ?? window.ProtoConfiguratorSettings?.productId ?? "";
     if (!productId) return;
-    // Start both catalog + modal bundle on intent — openConfigurator runs them in parallel too,
-    // but a head start on hover/touch is what makes the common click feel instant.
-    prefetchModalBundle();
+    // Start both catalog + modal on intent — parse/execute the modal (not just download) so a
+    // click that follows within a second doesn't wait on React startup.
     prefetchFullCatalog(productId);
+    void loadModal().catch(() => {});
   };
 
   // pointerover covers mouse hover (desktop); touchstart covers touch devices (fires just ahead
@@ -810,13 +843,7 @@ function protectConfigureTrigger(trigger: HTMLElement) {
     triggerProtectHits.set(trigger, hits);
   }
   hits.count += 1;
-  if (hits.count > 12) {
-    // Theme is re-applying sold-out state every frame — observing forever freezes the page.
-    const obs = triggerGuards.get(trigger);
-    obs?.disconnect();
-    triggerGuards.delete(trigger);
-    return;
-  }
+  const thrashing = hits.count > 12;
 
   protectSuppressDepth += 1;
   try {
@@ -835,6 +862,13 @@ function protectConfigureTrigger(trigger: HTMLElement) {
     }
   } finally {
     protectSuppressDepth -= 1;
+  }
+
+  if (thrashing) {
+    // Theme is re-applying sold-out state every frame — stop observing (pointerdown still restores).
+    const obs = triggerGuards.get(trigger);
+    obs?.disconnect();
+    triggerGuards.delete(trigger);
   }
 }
 
@@ -1037,18 +1071,13 @@ function warmUpForLikelyClick(productId: string): void {
 function applyLinkedUi(productId: string, configurator?: StorefrontConfigurator) {
   if (configurator) configuratorCache.set(productId, configurator);
   markProductLinked();
-  // Warm the catalog after `load` (not during first paint / theme hydration). Waiting only for
-  // requestIdleCallback left Configure racing a ~250KB App Proxy download; starting immediately
-  // on link competed with the theme and made the PDP feel frozen. Prefetch-only for the modal —
-  // do NOT execute the React bundle until click/idle intent (loadModal parses ~220KB).
-  const warmCatalog = () => warmUpForLikelyClick(productId);
-  if (document.readyState === "complete") {
-    window.setTimeout(warmCatalog, 0);
-  } else {
-    window.addEventListener("load", () => window.setTimeout(warmCatalog, 0), { once: true });
-  }
+  // Catalog via App Proxy is ~250KB and often 5–10s — start soon after linkage so Configure is
+  // warm before the shopper clicks. A short delay keeps this off the first-paint critical path
+  // (which previously made the PDP feel frozen) without waiting for full `window.load`.
+  window.setTimeout(() => warmUpForLikelyClick(productId), 400);
+  // After load + idle, parse the React modal bundle so the first click isn't paying JS startup.
   afterLoadIdle(() => {
-    prefetchModalBundle();
+    void loadModal().catch(() => {});
   });
 
   // Standalone v2 mode: the "Configure Racquet" button is fully self-contained. Skip every piece
