@@ -20,9 +20,9 @@ import autoprefixer from "autoprefixer";
  * rescaled the whole modal. Browser zoom still scales px, so user zoom accessibility is preserved.
  */
 // Unscoped: the modal root's own rules, and the PAGE-level rules (button visibility gate + the
-// inline buy-box layout class) that target the merchant's page, not the modal subtree.
+// inline buy-box layout classes) that target the merchant's page, not the modal subtree.
 const EXCLUDE =
-  /proto-configurator-root|proto-configurator-button-wrapper|proto-configurator-actions--inline/;
+  /proto-configurator-root|proto-configurator-button-wrapper|proto-configurator-actions--inline|proto-v2-inline-slot|proto-v2-standalone-wrapper/;
 const scopeToModalRoot = {
   postcssPlugin: "proto-scope-to-modal-root",
   Rule(rule: { parent?: { type?: string; name?: string }; selectors: string[] }) {

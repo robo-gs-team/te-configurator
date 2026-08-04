@@ -182,11 +182,14 @@
     }
 
     /* When Strung, the gear button sits beside quantity (outside .product-buy-buttons so the
-       theme's innerHTML swap cannot destroy it). Hide the theme's legacy Configure region. */
+       theme's innerHTML swap cannot destroy it). The buy row is a CSS grid
+       ("quantity buy-buttons"); claim that same grid area and the theme's 8px button radius
+       (scoped on .product-buy-buttons) so we match Add to cart width + corners. */
     .proto-v2-standalone-wrapper.proto-v2-inline-slot {
       margin-top: 0 !important;
       margin-bottom: 0 !important;
-      flex: 1 1 auto;
+      grid-area: buy-buttons;
+      --button-border-radius: 8px;
       min-width: 0;
       width: 100%;
       visibility: visible !important;
@@ -195,6 +198,10 @@
 
     .proto-v2-inline-slot .proto-v2-configure-trigger {
       width: 100% !important;
+      border-radius: var(--button-border-radius, 8px) !important;
+      min-height: 48px;
+      height: 48px;
+      box-sizing: border-box;
     }
 
     .proto-v2-inline-slot .proto-v2-standalone-subtext {

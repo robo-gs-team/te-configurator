@@ -22,14 +22,39 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   display: none !important;
 }
 
-/* Inline placement next to the theme's own buy buttons (legacy relocation path). */
+/* Inline placement next to the theme's own buy buttons (legacy relocation path).
+   Theme buy row is CSS grid ("quantity buy-buttons"); match that cell + 8px radius. */
 .proto-configurator-actions--inline {
   margin-top: 0 !important;
-  flex: 1 1 auto;
+  grid-area: buy-buttons;
+  --button-border-radius: 8px;
   min-width: 0;
   width: 100%;
 }
 
 .proto-configurator-actions--inline .proto-configurator-trigger {
   width: 100%;
+  border-radius: var(--button-border-radius, 8px) !important;
+  min-height: 48px;
+  height: 48px;
+  box-sizing: border-box;
+}
+
+.proto-v2-standalone-wrapper.proto-v2-inline-slot {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  grid-area: buy-buttons;
+  --button-border-radius: 8px;
+  min-width: 0;
+  width: 100%;
+  visibility: visible !important;
+  display: block !important;
+}
+
+.proto-v2-inline-slot .proto-v2-configure-trigger {
+  width: 100% !important;
+  border-radius: var(--button-border-radius, 8px) !important;
+  min-height: 48px;
+  height: 48px;
+  box-sizing: border-box;
 }
