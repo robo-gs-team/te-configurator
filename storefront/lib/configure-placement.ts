@@ -83,6 +83,7 @@ function queryAddToCartButtons(root: ParentNode = document): HTMLElement[] {
       if (node.closest(".proto-configurator-button-wrapper")) return;
       if (node.closest(".proto-v2-standalone-wrapper")) return;
       if (node.hasAttribute("data-proto-configurator-trigger")) return;
+      if (node.getAttribute(STICKY_SENTINEL_ATTR) === "true") return;
       found.add(node);
     });
   }
@@ -109,6 +110,9 @@ export function findAddToCartButton(): HTMLElement | null {
   return all[0] ?? null;
 }
 
+/** Marker for the zero-size #AddToCart we keep in the DOM while Strung. */
+const STICKY_SENTINEL_ATTR = "data-proto-sticky-atc-sentinel";
+
 /**
  * Hide every theme Add-to-Cart button (idempotent). Each hidden button is tagged with
  * SUPPRESSED_ATTR and forced to `display:none !important` so it can be found and restored
@@ -116,6 +120,7 @@ export function findAddToCartButton(): HTMLElement | null {
  */
 function suppressAddToCartButtons() {
   for (const button of queryAddToCartButtons()) {
+    if (button.getAttribute(STICKY_SENTINEL_ATTR) === "true") continue;
     if (button.getAttribute(SUPPRESSED_ATTR) === "true") continue;
     button.setAttribute(SUPPRESSED_ATTR, "true");
     button.hidden = true;
@@ -131,12 +136,49 @@ function suppressAddToCartButtons() {
 export function restoreAddToCartButtons() {
   document.querySelectorAll<HTMLElement>(`[${SUPPRESSED_ATTR}="true"]`).forEach(
     (button) => {
+      if (button.getAttribute(STICKY_SENTINEL_ATTR) === "true") return;
       button.hidden = false;
       button.removeAttribute("aria-hidden");
       button.style.removeProperty("display");
       button.removeAttribute(SUPPRESSED_ATTR);
     },
   );
+}
+
+/**
+ * Sticky Add To Cart Bar (satcb) measures the main ATC with jQuery `.offset().top`.
+ * On Strung, the theme wipes `#AddToCart` from `.product-buy-buttons`, so `.offset()` is
+ * undefined and the app throws `Cannot read properties of undefined (reading 'top')` —
+ * often on Configure click / scroll. Keep a 1×1 in-DOM sentinel so measurement succeeds.
+ */
+function ensureStickyAtcSentinel() {
+  const existing = document.getElementById("AddToCart");
+  if (existing?.getAttribute(STICKY_SENTINEL_ATTR) === "true") return;
+  // Real ATC still present (theme hasn't wiped yet) — leave it; we'll re-check after swaps.
+  if (existing && existing.getAttribute(STICKY_SENTINEL_ATTR) !== "true") return;
+
+  const host =
+    document.querySelector<HTMLElement>(".product-buy-buttons") ??
+    document.querySelector<HTMLElement>('form[action*="/cart/add"]') ??
+    document.body;
+
+  const sentinel = document.createElement("button");
+  sentinel.type = "button";
+  sentinel.id = "AddToCart";
+  sentinel.name = "add";
+  sentinel.setAttribute(STICKY_SENTINEL_ATTR, "true");
+  sentinel.setAttribute("aria-hidden", "true");
+  sentinel.tabIndex = -1;
+  // Must remain measurable by jQuery : offset() needs an in-DOM box. Avoid display:none.
+  sentinel.style.cssText =
+    "position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important;overflow:hidden!important;border:0!important;padding:0!important;margin:0!important;clip:rect(0 0 0 0)!important;";
+  host.appendChild(sentinel);
+}
+
+function removeStickyAtcSentinel() {
+  document
+    .querySelectorAll<HTMLElement>(`[${STICKY_SENTINEL_ATTR}="true"]`)
+    .forEach((el) => el.remove());
 }
 
 /**
@@ -403,10 +445,13 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
       target.insertParent.insertBefore(standalone, target.beforeNode);
     }
     suppressThemeConfigureUi(target.hideRoots);
+    // Theme may have just wiped #AddToCart; keep a sentinel for Sticky ATC Bar's offset().top.
+    ensureStickyAtcSentinel();
     return;
   }
 
   // Unstrung → park above the buy grid, restore ATC, hide Configure (nothing to configure).
+  removeStickyAtcSentinel();
   restoreThemeBuyButtonsRegion();
   restoreAddToCartButtons();
   suppressLegacyConfigureOnly();
