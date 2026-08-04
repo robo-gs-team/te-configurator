@@ -37,6 +37,12 @@ export async function ensureShop(domain: string) {
 }
 
 export async function getShopThemeSettings(shopId: string) {
+  // Read-first: this runs inside the linkage check on EVERY PDP load, and the old
+  // unconditional upsert paid a write round-trip (and row lock) per page view just to read
+  // settings that change only when a merchant saves. The upsert now happens once, the first
+  // time a shop has no row (kept as upsert so two concurrent first-reads can't both insert).
+  const existing = await prisma.themeSetting.findUnique({ where: { shopId } });
+  if (existing) return existing;
   return prisma.themeSetting.upsert({
     where: { shopId },
     create: { shopId },
@@ -173,6 +179,13 @@ export async function checkProductLinkage(
   const shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) return { linked: false, code: "not_linked" };
 
+  // Start the theme-settings read NOW, overlapping the candidate scan (which may include a
+  // Shopify collections call) instead of paying the two in series on every PDP load. The .catch
+  // is mandatory: on a not-linked early return the promise is abandoned, and an unhandled
+  // rejection would crash the serverless invocation. A failed read fails OPEN (button shows) —
+  // consistent with the storefront's gate, which also shows when it can't determine state.
+  const themePromise = getShopThemeSettings(shop.id).catch(() => null);
+
   const winner = await findMatchingConfigurator(shop.id, productId, shopDomain, admin);
   if (!winner) return { linked: false, code: "not_linked" };
   if (!winner.isActive) return { linked: false, code: "inactive" };
@@ -180,8 +193,8 @@ export async function checkProductLinkage(
   // Shop-wide kill switch (Theme Settings → "Enable customize button globally") overrides any
   // individual configurator's active state — same semantics as the full endpoint's
   // `configurator.theme.buttonEnabled === false` check.
-  const theme = await getShopThemeSettings(shop.id);
-  if (theme.buttonEnabled === false) return { linked: false, code: "button_disabled" };
+  const theme = await themePromise;
+  if (theme?.buttonEnabled === false) return { linked: false, code: "button_disabled" };
 
   return { linked: true };
 }
