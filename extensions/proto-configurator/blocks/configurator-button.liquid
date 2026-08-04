@@ -186,14 +186,13 @@
 
     /* When Strung, the gear button sits beside quantity (outside .product-buy-buttons so the
        theme's innerHTML swap cannot destroy it). The buy row is a CSS grid
-       ("quantity buy-buttons"). Stretch to own the full cell hit-target (align-self:end used to
-       shrink-wrap and let the theme buy-buttons layer steal clicks), then flex-end so the 48px
-       CTA still lines up with the quantity +/- row. */
+       ("quantity buy-buttons"). Stretch to own the full cell hit-target, then flex-end so the
+       48px CTA lines up with the quantity +/- row. Never use grid-area:configurator — on TE that
+       cell shares space with "Choose Your Stringing" and overlaps the dropdown. */
     .proto-v2-standalone-wrapper.proto-v2-inline-slot {
       margin-top: 0 !important;
       margin-bottom: 0 !important;
-      /* TE theme grid: "configurator configurator" / "quantity buy-buttons" */
-      grid-area: configurator;
+      grid-area: buy-buttons;
       align-self: stretch;
       --button-border-radius: 8px;
       min-width: 0;

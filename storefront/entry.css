@@ -60,9 +60,7 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
 .proto-v2-standalone-wrapper.proto-v2-inline-slot {
   margin-top: 0 !important;
   margin-bottom: 0 !important;
-  /* TE theme grid: "configurator configurator" / "quantity buy-buttons". Prefer configurator
-     row so the CTA stays above quantity on mobile instead of sharing the ATC cell. */
-  grid-area: configurator;
+  grid-area: buy-buttons;
   align-self: stretch;
   --button-border-radius: 8px;
   min-width: 0;

@@ -242,18 +242,19 @@ const THEME_CONFIGURE_SELECTORS = [
 ];
 
 /**
- * Tennis Express buy row is a CSS grid:
- *   "configurator configurator"
- *   "quantity buy-buttons"
- * Theme `product-configurator.js` wipes `.product-buy-buttons` innerHTML on Strung/Unstrung, so we
- * never mount inside that node. Prefer the dedicated `configurator` row (always visible above
- * quantity on mobile + desktop); fall back to sitting beside buy-buttons.
+ * Tennis Express buy row is a CSS grid (`quantity` | `buy-buttons`, sometimes with a
+ * `configurator` row above). Theme `product-configurator.js` wipes `.product-buy-buttons`
+ * innerHTML on Strung/Unstrung, so we never mount inside that node.
+ *
+ * Do NOT use `grid-area: configurator` — on TE that row is shared with "Choose Your Stringing"
+ * and stacking there overlaps the dropdown (see live PDP).
  */
 function findStandaloneSlotTarget(): {
   insertParent: HTMLElement;
   beforeNode: ChildNode | null;
   hideRoots: HTMLElement[];
-  gridArea: "configurator" | "buy-buttons";
+  /** The whole buy grid — used to park Configure above it when Unstrung. */
+  buyGrid: HTMLElement;
 } | null {
   const buyButtons = document.querySelector<HTMLElement>(".product-buy-buttons");
   const grid =
@@ -261,15 +262,21 @@ function findStandaloneSlotTarget(): {
       ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons",
     ) ?? buyButtons?.parentElement;
 
-  if (grid) {
-    const areas = (window.getComputedStyle(grid).gridTemplateAreas || "").toLowerCase();
-    const gridArea = areas.includes("configurator") ? "configurator" : "buy-buttons";
+  if (grid && buyButtons) {
     return {
       insertParent: grid,
-      // Keep quantity / buy-buttons nodes in place; our wrapper is a grid item via CSS grid-area.
-      beforeNode: buyButtons ?? grid.firstChild,
-      hideRoots: buyButtons ? [buyButtons] : [],
-      gridArea,
+      beforeNode: buyButtons.nextSibling,
+      hideRoots: [buyButtons],
+      buyGrid: grid,
+    };
+  }
+
+  if (grid) {
+    return {
+      insertParent: grid,
+      beforeNode: grid.firstChild,
+      hideRoots: [],
+      buyGrid: grid,
     };
   }
 
@@ -282,7 +289,7 @@ function findStandaloneSlotTarget(): {
       insertParent: holder.parentElement,
       beforeNode: holder.nextSibling,
       hideRoots: [holder],
-      gridArea: "buy-buttons",
+      buyGrid: holder.parentElement,
     };
   }
 
@@ -327,12 +334,11 @@ function restoreThemeBuyButtonsRegion() {
 }
 
 /**
- * Keep the v2 gear Configure button in the buy-box grid whenever the product is linked.
+ * Keep the v2 gear Configure button visible whenever the product is linked.
  *
- * - Always visible in the theme's `configurator` grid row (above quantity) so mobile shoppers
- *   see it even while the default "Unstrung" choice is selected.
- * - When Strung: also suppress the theme ATC / legacy Configure in the buy-buttons cell.
- * - When Unstrung: restore ATC so unstrung checkout still works; legacy Configure stays hidden.
+ * - Strung: sit in the `buy-buttons` grid cell (beside quantity), hide theme ATC.
+ * - Unstrung: sit as a normal block *above* the buy grid (not a grid item) so we never stack on
+ *   top of "Choose Your Stringing" in the theme's `configurator` row; ATC stays available.
  *
  * IMPORTANT: never insert inside `.product-buy-buttons` — the theme replaces that node's
  * innerHTML on every Strung/Unstrung change and would destroy our button.
@@ -366,33 +372,48 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
   }
 
   const target = findStandaloneSlotTarget();
-  if (!target) {
-    suppressLegacyConfigureOnly();
-    standalone.classList.remove("proto-v2-hide-unstrung");
-    standalone.hidden = false;
-    return;
-  }
-
   standalone.classList.remove("proto-v2-hide-unstrung");
-  standalone.classList.add("proto-v2-inline-slot");
-  standalone.dataset.protoGridArea = target.gridArea;
-  standalone.style.gridArea = target.gridArea;
   standalone.hidden = false;
   standalone.style.removeProperty("display");
   standalone.style.removeProperty("visibility");
 
-  if (
-    standalone.parentElement !== target.insertParent ||
-    standalone.nextSibling !== target.beforeNode
-  ) {
-    target.insertParent.insertBefore(standalone, target.beforeNode);
+  if (!target) {
+    suppressLegacyConfigureOnly();
+    standalone.classList.remove("proto-v2-inline-slot");
+    standalone.style.removeProperty("grid-area");
+    delete standalone.dataset.protoGridArea;
+    return;
   }
 
   if (replaceAddToCart) {
+    // Strung → own the ATC cell beside quantity.
+    standalone.classList.add("proto-v2-inline-slot");
+    standalone.dataset.protoGridArea = "buy-buttons";
+    standalone.style.gridArea = "buy-buttons";
+
+    if (
+      standalone.parentElement !== target.insertParent ||
+      standalone.nextSibling !== target.beforeNode
+    ) {
+      target.insertParent.insertBefore(standalone, target.beforeNode);
+    }
     suppressThemeConfigureUi(target.hideRoots);
-  } else {
-    restoreThemeBuyButtonsRegion();
-    restoreAddToCartButtons();
-    suppressLegacyConfigureOnly();
+    return;
+  }
+
+  // Unstrung → normal flow above the buy grid (never grid-area: configurator — that overlaps
+  // the stringing dropdown on Tennis Express).
+  restoreThemeBuyButtonsRegion();
+  restoreAddToCartButtons();
+  suppressLegacyConfigureOnly();
+
+  standalone.classList.remove("proto-v2-inline-slot");
+  standalone.style.removeProperty("grid-area");
+  delete standalone.dataset.protoGridArea;
+
+  const grid = target.buyGrid;
+  const host = grid.parentElement;
+  if (host && (standalone.parentElement !== host || standalone.nextSibling !== grid)) {
+    host.insertBefore(standalone, grid);
   }
 }
