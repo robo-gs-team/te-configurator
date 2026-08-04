@@ -6,6 +6,10 @@
     {
       "path": "/api/sync-snapshots",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/healthz",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

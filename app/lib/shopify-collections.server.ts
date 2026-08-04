@@ -53,7 +53,11 @@ type CollectionsByIdsResponse = {
   };
 };
 
-const CACHE_TTL_MS = 60_000;
+/** 10 minutes, not the old 60s: product→collection membership changes only when a merchant edits
+ *  collections, but this lookup sits on the PDP linkage path whenever a configurator is assigned
+ *  by collection — at 60s, nearly every visitor on a serverless instance repaid the full Shopify
+ *  Admin GraphQL round-trip (300–600ms) that this cache exists to avoid. */
+const CACHE_TTL_MS = 10 * 60_000;
 const productCollectionsCache = new Map<
   string,
   { ids: string[]; expires: number }
