@@ -114,6 +114,7 @@
     .proto-configurator-actions--inline {
       margin-top: 0 !important;
       grid-area: buy-buttons;
+      align-self: end;
       --button-border-radius: 8px;
       min-width: 0;
       width: 100%;
@@ -122,9 +123,15 @@
     .proto-configurator-actions--inline .proto-configurator-trigger {
       width: 100%;
       border-radius: var(--button-border-radius, 8px) !important;
-      min-height: 48px;
-      height: 48px;
-      box-sizing: border-box;
+      min-height: 48px !important;
+      height: 48px !important;
+      max-height: 48px !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      box-sizing: border-box !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
     }
 
     /* Mirror configurator-button.liquid inline-slot rules (embed loads even if the
@@ -133,6 +140,7 @@
       margin-top: 0 !important;
       margin-bottom: 0 !important;
       grid-area: buy-buttons;
+      align-self: end;
       --button-border-radius: 8px;
       min-width: 0;
       width: 100%;
@@ -143,9 +151,15 @@
     .proto-v2-inline-slot .proto-v2-configure-trigger {
       width: 100% !important;
       border-radius: var(--button-border-radius, 8px) !important;
-      min-height: 48px;
-      height: 48px;
-      box-sizing: border-box;
+      min-height: 48px !important;
+      height: 48px !important;
+      max-height: 48px !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      box-sizing: border-box !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
     }
 
     /* Hide theme legacy Configure while our gear CTA is slotted beside quantity. */

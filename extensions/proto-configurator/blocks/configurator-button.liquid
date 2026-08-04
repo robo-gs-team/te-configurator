@@ -183,12 +183,15 @@
 
     /* When Strung, the gear button sits beside quantity (outside .product-buy-buttons so the
        theme's innerHTML swap cannot destroy it). The buy row is a CSS grid
-       ("quantity buy-buttons"); claim that same grid area and the theme's 8px button radius
-       (scoped on .product-buy-buttons) so we match Add to cart width + corners. */
+       ("quantity buy-buttons"). Claim that grid area + the theme's 8px radius. align-self:end
+       drops the CTA to the control row — ATC sits under a visibility-hidden "Buy buttons"
+       label that matches the "Quantity" label height; without that spacer we would top-align
+       with the label instead of the +/- input. */
     .proto-v2-standalone-wrapper.proto-v2-inline-slot {
       margin-top: 0 !important;
       margin-bottom: 0 !important;
       grid-area: buy-buttons;
+      align-self: end;
       --button-border-radius: 8px;
       min-width: 0;
       width: 100%;
@@ -199,9 +202,15 @@
     .proto-v2-inline-slot .proto-v2-configure-trigger {
       width: 100% !important;
       border-radius: var(--button-border-radius, 8px) !important;
-      min-height: 48px;
-      height: 48px;
-      box-sizing: border-box;
+      min-height: 48px !important;
+      height: 48px !important;
+      max-height: 48px !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      box-sizing: border-box !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
     }
 
     .proto-v2-inline-slot .proto-v2-standalone-subtext {
