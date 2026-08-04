@@ -113,6 +113,26 @@ export function findAddToCartButton(): HTMLElement | null {
 /** Marker for the zero-size #AddToCart we keep in the DOM while Strung. */
 const STICKY_SENTINEL_ATTR = "data-proto-sticky-atc-sentinel";
 
+let stickySelectorPatchTimer: number | null = null;
+
+function startStickySelectorPatchLoop() {
+  patchStickyAtcSelectors();
+  if (stickySelectorPatchTimer != null) return;
+  stickySelectorPatchTimer = window.setInterval(() => {
+    if (!document.documentElement.hasAttribute("data-proto-v2-atc-slot")) {
+      stopStickySelectorPatchLoop();
+      return;
+    }
+    patchStickyAtcSelectors();
+  }, 1000);
+}
+
+function stopStickySelectorPatchLoop() {
+  if (stickySelectorPatchTimer == null) return;
+  window.clearInterval(stickySelectorPatchTimer);
+  stickySelectorPatchTimer = null;
+}
+
 /**
  * Hide every theme Add-to-Cart button (idempotent). Each hidden button is tagged with
  * SUPPRESSED_ATTR and forced to `display:none !important` so it can be found and restored
@@ -152,35 +172,48 @@ export function restoreAddToCartButtons() {
  * `$(buy).length ? $(buy).offset().top : $(form).offset().top` expression are empty →
  * `Cannot read properties of undefined (reading 'top')` on every scroll/click remasure.
  *
- * Retarget satcb at `#AddToCart` (real ATC or our sentinel). Use accessors so satcb's own
- * init cannot silently overwrite us back to the broken `.product-info` selectors.
+ * Retarget satcb at `#AddToCart` (real ATC or our sentinel). Satcb often defines these as
+ * non-configurable properties, so prefer assignment and keep re-applying from the gate.
  */
 function patchStickyAtcSelectors() {
-  try {
-    const w = window as Window & Record<string, unknown>;
-    const buy = "#AddToCart";
-    const form =
-      ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons, .thb-product-detail, body";
-    for (const [key, value] of [
-      ["satcb_buy_button_selector", buy],
-      ["satcb_formSelector", form],
-    ] as const) {
-      const existing = Object.getOwnPropertyDescriptor(w, key);
-      if (existing?.get && existing.set && existing.configurable !== false) {
-        // Already patched with accessors.
+  const buy = "#AddToCart";
+  const form =
+    ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons, .thb-product-detail, body";
+  const w = window as Window & Record<string, unknown>;
+
+  for (const [key, value] of [
+    ["satcb_buy_button_selector", buy],
+    ["satcb_formSelector", form],
+  ] as const) {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(w, key);
+      if (!desc) {
+        Object.defineProperty(w, key, {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value,
+        });
         continue;
       }
-      Object.defineProperty(w, key, {
-        configurable: true,
-        enumerable: true,
-        get: () => value,
-        set: () => {
-          // Ignore satcb re-assignments to broken theme selectors.
-        },
-      });
+      if (desc.configurable) {
+        Object.defineProperty(w, key, {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value,
+        });
+        continue;
+      }
+      // Non-configurable (satcb's usual shape) — assignment if writable.
+      w[key] = value;
+    } catch {
+      try {
+        w[key] = value;
+      } catch {
+        // Page may freeze the property; scroll errors are then satcb's alone.
+      }
     }
-  } catch {
-    // Ignore — satcb may not be installed / page may be frozen.
   }
 }
 
@@ -190,7 +223,7 @@ function patchStickyAtcSelectors() {
  * node is `visibility:hidden` while we own the slot, which breaks some offset paths.
  */
 function ensureStickyAtcSentinel() {
-  patchStickyAtcSelectors();
+  startStickySelectorPatchLoop();
 
   const existing = document.getElementById("AddToCart");
   if (existing?.getAttribute(STICKY_SENTINEL_ATTR) === "true") {
@@ -232,6 +265,7 @@ function stickySentinelHost(): HTMLElement | null {
 }
 
 function removeStickyAtcSentinel() {
+  stopStickySelectorPatchLoop();
   document
     .querySelectorAll<HTMLElement>(`[${STICKY_SENTINEL_ATTR}="true"]`)
     .forEach((el) => el.remove());
