@@ -160,6 +160,7 @@ CREATE TABLE "ThemeSetting" (
     "modalAccent" TEXT NOT NULL DEFAULT '#6366f1',
     "overlayBlur" INTEGER NOT NULL DEFAULT 12,
     "fontFamily" TEXT NOT NULL DEFAULT 'system-ui',
+    "mobileStringCount" INTEGER NOT NULL DEFAULT 6,
     "customCss" TEXT,
 
     CONSTRAINT "ThemeSetting_pkey" PRIMARY KEY ("id")

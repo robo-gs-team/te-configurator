@@ -49,6 +49,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shop = await ensureShop(session.shop);
   const form = await request.formData();
 
+  if (String(form.get("intent")) === "refresh_snapshots") {
+    // Stamp BEFORE the rebuild so we can tell which configurators actually got a fresh snapshot:
+    // refreshShopSnapshots is best-effort and swallows per-configurator errors, so without this
+    // comparison a total failure would report identically to a total success.
+    const startedAt = new Date();
+    await refreshShopSnapshots(admin, shop.id, session.shop);
+
+    // Deliberately does NOT select enrichedSnapshot — that column holds ~300KB per row, and the
+    // timestamp alone answers the question.
+    const rows = await prisma.configurator.findMany({
+      where: { shopId: shop.id, isActive: true },
+      select: { name: true, snapshotUpdatedAt: true },
+    });
+    const isFresh = (at: Date | null) => at !== null && at >= startedAt;
+    return json({
+      snapshots: {
+        total: rows.length,
+        refreshed: rows.filter((r) => isFresh(r.snapshotUpdatedAt)).length,
+        failed: rows.filter((r) => !isFresh(r.snapshotUpdatedAt)).map((r) => r.name),
+      },
+    });
+  }
+
   if (String(form.get("intent")) === "migrate_legacy_tension") {
     const productIds = await getAllLinkedRacquetProductIds(admin, shop.id);
     const migration = await migrateLegacyRacquetTension(admin, productIds);
@@ -115,6 +138,13 @@ export default function ThemeSettings() {
     navigation.formData?.get("intent") === "migrate_legacy_tension";
   const migrationResult = (actionData as { migration?: TensionMigrationResult } | undefined)
     ?.migration;
+  const isRefreshingSnapshots =
+    navigation.state !== "idle" && navigation.formData?.get("intent") === "refresh_snapshots";
+  const snapshotResult = (
+    actionData as
+      | { snapshots?: { total: number; refreshed: number; failed: string[] } }
+      | undefined
+  )?.snapshots;
 
   const [buttonEnabled, setButtonEnabled] = useState(theme.buttonEnabled);
   const [buttonLabel, setButtonLabel] = useState(theme.buttonLabel);
@@ -264,6 +294,38 @@ export default function ThemeSettings() {
                   {versions.beta.ref ? ` (${versions.beta.ref})` : ""}
                 </Text>
               </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                Storefront data cache
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Each configurator keeps a prebuilt snapshot of its strings, prices and images so
+                product pages load fast. It rebuilds automatically whenever you save, and again
+                nightly. Rebuild it here if prices or stock look out of date on the storefront, or
+                after changing products outside this app.
+              </Text>
+              {snapshotResult && (
+                <Banner tone={snapshotResult.failed.length === 0 ? "success" : "warning"}>
+                  <p>
+                    Rebuilt {snapshotResult.refreshed} of {snapshotResult.total} active
+                    configurator{snapshotResult.total === 1 ? "" : "s"}.
+                    {snapshotResult.failed.length > 0 &&
+                      ` Failed: ${snapshotResult.failed.join(", ")}. Check that these are linked to products and try again.`}
+                  </p>
+                </Banner>
+              )}
+              <Form method="post">
+                <input type="hidden" name="intent" value="refresh_snapshots" />
+                <Button submit size="slim" loading={isRefreshingSnapshots}>
+                  Rebuild storefront data now
+                </Button>
+              </Form>
             </BlockStack>
           </Card>
         </Layout.Section>
