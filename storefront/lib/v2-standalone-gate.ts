@@ -13,6 +13,7 @@
 import {
   syncStandaloneConfigureSlot,
 } from "./configure-placement";
+import { neutralizeInertOverlays, watchInertOverlays } from "./inert-overlays";
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
@@ -164,6 +165,9 @@ function applyVisibility() {
   // in entry.tsx openConfigurator).
   if (document.documentElement.hasAttribute("data-proto-configuring")) return;
 
+  // Empty Alia/promo shells (full-viewport, z-index max, no children) steal clicks from Configure.
+  neutralizeInertOverlays();
+
   const value = getStringingValue();
   // Strung (or no stringing control) → Configure owns the ATC cell. Unstrung → hide Configure and
   // leave the theme Add to cart alone so shoppers can buy without a string job.
@@ -226,5 +230,6 @@ export function initV2StandaloneGate() {
     delegatedChangeBound = true;
     document.addEventListener("change", applyVisibility, true);
     watchForLateRenders();
+    watchInertOverlays();
   }
 }
