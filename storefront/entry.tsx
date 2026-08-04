@@ -552,6 +552,25 @@ function resolveConfigureTrigger(target: Element): HTMLElement | null {
 }
 
 /**
+ * When Strung, the theme injects its own Configure into `.product-buy-buttons`. We hide that
+ * region, but if a click still lands on it (race / sticky ATC / incomplete suppress), map it to
+ * our gear trigger so the legacy popup never wins and the shopper still opens our modal.
+ */
+function resolveConfigureTriggerIncludingTheme(target: Element): HTMLElement | null {
+  const ours = resolveConfigureTrigger(target);
+  if (ours) return ours;
+
+  if (!document.documentElement.hasAttribute("data-proto-v2-atc-slot")) return null;
+  const themeCfg = target.closest<HTMLElement>(
+    'button[name="configure"], #ProductPopup-Configurator, #ProductPopup-Configurator-Hybrid, .product-popup-modal__opener[data-modal*="Configurator"], .product-buy-buttons',
+  );
+  if (!themeCfg) return null;
+  return document.querySelector<HTMLElement>(
+    ".proto-v2-standalone-wrapper:not(.proto-v2-hide-unstrung) [data-proto-configurator-trigger]",
+  );
+}
+
+/**
  * Open the modal for a product. Uses the full-catalog cache (or an in-flight warm-up already
  * started by hover/idle) for an instant-or-near-instant open in the common case; otherwise shows
  * a loading state on the button while fetchAndCacheFullCatalog does a fresh fetch. Surfaces any
@@ -743,7 +762,7 @@ function initConfigureClickDelegation() {
     (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const trigger = resolveConfigureTrigger(target);
+      const trigger = resolveConfigureTriggerIncludingTheme(target);
       if (!trigger || trigger.getAttribute("aria-busy") === "true") return;
       protectConfigureTrigger(trigger);
     },
@@ -756,7 +775,7 @@ function initConfigureClickDelegation() {
       const target = event.target;
       if (!(target instanceof Element)) return;
 
-      const trigger = resolveConfigureTrigger(target);
+      const trigger = resolveConfigureTriggerIncludingTheme(target);
       if (!trigger) return;
 
       handleConfigureClick(trigger, event);

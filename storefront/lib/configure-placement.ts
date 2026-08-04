@@ -313,10 +313,13 @@ function suppressLegacyConfigureOnly() {
 
 function suppressThemeConfigureUi(hideRoots: HTMLElement[]) {
   for (const root of hideRoots) {
-    if (root.getAttribute(BUY_BUTTONS_SUPPRESSED_ATTR) === "true") continue;
     root.setAttribute(BUY_BUTTONS_SUPPRESSED_ATTR, "true");
     root.setAttribute("aria-hidden", "true");
-    root.style.setProperty("display", "none", "important");
+    // Keep the node in the CSS grid (do NOT display:none). Freeing the buy-buttons cell lets
+    // auto-placed siblings (inventory notice, etc.) occupy it and steal Configure clicks.
+    root.style.removeProperty("display");
+    root.style.setProperty("visibility", "hidden", "important");
+    root.style.setProperty("pointer-events", "none", "important");
   }
 
   suppressLegacyConfigureOnly();
@@ -330,6 +333,8 @@ function restoreThemeBuyButtonsRegion() {
       el.removeAttribute(BUY_BUTTONS_SUPPRESSED_ATTR);
       el.removeAttribute("aria-hidden");
       el.style.removeProperty("display");
+      el.style.removeProperty("visibility");
+      el.style.removeProperty("pointer-events");
     });
 }
 
