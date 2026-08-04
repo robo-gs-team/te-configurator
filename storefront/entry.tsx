@@ -1,4 +1,5 @@
 import {
+  clearAllConfigureLoadingNotes,
   clearConfigureError,
   clearConfigureLoadingNote,
   showConfigureError,
@@ -193,12 +194,11 @@ const MODAL_LOAD_TIMEOUT_MS = 20000;
 /**
  * Hard ceiling on the WHOLE click → modal sequence (catalog + modal bundle in parallel).
  *
- * The per-step budgets compound badly without a wall clock: the catalog fetch alone retries 3x at
- * 7s each plus backoff (~23s), and the modal script adds up to 20s on top. One overall deadline
- * from click time caps the wait and surfaces a retryable message. The underlying fetch is not
- * cancelled — if it lands later it still populates the cache, so a second click is fast.
+ * The full catalog payload is large (~250KB+) and Shopify's App Proxy can add several seconds of
+ * latency on preview/storefront, so this must clear the per-attempt fetch budget with room to
+ * spare. Without a wall-clock cap the button can spin until the shopper gives up.
  */
-const OPEN_DEADLINE_MS = 12000;
+const OPEN_DEADLINE_MS = 30000;
 
 /** True while openConfigurator is running — blocks duplicate opens and freezes buy-box relocation. */
 let openInFlight: Promise<void> | null = null;
@@ -282,12 +282,13 @@ function getProxyUrl(): string {
   return window.ProtoConfiguratorSettings?.appProxyUrl ?? "/apps/proto-configurator";
 }
 
-/** Per-attempt fetch timeout. Short on purpose: a hung attempt should fail fast and RETRY
- *  instead of blocking the Configure button behind one 15s stall. */
-const FETCH_ATTEMPT_TIMEOUT_MS = 7000;
+/** Per-attempt fetch timeout. The full catalog JSON is large and App Proxy transfer on a real
+ *  storefront/preview often lands in the 8–15s range — a 7s abort made every attempt fail, so the
+ *  click path either spun through retries or hit the open deadline with nothing cached. */
+const FETCH_ATTEMPT_TIMEOUT_MS = 20000;
 /** Backoff before retry attempts 2 and 3. Transient App Proxy blips / serverless cold starts
  *  are routine; a quick retry converts most of them into a success instead of a dead button. */
-const FETCH_RETRY_DELAYS_MS = [400, 1500];
+const FETCH_RETRY_DELAYS_MS = [500, 1500];
 
 function buildProductUrl(productId: string, suffix: ""): string;
 function buildProductUrl(productId: string, suffix: "/link"): string;
@@ -593,7 +594,12 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
     );
   } finally {
     delete document.documentElement.dataset.protoConfiguring;
+    // Always clear loading UI — even if the trigger node was relocated mid-open, wipe any
+    // leftover "Loading your options…" notes still in the buy box.
     setTriggerLoading(trigger, false);
+    clearAllConfigureLoadingNotes();
+    // Theme stock scripts may have flipped disabled while we were busy; restore clickability.
+    protectConfigureTrigger(trigger);
   }
 }
 
@@ -800,12 +806,13 @@ function watchConfigureTriggersForThemeInterference() {
       .querySelectorAll<HTMLElement>("[data-proto-configurator-trigger]")
       .forEach(protectConfigureTrigger);
   });
+  // Attributes + childList only — characterData on <html> was far too chatty on this theme and
+  // could stall the main thread while Configure was opening.
   configureTriggerGuard.observe(document.documentElement, {
     subtree: true,
     childList: true,
     attributes: true,
     attributeFilter: ["disabled", "aria-disabled", "class"],
-    characterData: true,
   });
 }
 
@@ -934,10 +941,9 @@ function prefetchModalBundle(): void {
  */
 function warmUpForLikelyClick(productId: string): void {
   prefetchModalBundle();
-  // Low priority: this is the automatic background warm-up — it must never outrank the page's
-  // own resources. Hover/touch intent prefetches (initConfigurePrefetchDelegation) stay normal
-  // priority, since there the shopper is about to click.
-  prefetchFullCatalog(productId, true);
+  // Normal priority: first Configure click depends on this finishing. Low-priority was getting
+  // starved behind theme images on the PDP and left the click path cold.
+  prefetchFullCatalog(productId, false);
 }
 
 /**
@@ -949,13 +955,10 @@ function warmUpForLikelyClick(productId: string): void {
 function applyLinkedUi(productId: string, configurator?: StorefrontConfigurator) {
   if (configurator) configuratorCache.set(productId, configurator);
   markProductLinked();
-  // A Configure click is now plausible; warm the modal bundle + full catalog — but only after the
-  // page itself has finished loading (see afterLoadIdle: an idle-time warm-up mid-load was
-  // stealing bandwidth from the page's own images, especially on Safari where "idle" degrades to
-  // a flat 1.2s timer). A no-op for whichever of the two, if any, is already cached/in flight.
-  afterLoadIdle(() => warmUpForLikelyClick(productId));
-  // Also start actually loading (not just prefetching) the modal bundle once the page is idle —
-  // prefetch alone still left first click paying parse/execute cost, which felt like a hang.
+  // Start the catalog warm-up ASAP once linked — waiting only for requestIdleCallback left the
+  // first Configure click racing a 250KB App Proxy download that often exceeded the old 7s
+  // abort and looked like an endless spinner. Idle still used for the modal parse/execute.
+  warmUpForLikelyClick(productId);
   afterLoadIdle(() => {
     void loadModal().catch(() => {});
   });

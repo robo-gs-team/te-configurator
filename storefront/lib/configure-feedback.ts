@@ -73,6 +73,13 @@ export function clearConfigureLoadingNote(trigger: HTMLElement) {
   feedbackHost(trigger)?.querySelector("[data-proto-configure-loading]")?.remove();
 }
 
+/** Remove every in-page loading note (e.g. after open finishes and the trigger may have moved). */
+export function clearAllConfigureLoadingNotes() {
+  document
+    .querySelectorAll("[data-proto-configure-loading]")
+    .forEach((el) => el.remove());
+}
+
 export function showConfigureError(trigger: HTMLElement, message: string) {
   // An error supersedes any in-flight progress note — never show both at once.
   clearConfigureLoadingNote(trigger);
