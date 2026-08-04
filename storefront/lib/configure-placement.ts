@@ -146,33 +146,89 @@ export function restoreAddToCartButtons() {
 }
 
 /**
- * Sticky Add To Cart Bar (satcb) measures the main ATC with jQuery `.offset().top`.
- * On Strung, the theme wipes `#AddToCart` from `.product-buy-buttons`, so `.offset()` is
- * undefined and the app throws `Cannot read properties of undefined (reading 'top')` —
- * often on Configure click / scroll. Keep a 1×1 in-DOM sentinel so measurement succeeds.
+ * Tennis Express's Sticky ATC Bar (satcb) is configured with selectors that don't exist on
+ * this theme (`.product-info:visible:first` / `a:visible:last`). On Strung the theme also
+ * removes the cart form entirely, so both sides of satcb's
+ * `$(buy).length ? $(buy).offset().top : $(form).offset().top` expression are empty →
+ * `Cannot read properties of undefined (reading 'top')` on every scroll/click remasure.
+ *
+ * Retarget satcb at `#AddToCart` (real ATC or our sentinel). Use accessors so satcb's own
+ * init cannot silently overwrite us back to the broken `.product-info` selectors.
+ */
+function patchStickyAtcSelectors() {
+  try {
+    const w = window as Window & Record<string, unknown>;
+    const buy = "#AddToCart";
+    const form =
+      ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons, .thb-product-detail, body";
+    for (const [key, value] of [
+      ["satcb_buy_button_selector", buy],
+      ["satcb_formSelector", form],
+    ] as const) {
+      const existing = Object.getOwnPropertyDescriptor(w, key);
+      if (existing?.get && existing.set && existing.configurable !== false) {
+        // Already patched with accessors.
+        continue;
+      }
+      Object.defineProperty(w, key, {
+        configurable: true,
+        enumerable: true,
+        get: () => value,
+        set: () => {
+          // Ignore satcb re-assignments to broken theme selectors.
+        },
+      });
+    }
+  } catch {
+    // Ignore — satcb may not be installed / page may be frozen.
+  }
+}
+
+/**
+ * Keep a 1×1 in-DOM `#AddToCart` so satcb's jQuery `.offset().top` succeeds after the theme
+ * wipes the real buy button on Strung. Must NOT live inside `.product-buy-buttons` — that
+ * node is `visibility:hidden` while we own the slot, which breaks some offset paths.
  */
 function ensureStickyAtcSentinel() {
+  patchStickyAtcSelectors();
+
   const existing = document.getElementById("AddToCart");
-  if (existing?.getAttribute(STICKY_SENTINEL_ATTR) === "true") return;
+  if (existing?.getAttribute(STICKY_SENTINEL_ATTR) === "true") {
+    // Re-home if a prior version parked the sentinel inside the suppressed buy cell.
+    if (existing.closest(".product-buy-buttons, [data-proto-buy-buttons-suppressed='true']")) {
+      const host = stickySentinelHost();
+      if (host && existing.parentElement !== host) host.appendChild(existing);
+    }
+    return;
+  }
   // Real ATC still present (theme hasn't wiped yet) — leave it; we'll re-check after swaps.
   if (existing && existing.getAttribute(STICKY_SENTINEL_ATTR) !== "true") return;
 
-  const host =
-    document.querySelector<HTMLElement>(".product-buy-buttons") ??
-    document.querySelector<HTMLElement>('form[action*="/cart/add"]') ??
-    document.body;
+  const host = stickySentinelHost();
+  if (!host) return;
 
   const sentinel = document.createElement("button");
   sentinel.type = "button";
   sentinel.id = "AddToCart";
   sentinel.name = "add";
+  sentinel.className = "single-add-to-cart-button";
   sentinel.setAttribute(STICKY_SENTINEL_ATTR, "true");
   sentinel.setAttribute("aria-hidden", "true");
   sentinel.tabIndex = -1;
-  // Must remain measurable by jQuery : offset() needs an in-DOM box. Avoid display:none.
+  // Measurable box for jQuery offset(); never display:none / visibility:hidden.
   sentinel.style.cssText =
-    "position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important;overflow:hidden!important;border:0!important;padding:0!important;margin:0!important;clip:rect(0 0 0 0)!important;";
+    "position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important;overflow:hidden!important;border:0!important;padding:0!important;margin:0!important;visibility:visible!important;display:block!important;clip:rect(0 0 0 0)!important;";
   host.appendChild(sentinel);
+}
+
+function stickySentinelHost(): HTMLElement | null {
+  return (
+    document.querySelector<HTMLElement>(
+      ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons",
+    ) ??
+    document.querySelector<HTMLElement>(".thb-product-detail") ??
+    document.body
+  );
 }
 
 function removeStickyAtcSentinel() {
@@ -445,7 +501,7 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
       target.insertParent.insertBefore(standalone, target.beforeNode);
     }
     suppressThemeConfigureUi(target.hideRoots);
-    // Theme may have just wiped #AddToCart; keep a sentinel for Sticky ATC Bar's offset().top.
+    // Theme may have just wiped #AddToCart; keep a sentinel + retarget Sticky ATC selectors.
     ensureStickyAtcSentinel();
     return;
   }
@@ -455,6 +511,8 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
   restoreThemeBuyButtonsRegion();
   restoreAddToCartButtons();
   suppressLegacyConfigureOnly();
+  // Real ATC is back — still retarget satcb away from missing `.product-info` selectors.
+  patchStickyAtcSelectors();
 
   standalone.classList.remove("proto-v2-inline-slot");
   standalone.classList.add("proto-v2-hide-unstrung");
