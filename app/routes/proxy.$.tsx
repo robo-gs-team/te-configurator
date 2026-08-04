@@ -60,6 +60,16 @@ async function resolveShopDomain(request: Request): Promise<string | null> {
   return null;
 }
 
+/**
+ * The cold, snapshot-less path here does real Shopify enrichment across an entire string
+ * catalog, which can outrun Vercel's default serverless limit. That default is what made a
+ * missing snapshot permanent rather than self-healing: the invocation was killed mid-enrichment,
+ * so it never responded AND never finished the background rebuild it schedules — leaving the
+ * next shopper to repeat the same doomed work. The ceiling only has to be high enough for that
+ * first rebuild to land once; every request afterwards takes the snapshot path in milliseconds.
+ */
+export const config = { maxDuration: 60 };
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const shopDomain = await resolveShopDomain(request);
   if (!shopDomain) {
@@ -113,6 +123,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       // Collection lookup and product images require an installed app session.
     }
 
+    // Preorder metafields are a Shopify round-trip that neither depends on nor feeds the
+    // configurator lookup, so start it NOW and collect it further down. Awaited in sequence it
+    // added its full latency to every uncached Configure click — including clicks that go on to
+    // serve a ready-made snapshot and otherwise touch Shopify not at all. `.catch` keeps this a
+    // best-effort extra: a missing preorder note is a merchandising annoyance, a failed catalog
+    // fetch is a lost sale, and an abandoned rejected promise would crash the invocation on the
+    // not-linked early return below.
+    const preorderPromise: Promise<string[]> = admin
+      ? getPreorderVariantIds(admin, productId).catch(() => [])
+      : Promise.resolve([]);
+
     const lookup = await lookupConfiguratorForProduct(shopDomain, productId, admin);
 
     if (lookup.status === "inactive") {
@@ -143,9 +164,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }).enrichedSnapshot;
 
     // Preorder flags are variant-level metafields, so they can't live in the per-configurator
-    // snapshot without going stale per racquet; resolved per request instead, then cached with the
-    // response below like everything else on this path.
-    const preorderVariantIds = admin ? await getPreorderVariantIds(admin, productId) : [];
+    // snapshot without going stale per racquet; resolved per request instead (started above,
+    // overlapping the lookup), then cached with the response below like everything else here.
+    const preorderVariantIds = await preorderPromise;
 
     if (snap) {
       try {
