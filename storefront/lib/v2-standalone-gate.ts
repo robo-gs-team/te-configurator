@@ -2,12 +2,12 @@
  * v2-standalone-gate.ts
  *
  * Visibility + ATC-slot placement for the v2 standalone "Configure Racquet" (gear) button:
- * shows it when the shopper has the page's real Strung/Unstrung control set to "Strung" —
+ * shows it only when the shopper has the page's real Strung/Unstrung control set to "Strung" —
  * and when shown, moves that gear button into the theme Add-to-Cart slot so it replaces the
- * plain Configure / ATC beside quantity. On Unstrung it hides and restores the theme buy button.
+ * plain Configure / ATC beside quantity. On Unstrung it returns to its original spot and
+ * restores the theme buy button.
  *
- * Never writes to the Strung/Unstrung control it reads (except ensureStringingIsStrung on click).
- * Safe alongside the theme's own picker.
+ * Never writes to the Strung/Unstrung control it reads. Safe alongside the theme's own picker.
  */
 
 import {
@@ -157,7 +157,7 @@ export function ensureStringingIsStrung(): boolean {
   return false;
 }
 
-/** Show Configure in the ATC slot when Strung; hide it and restore ATC when Unstrung. */
+/** Show/hide ATC replacement based on Strung/Unstrung — Configure itself stays visible when linked. */
 function applyVisibility() {
   // Skip class + slot updates while Configure is opening — relocating the button mid-open races
   // the click handler and can drop the modal open / loading feedback (see data-proto-configuring
@@ -165,12 +165,12 @@ function applyVisibility() {
   if (document.documentElement.hasAttribute("data-proto-configuring")) return;
 
   const value = getStringingValue();
-  // Strung (or no stringing control) → Configure owns the ATC cell. Unstrung → hide Configure and
-  // leave the theme Add to cart alone so shoppers can buy without a string job.
+  // Replace ATC only when Strung (or when there is no stringing control). Unstrung keeps ATC so
+  // shoppers can still buy without stringing — but the Configure button stays visible either way
+  // (default Unstrung used to hide it entirely, which looked like a missing button on mobile).
   const replaceAddToCart = value === null || value === "strung";
-  const hideOnUnstrung = value === "unstrung";
   document.querySelectorAll<HTMLElement>(".proto-v2-standalone-wrapper").forEach((wrapper) => {
-    wrapper.classList.toggle("proto-v2-hide-unstrung", hideOnUnstrung);
+    wrapper.classList.remove("proto-v2-hide-unstrung");
   });
   syncStandaloneConfigureSlot(replaceAddToCart);
 }

@@ -36,7 +36,7 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   flex-direction: column;
   justify-content: flex-end;
   position: relative;
-  z-index: 40;
+  z-index: 30;
   pointer-events: auto;
 }
 
@@ -70,7 +70,7 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   flex-direction: column;
   justify-content: flex-end;
   position: relative;
-  z-index: 40;
+  z-index: 30;
   pointer-events: auto;
 }
 
@@ -98,16 +98,11 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
 }
 
 html[data-proto-v2-atc-slot] .product-buy-buttons,
-[data-proto-buy-buttons-suppressed="true"] {
-  /* Keep the grid cell reserved — display:none frees it and lets inventory steal clicks. */
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-
 html[data-proto-v2-atc-slot] button[name="configure"],
 html[data-proto-v2-atc-slot] #ProductPopup-Configurator,
 html[data-proto-v2-atc-slot] #ProductPopup-Configurator-Hybrid,
-html[data-proto-v2-atc-slot] .product-popup-modal__opener[data-modal*="Configurator"] {
+html[data-proto-v2-atc-slot] .product-popup-modal__opener[data-modal*="Configurator"],
+[data-proto-buy-buttons-suppressed="true"] {
   display: none !important;
   pointer-events: none !important;
 }

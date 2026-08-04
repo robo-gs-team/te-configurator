@@ -628,13 +628,14 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
  * button — prevents acting on a click that landed on a visually-hidden button.
  */
 function isConfigureTriggerVisible(trigger: HTMLElement): boolean {
-  // Standalone Configure is hidden on Unstrung via proto-v2-hide-unstrung / display:none.
+  // Standalone Configure stays visible whenever linked (including default Unstrung). Only the
+  // wrapper's own hidden flag / disconnection matters — do not treat proto-v2-hide-unstrung as
+  // a hard block (that class is no longer applied for hide, but may linger from older sessions).
   const standalone = trigger.hasAttribute("data-proto-v2-standalone");
   if (standalone) {
     if (trigger.hasAttribute("hidden")) return false;
     const wrap = trigger.closest<HTMLElement>(".proto-v2-standalone-wrapper");
     if (wrap?.hasAttribute("hidden")) return false;
-    if (wrap?.classList.contains("proto-v2-hide-unstrung")) return false;
     return trigger.isConnected;
   }
 

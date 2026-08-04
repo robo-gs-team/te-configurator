@@ -313,13 +313,10 @@ function suppressLegacyConfigureOnly() {
 
 function suppressThemeConfigureUi(hideRoots: HTMLElement[]) {
   for (const root of hideRoots) {
+    if (root.getAttribute(BUY_BUTTONS_SUPPRESSED_ATTR) === "true") continue;
     root.setAttribute(BUY_BUTTONS_SUPPRESSED_ATTR, "true");
     root.setAttribute("aria-hidden", "true");
-    // Keep the node in the CSS grid (do NOT display:none). Freeing the buy-buttons cell lets
-    // auto-placed siblings (inventory notice, etc.) occupy it and steal Configure clicks.
-    root.style.removeProperty("display");
-    root.style.setProperty("visibility", "hidden", "important");
-    root.style.setProperty("pointer-events", "none", "important");
+    root.style.setProperty("display", "none", "important");
   }
 
   suppressLegacyConfigureOnly();
@@ -333,16 +330,15 @@ function restoreThemeBuyButtonsRegion() {
       el.removeAttribute(BUY_BUTTONS_SUPPRESSED_ATTR);
       el.removeAttribute("aria-hidden");
       el.style.removeProperty("display");
-      el.style.removeProperty("visibility");
-      el.style.removeProperty("pointer-events");
     });
 }
 
 /**
- * Place the v2 gear Configure button for the current Strung/Unstrung choice.
+ * Keep the v2 gear Configure button visible whenever the product is linked.
  *
- * - Strung: sit in the `buy-buttons` grid cell (beside quantity), hide theme ATC/legacy Configure.
- * - Unstrung: park above the buy grid and hide Configure (`proto-v2-hide-unstrung`); ATC returns.
+ * - Strung: sit in the `buy-buttons` grid cell (beside quantity), hide theme ATC.
+ * - Unstrung: sit as a normal block *above* the buy grid (not a grid item) so we never stack on
+ *   top of "Choose Your Stringing" in the theme's `configurator` row; ATC stays available.
  *
  * IMPORTANT: never insert inside `.product-buy-buttons` — the theme replaces that node's
  * innerHTML on every Strung/Unstrung change and would destroy our button.
@@ -376,9 +372,9 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
   }
 
   const target = findStandaloneSlotTarget();
+  standalone.classList.remove("proto-v2-hide-unstrung");
   standalone.hidden = false;
   standalone.style.removeProperty("display");
-  // Inline visibility must clear so CSS (linked / hide-unstrung / inline-slot) can win.
   standalone.style.removeProperty("visibility");
 
   if (!target) {
@@ -391,7 +387,6 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
 
   if (replaceAddToCart) {
     // Strung → own the ATC cell beside quantity.
-    standalone.classList.remove("proto-v2-hide-unstrung");
     standalone.classList.add("proto-v2-inline-slot");
     standalone.dataset.protoGridArea = "buy-buttons";
     standalone.style.gridArea = "buy-buttons";
@@ -406,13 +401,13 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
     return;
   }
 
-  // Unstrung → park above the buy grid, restore ATC, hide Configure (nothing to configure).
+  // Unstrung → normal flow above the buy grid (never grid-area: configurator — that overlaps
+  // the stringing dropdown on Tennis Express).
   restoreThemeBuyButtonsRegion();
   restoreAddToCartButtons();
   suppressLegacyConfigureOnly();
 
   standalone.classList.remove("proto-v2-inline-slot");
-  standalone.classList.add("proto-v2-hide-unstrung");
   standalone.style.removeProperty("grid-area");
   delete standalone.dataset.protoGridArea;
 
