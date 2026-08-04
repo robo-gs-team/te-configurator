@@ -144,18 +144,18 @@ BEGIN
   INSERT INTO "ThemeSetting" (
     id, "shopId", "buttonEnabled", "buttonLabel", "buttonBgColor", "buttonTextColor",
     "buttonRadius", "buttonPosition", "modalTheme", "modalAccent", "overlayBlur",
-    "fontFamily", "customCss"
+    "fontFamily", "mobileStringCount", "customCss"
   )
   SELECT * FROM dblink(old_conn, $q$
     SELECT id, "shopId", "buttonEnabled", "buttonLabel", "buttonBgColor", "buttonTextColor",
            "buttonRadius", "buttonPosition", "modalTheme", "modalAccent", "overlayBlur",
-           "fontFamily", "customCss"
+           "fontFamily", "mobileStringCount", "customCss"
     FROM "ThemeSetting"
   $q$) AS t(
     id text, "shopId" text, "buttonEnabled" boolean, "buttonLabel" text,
     "buttonBgColor" text, "buttonTextColor" text, "buttonRadius" text,
     "buttonPosition" text, "modalTheme" text, "modalAccent" text, "overlayBlur" integer,
-    "fontFamily" text, "customCss" text
+    "fontFamily" text, "mobileStringCount" integer, "customCss" text
   )
   ON CONFLICT (id) DO NOTHING;
 

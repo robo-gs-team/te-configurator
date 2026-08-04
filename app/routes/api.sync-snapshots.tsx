@@ -9,9 +9,28 @@ import { unauthenticated } from "~/shopify.server";
 // Re-syncs every active configurator's enriched snapshot so shopper data stays
 // fresh even if Shopify product prices/images change without a merchant re-save.
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const secret = process.env.CRON_SECRET;
+  const secret = process.env.CRON_SECRET?.trim();
   const authHeader = request.headers.get("authorization");
-  if (!secret || authHeader !== `Bearer ${secret}`) {
+
+  // Distinguish "misconfigured" from "rejected". Both must still return 401 — never leak which
+  // one to a caller — but they need very different fixes, and collapsing them into one silent
+  // response is how this job sat dead for weeks: Vercel fired it nightly, the endpoint rejected
+  // every call because CRON_SECRET was unset, and nothing anywhere said so. Snapshots then only
+  // rebuilt on merchant save, and any configurator never saved since its creation served every
+  // PDP through slow live enrichment.
+  if (!secret) {
+    console.error(
+      "[sync-snapshots] CRON_SECRET is not set — the nightly snapshot refresh CANNOT run. " +
+        "Set it in the Vercel project's environment variables and redeploy; /healthz reports " +
+        "whether the running deployment can see it.",
+    );
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (authHeader !== `Bearer ${secret}`) {
+    console.error(
+      "[sync-snapshots] Rejected a request with a missing or mismatched bearer token. If this " +
+        "is the Vercel cron, CRON_SECRET was changed without redeploying.",
+    );
     return json({ error: "Unauthorized" }, { status: 401 });
   }
 
