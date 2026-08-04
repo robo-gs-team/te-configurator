@@ -111,3 +111,9 @@ html[data-proto-v2-atc-slot] .product-popup-modal__opener[data-modal*="Configura
   display: none !important;
   pointer-events: none !important;
 }
+
+/* Empty Alia promo shells steal Configure clicks at max z-index. */
+[id^="alia-root"][role="dialog"]:empty,
+[id^="alia-root"][data-proto-inert-overlay="1"] {
+  pointer-events: none !important;
+}

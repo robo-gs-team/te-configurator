@@ -6,8 +6,11 @@
  * fails to render or is dismissed incorrectly. That shell still has pointer-events
  * and sits above everything — Configure looks fine but every click hits the overlay.
  *
- * We only neutralize shells that are clearly inert (no children). Real popups with
- * content are left alone.
+ * Alia may also RESET the inline style after we neutralize it. We therefore re-apply
+ * on every pass (and observe style attribute mutations), not just the first time.
+ *
+ * We only neutralize shells that are clearly inert (no meaningful children). Real
+ * popups with content are left alone.
  */
 
 const MARK = "data-proto-inert-overlay";
@@ -37,6 +40,26 @@ function looksLikePromoShell(el: HTMLElement): boolean {
   return false;
 }
 
+/** True when the dialog has no real UI — empty or only whitespace/comment nodes. */
+function isEffectivelyEmpty(el: HTMLElement): boolean {
+  if (el.childElementCount === 0) return true;
+  // Some widgets mount a single empty wrapper child before content arrives.
+  if (el.childElementCount === 1) {
+    const child = el.firstElementChild as HTMLElement | null;
+    if (child && child.childElementCount === 0 && !(child.textContent || "").trim()) {
+      return true;
+    }
+  }
+  return !(el.textContent || "").trim() && el.querySelectorAll("img, iframe, button, a, input").length === 0;
+}
+
+function applyInert(el: HTMLElement): void {
+  // Always re-apply — Alia often rewrites the whole style="" attribute and wipes pe:none.
+  el.style.setProperty("pointer-events", "none", "important");
+  el.setAttribute(MARK, "1");
+  el.setAttribute("aria-hidden", "true");
+}
+
 /** Disable pointer events on empty full-screen promo shells that would steal Configure clicks. */
 export function neutralizeInertOverlays(): void {
   const candidates = document.querySelectorAll<HTMLElement>(
@@ -45,33 +68,63 @@ export function neutralizeInertOverlays(): void {
 
   for (const el of candidates) {
     if (el.closest("#proto-configurator-root, .proto-v2-standalone-wrapper")) continue;
-    if (el.childElementCount > 0) continue;
     if (!looksLikePromoShell(el) && !el.id?.startsWith("alia-root")) continue;
+    if (!isEffectivelyEmpty(el)) continue;
     if (!isFullViewportShell(el)) continue;
-    if (el.getAttribute(MARK) === "1") continue;
-
-    el.style.setProperty("pointer-events", "none", "important");
-    el.setAttribute(MARK, "1");
-    // Keep it out of the accessibility tree so screen readers don't announce an empty dialog.
-    el.setAttribute("aria-hidden", "true");
+    applyInert(el);
   }
 }
 
 let overlayObserver: MutationObserver | null = null;
+let keepAliveTimer: number | null = null;
 
-/** Watch for late-injected empty promo shells (Alia mounts after first paint). */
+/** Watch for late-injected / style-reset empty promo shells (Alia mounts and rewrites styles). */
 export function watchInertOverlays(): void {
   neutralizeInertOverlays();
-  if (overlayObserver || typeof MutationObserver === "undefined") return;
+  if (typeof MutationObserver === "undefined") return;
 
-  let queued = false;
-  overlayObserver = new MutationObserver(() => {
-    if (queued) return;
-    queued = true;
-    window.requestAnimationFrame(() => {
-      queued = false;
-      neutralizeInertOverlays();
+  if (!overlayObserver) {
+    let queued = false;
+    overlayObserver = new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      window.requestAnimationFrame(() => {
+        queued = false;
+        neutralizeInertOverlays();
+      });
     });
-  });
-  overlayObserver.observe(document.documentElement, { childList: true, subtree: true });
+    // childList: new alia roots; attributes: Alia rewriting style / wiping pe:none.
+    overlayObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class", "hidden", "aria-hidden"],
+    });
+  }
+
+  // Belt-and-braces: Alia sometimes mutates styles in ways that coalesce poorly with rAF.
+  // Re-assert for a short window after boot / Strung changes.
+  if (keepAliveTimer == null) {
+    let ticks = 0;
+    keepAliveTimer = window.setInterval(() => {
+      neutralizeInertOverlays();
+      ticks += 1;
+      if (ticks >= 20) {
+        // ~10s at 500ms — enough for late promo mounts; observer covers the rest.
+        if (keepAliveTimer != null) {
+          window.clearInterval(keepAliveTimer);
+          keepAliveTimer = null;
+        }
+      }
+    }, 500);
+  }
+}
+
+/** Re-arm the short keep-alive window (call on Strung selection / Configure show). */
+export function rearmInertOverlayWatch(): void {
+  if (keepAliveTimer != null) {
+    window.clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+  watchInertOverlays();
 }
