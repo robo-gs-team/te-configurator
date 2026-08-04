@@ -334,11 +334,10 @@ function restoreThemeBuyButtonsRegion() {
 }
 
 /**
- * Keep the v2 gear Configure button visible whenever the product is linked.
+ * Place the v2 gear Configure button for the current Strung/Unstrung choice.
  *
- * - Strung: sit in the `buy-buttons` grid cell (beside quantity), hide theme ATC.
- * - Unstrung: sit as a normal block *above* the buy grid (not a grid item) so we never stack on
- *   top of "Choose Your Stringing" in the theme's `configurator` row; ATC stays available.
+ * - Strung: sit in the `buy-buttons` grid cell (beside quantity), hide theme ATC/legacy Configure.
+ * - Unstrung: park above the buy grid and hide Configure (`proto-v2-hide-unstrung`); ATC returns.
  *
  * IMPORTANT: never insert inside `.product-buy-buttons` — the theme replaces that node's
  * innerHTML on every Strung/Unstrung change and would destroy our button.
@@ -372,9 +371,9 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
   }
 
   const target = findStandaloneSlotTarget();
-  standalone.classList.remove("proto-v2-hide-unstrung");
   standalone.hidden = false;
   standalone.style.removeProperty("display");
+  // Inline visibility must clear so CSS (linked / hide-unstrung / inline-slot) can win.
   standalone.style.removeProperty("visibility");
 
   if (!target) {
@@ -387,6 +386,7 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
 
   if (replaceAddToCart) {
     // Strung → own the ATC cell beside quantity.
+    standalone.classList.remove("proto-v2-hide-unstrung");
     standalone.classList.add("proto-v2-inline-slot");
     standalone.dataset.protoGridArea = "buy-buttons";
     standalone.style.gridArea = "buy-buttons";
@@ -401,13 +401,13 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
     return;
   }
 
-  // Unstrung → normal flow above the buy grid (never grid-area: configurator — that overlaps
-  // the stringing dropdown on Tennis Express).
+  // Unstrung → park above the buy grid, restore ATC, hide Configure (nothing to configure).
   restoreThemeBuyButtonsRegion();
   restoreAddToCartButtons();
   suppressLegacyConfigureOnly();
 
   standalone.classList.remove("proto-v2-inline-slot");
+  standalone.classList.add("proto-v2-hide-unstrung");
   standalone.style.removeProperty("grid-area");
   delete standalone.dataset.protoGridArea;
 
