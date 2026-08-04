@@ -82,6 +82,22 @@ type ConfiguratorCandidate = {
  * Matching order: explicit product IDs first (no network call), then collection membership
  * (one Shopify API call total, compared in-memory against every candidate) — exclusions checked
  * first in both passes, so an explicitly-excluded product never matches via either path.
+ *
+ * TIE-BREAKING IS DELIBERATE, NOT INCIDENTAL. When more than one configurator matches the same
+ * product (e.g. the product sits in two collections, each assigned to a different configurator),
+ * the winner used to be whichever row the DB happened to return first — unordered, so it could
+ * differ between requests and between serverless instances. On a store where a half-built test
+ * configurator overlapped the production one, that made the storefront a coin flip: the real
+ * configurator (with a prebuilt snapshot) sometimes won, and sometimes the snapshot-less test
+ * one did — whose full-catalog fetch then crawled through live Shopify enrichment or failed
+ * outright. Shoppers saw "Configure opens sometimes".
+ *
+ * Candidates are therefore ranked before either pass runs:
+ *   1. active before inactive — an inactive row must never shadow a live one;
+ *   2. snapshot-backed before snapshot-less — a configurator that has never built a snapshot
+ *      has never been finished/saved; it should not beat a production-ready one;
+ *   3. oldest first — stable, predictable, and favors the long-standing configurator over a
+ *      newly-created experiment when everything else ties.
  * @returns The winning candidate row, or undefined if none matched.
  */
 async function findMatchingConfigurator(
@@ -90,16 +106,24 @@ async function findMatchingConfigurator(
   shopDomain: string,
   admin?: ShopifyAdmin,
 ): Promise<ConfiguratorCandidate | undefined> {
-  const candidates = await prisma.configurator.findMany({
+  const unranked = await prisma.configurator.findMany({
     where: { shopId },
+    // createdAt is the deterministic base order (rule 3); snapshotUpdatedAt is selected only as
+    // a has-a-snapshot signal for rule 2 — never the snapshot text itself, which can be ~300KB.
+    orderBy: { createdAt: "asc" },
     select: {
       id: true,
       isActive: true,
       productIds: true,
       collectionIds: true,
       excludedProductIds: true,
+      snapshotUpdatedAt: true,
     },
   });
+  // Array.prototype.sort is stable, so equal-rank rows keep the createdAt order from the query.
+  const rank = (c: { isActive: boolean; snapshotUpdatedAt: Date | null }) =>
+    (c.isActive ? 0 : 2) + (c.snapshotUpdatedAt ? 0 : 1);
+  const candidates = [...unranked].sort((a, b) => rank(a) - rank(b));
 
   const isExcludedFor = (candidate: ConfiguratorCandidate) =>
     productIdsMatch(parseJson<string[]>(candidate.excludedProductIds ?? "[]", []), productId);
