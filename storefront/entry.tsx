@@ -9,7 +9,6 @@ import { normalizeProductId } from "./lib/product-id";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import { initStringingPageGate } from "./lib/stringing-page-gate";
 import { initV2StandaloneGate, ensureStringingIsStrung } from "./lib/v2-standalone-gate";
-import { neutralizeInertOverlays } from "./lib/inert-overlays";
 import {
   getPageProductId,
   markProductLinked,
@@ -553,27 +552,6 @@ function resolveConfigureTrigger(target: Element): HTMLElement | null {
 }
 
 /**
- * Like resolveConfigureTrigger, but if the event hit an empty full-screen promo shell (Alia)
- * sitting above Configure, neutralize it and re-hit-test so the real button can be found.
- */
-function resolveConfigureTriggerFromEvent(event: Event): HTMLElement | null {
-  const target = event.target;
-  if (!(target instanceof Element)) return null;
-
-  const direct = resolveConfigureTrigger(target);
-  if (direct) return direct;
-
-  // Empty Alia/promo dialogs cover the viewport at max z-index; punch through then peek under.
-  neutralizeInertOverlays();
-  if (!("clientX" in event) || !("clientY" in event)) return null;
-  const x = (event as PointerEvent | MouseEvent).clientX;
-  const y = (event as PointerEvent | MouseEvent).clientY;
-  if (typeof x !== "number" || typeof y !== "number") return null;
-  const under = document.elementFromPoint(x, y);
-  return under ? resolveConfigureTrigger(under) : null;
-}
-
-/**
  * Open the modal for a product. Uses the full-catalog cache (or an in-flight warm-up already
  * started by hover/idle) for an instant-or-near-instant open in the common case; otherwise shows
  * a loading state on the button while fetchAndCacheFullCatalog does a fresh fetch. Surfaces any
@@ -760,11 +738,12 @@ function initConfigureClickDelegation() {
 
   // Undo theme sold-out disables on the way in — before click — so a disabled <button> still
   // receives the subsequent click (disabled controls skip pointer events otherwise).
-  // Also punch through empty Alia promo shells that cover Configure at max z-index.
   document.addEventListener(
     "pointerdown",
     (event) => {
-      const trigger = resolveConfigureTriggerFromEvent(event);
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const trigger = resolveConfigureTrigger(target);
       if (!trigger || trigger.getAttribute("aria-busy") === "true") return;
       protectConfigureTrigger(trigger);
     },
@@ -774,7 +753,10 @@ function initConfigureClickDelegation() {
   document.addEventListener(
     "click",
     (event) => {
-      const trigger = resolveConfigureTriggerFromEvent(event);
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      const trigger = resolveConfigureTrigger(target);
       if (!trigger) return;
 
       handleConfigureClick(trigger, event);
