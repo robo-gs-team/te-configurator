@@ -766,53 +766,135 @@ function initButtons() {
  * Our Configure button used to share that class for styling, so shoppers saw a dead "Sold out"
  * Configure control. Strip those classes, undo sold-out mutations, and restore the label —
  * except while we ourselves have the button in a loading state (aria-busy).
+ *
+ * IMPORTANT: only mutate when something is actually wrong. Blind classList/attribute writes feed
+ * MutationObservers (ours or the theme's) and can freeze the PDP after refresh.
  */
+let protectSuppressDepth = 0;
+/** If a theme script fights our undo in a tight loop, stop observing that trigger. */
+const triggerProtectHits = new WeakMap<HTMLElement, { windowStart: number; count: number }>();
+
 function protectConfigureTrigger(trigger: HTMLElement) {
+  if (protectSuppressDepth > 0) return;
   if (trigger.getAttribute("aria-busy") === "true") return;
   if (document.documentElement.hasAttribute("data-proto-configuring")) return;
 
-  trigger.classList.remove(
+  const stripClasses = [
     "single-add-to-cart-button",
     "product-form__submit",
     "add-to-cart",
-  );
-  if (trigger.hasAttribute("disabled")) {
-    trigger.removeAttribute("disabled");
-  }
-  trigger.removeAttribute("aria-disabled");
+  ] as const;
+  const needsClassStrip = stripClasses.some((c) => trigger.classList.contains(c));
+  const needsEnable =
+    trigger.hasAttribute("disabled") || trigger.hasAttribute("aria-disabled");
 
   const expected =
     trigger.dataset.protoButtonLabel?.trim() ||
     trigger.getAttribute("data-proto-button-label")?.trim() ||
     "Configure";
   const label = trigger.querySelector(".proto-v2-label");
+  let needsLabelFix = false;
   if (label) {
     const text = (label.textContent || "").trim();
-    if (text !== expected && !/loading|adding/i.test(text)) {
-      label.textContent = expected;
+    needsLabelFix = text !== expected && !/loading|adding/i.test(text);
+  } else {
+    needsLabelFix = /sold out/i.test((trigger.textContent || "").trim());
+  }
+
+  if (!needsClassStrip && !needsEnable && !needsLabelFix) return;
+
+  const now = Date.now();
+  let hits = triggerProtectHits.get(trigger);
+  if (!hits || now - hits.windowStart > 1000) {
+    hits = { windowStart: now, count: 0 };
+    triggerProtectHits.set(trigger, hits);
+  }
+  hits.count += 1;
+  if (hits.count > 12) {
+    // Theme is re-applying sold-out state every frame — observing forever freezes the page.
+    const obs = triggerGuards.get(trigger);
+    obs?.disconnect();
+    triggerGuards.delete(trigger);
+    return;
+  }
+
+  protectSuppressDepth += 1;
+  try {
+    if (needsClassStrip) {
+      trigger.classList.remove(...stripClasses);
     }
-  } else if (/sold out/i.test((trigger.textContent || "").trim())) {
-    // Fallback inject path has no .proto-v2-label — restore plain text content.
-    trigger.textContent = expected;
+    if (trigger.hasAttribute("disabled")) {
+      trigger.removeAttribute("disabled");
+    }
+    if (trigger.hasAttribute("aria-disabled")) {
+      trigger.removeAttribute("aria-disabled");
+    }
+    if (needsLabelFix) {
+      if (label) label.textContent = expected;
+      else trigger.textContent = expected;
+    }
+  } finally {
+    protectSuppressDepth -= 1;
   }
 }
 
-let configureTriggerGuard: MutationObserver | null = null;
+/** Per-trigger attribute observers — never watch the whole document for `class` (theme PDPs
+ *  toggle classes constantly; a document-wide observer stalls the main thread after load). */
+const triggerGuards = new WeakMap<HTMLElement, MutationObserver>();
+let triggerDiscoveryGuard: MutationObserver | null = null;
 
-function watchConfigureTriggersForThemeInterference() {
-  if (configureTriggerGuard || typeof MutationObserver === "undefined") return;
-  configureTriggerGuard = new MutationObserver(() => {
-    document
-      .querySelectorAll<HTMLElement>("[data-proto-configurator-trigger]")
-      .forEach(protectConfigureTrigger);
+function watchOneConfigureTrigger(trigger: HTMLElement) {
+  if (typeof MutationObserver === "undefined") return;
+  if (triggerGuards.has(trigger)) return;
+
+  let queued = false;
+  const obs = new MutationObserver(() => {
+    if (protectSuppressDepth > 0 || queued) return;
+    queued = true;
+    window.requestAnimationFrame(() => {
+      queued = false;
+      protectConfigureTrigger(trigger);
+    });
   });
-  // Attributes + childList only — characterData on <html> was far too chatty on this theme and
-  // could stall the main thread while Configure was opening.
-  configureTriggerGuard.observe(document.documentElement, {
-    subtree: true,
-    childList: true,
+  obs.observe(trigger, {
     attributes: true,
     attributeFilter: ["disabled", "aria-disabled", "class"],
+    // Label text lives in a child; watch subtree childList only (not characterData — too noisy).
+    childList: true,
+    subtree: true,
+  });
+  triggerGuards.set(trigger, obs);
+}
+
+function watchConfigureTriggersForThemeInterference() {
+  document
+    .querySelectorAll<HTMLElement>("[data-proto-configurator-trigger]")
+    .forEach((el) => {
+      protectConfigureTrigger(el);
+      watchOneConfigureTrigger(el);
+    });
+
+  if (triggerDiscoveryGuard || typeof MutationObserver === "undefined") return;
+  // childList-only: pick up triggers the theme (re)injects. No attributes — see comment above.
+  let queued = false;
+  triggerDiscoveryGuard = new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    window.requestAnimationFrame(() => {
+      queued = false;
+      document
+        .querySelectorAll<HTMLElement>("[data-proto-configurator-trigger]")
+        .forEach((el) => {
+          if (!triggerGuards.has(el)) {
+            protectConfigureTrigger(el);
+            watchOneConfigureTrigger(el);
+          }
+        });
+    });
+  });
+  triggerDiscoveryGuard.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
   });
 }
 
@@ -955,12 +1037,18 @@ function warmUpForLikelyClick(productId: string): void {
 function applyLinkedUi(productId: string, configurator?: StorefrontConfigurator) {
   if (configurator) configuratorCache.set(productId, configurator);
   markProductLinked();
-  // Start the catalog warm-up ASAP once linked — waiting only for requestIdleCallback left the
-  // first Configure click racing a 250KB App Proxy download that often exceeded the old 7s
-  // abort and looked like an endless spinner. Idle still used for the modal parse/execute.
-  warmUpForLikelyClick(productId);
+  // Warm the catalog after `load` (not during first paint / theme hydration). Waiting only for
+  // requestIdleCallback left Configure racing a ~250KB App Proxy download; starting immediately
+  // on link competed with the theme and made the PDP feel frozen. Prefetch-only for the modal —
+  // do NOT execute the React bundle until click/idle intent (loadModal parses ~220KB).
+  const warmCatalog = () => warmUpForLikelyClick(productId);
+  if (document.readyState === "complete") {
+    window.setTimeout(warmCatalog, 0);
+  } else {
+    window.addEventListener("load", () => window.setTimeout(warmCatalog, 0), { once: true });
+  }
   afterLoadIdle(() => {
-    void loadModal().catch(() => {});
+    prefetchModalBundle();
   });
 
   // Standalone v2 mode: the "Configure Racquet" button is fully self-contained. Skip every piece
