@@ -1,12 +1,4 @@
--- ============================================================================
--- STEP 1 of 2 — create the schema on the NEW (US) Supabase project.
---
--- WHERE: new project -> SQL Editor -> new query -> paste all of this -> Run.
--- Generated from prisma/schema.prisma, so it matches the app exactly.
--- Safe to re-run: every statement is guarded, and the project should be empty anyway.
--- ============================================================================
-
--- CreateSchema
+﻿-- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateTable
@@ -168,7 +160,6 @@ CREATE TABLE "ThemeSetting" (
     "modalAccent" TEXT NOT NULL DEFAULT '#6366f1',
     "overlayBlur" INTEGER NOT NULL DEFAULT 12,
     "fontFamily" TEXT NOT NULL DEFAULT 'system-ui',
-    "mobileStringCount" INTEGER NOT NULL DEFAULT 6,
     "customCss" TEXT,
 
     CONSTRAINT "ThemeSetting_pkey" PRIMARY KEY ("id")
@@ -265,4 +256,45 @@ ALTER TABLE "ThemeSetting" ADD CONSTRAINT "ThemeSetting_shopId_fkey" FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE "Analytics" ADD CONSTRAINT "Analytics_shopId_fkey" FOREIGN KEY ("shopId") REFERENCES "Shop"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Record Prisma migrations as applied (skip if Vercel already ran migrate deploy)
+CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+    "id" VARCHAR(36) NOT NULL,
+    "checksum" VARCHAR(64) NOT NULL,
+    "finished_at" TIMESTAMPTZ,
+    "migration_name" VARCHAR(255) NOT NULL,
+    "logs" TEXT,
+    "rolled_back_at" TIMESTAMPTZ,
+    "started_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+    "applied_steps_count" INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT "_prisma_migrations_pkey" PRIMARY KEY ("id")
+);
+
+INSERT INTO "_prisma_migrations" ("id", "checksum", "finished_at", "migration_name", "applied_steps_count")
+VALUES
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20250605000000_init', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20250610140000_add_collection_ids', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20250619120000_labor_and_option_collections', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20250619140000_product_and_addon_sources', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20260630120000_add_string_collection_ids', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20260630140000_add_snapshot_fields', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20260703163000_add_string_product_ids', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20260706180000_add_excluded_product_ids', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20260706210000_add_allow_out_of_stock', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20260706220000_add_hide_out_of_stock_strings', 1),
+  (gen_random_uuid()::text, 'manual-region-migration', NOW(), '20260707140000_split_oos_toggles_add_policy_backup', 1)
+ON CONFLICT DO NOTHING;
+
+-- Optional hardening (app uses Prisma as postgres role, so RLS does not block it)
+ALTER TABLE "Session" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Shop" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Configurator" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ConfiguratorStep" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "OptionGroup" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Option" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ConditionalRule" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Addon" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ThemeSetting" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Analytics" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "SavedConfiguration" ENABLE ROW LEVEL SECURITY;
 

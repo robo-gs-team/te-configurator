@@ -1,60 +1,73 @@
-# Moving the database to the US — dashboard only
+# Supabase region migration (Sydney → US)
 
-Runs entirely in the Supabase SQL Editor. No terminal, no local checkout.
+Copy schema + data from the old Sydney project into **Tennis Express Configurator V2.0** (`vvgukncmqnlbiddljmfe`).
 
-Both files are generated from `prisma/schema.prisma`, so they match the app exactly.
-Regenerate after any schema change (see the bottom of this file).
+## Before you start
 
-## 1. Create the schema
+1. Keep the old Sydney project — do not delete it yet.
+2. Have both **Session pooler** URIs ready (port **5432**):
+   - Old (Sydney) — source of data
+   - New (US) — already in Vercel as `DIRECT_URL`
+3. Prefer the **Node script** if SQL `dblink` fails (common on hosted Supabase).
 
-New (US) project → **SQL Editor** → new query → paste all of **`1-schema.sql`** → **Run**.
+---
 
-Creates all 11 tables plus their indexes and foreign keys. Nothing else.
+## Path A — Supabase SQL Editor (dashboard)
 
-## 2. Copy the data
+### Step 0 — Check whether tables already exist
 
-Open **`2-copy-data.sql`**. Find the line marked `CHANGE ME` and replace the placeholder
-connection string with the **OLD** project's **Session pooler (port 5432)** URI, password
-included — old project → **Connect** → *Session pooler*.
+1. Open the **new US** project.
+2. Left sidebar → **Table Editor**.
+3. If you already see `Session`, `Shop`, `Configurator`, etc., **skip Step 1** (Vercel `prisma migrate deploy` likely created them). Go to Step 2.
 
-Then paste the whole file into the new project's SQL Editor and **Run**.
+### Step 1 — Create schema (new project only, if tables are missing)
 
-It uses the `dblink` extension so this database reads directly from the old one; nothing is
-downloaded and re-uploaded. Tables are copied parents-first so foreign keys hold at every step,
-and every insert is `ON CONFLICT DO NOTHING`, so re-running after a partial failure is safe.
+1. New US project → **SQL Editor** → **New query**.
+2. Open `1-schema.sql` from this folder, paste all of it, click **Run**.
+3. Success = no errors (or “already exists” means skip and continue).
 
-The last statement prints row counts — compare them against the old project.
+### Step 2 — Copy data from Sydney
 
-### Why the Session pooler and not the Transaction pooler
-dblink holds a connection open across statements. The transaction pooler (6543) hands
-connections between clients between statements and will break that; the session pooler (5432)
-does not.
+1. Open the **old Sydney** project → **Connect** → **ORM** → Prisma.
+2. Copy the **Session** / `DIRECT_URL` string (port **5432**). Keep the real password.
+3. New US project → **SQL Editor** → **New query**.
+4. Open `2-copy-data.sql`.
+5. Replace `'CHANGE ME'` with your old Session pooler string, e.g.:
 
-## 3. Point the app at it
+```sql
+old_conn text := 'postgresql://postgres.OLDREF:OLD_PASSWORD@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
+```
 
-Vercel → Settings → Environment Variables (Production):
+6. Click **Run**.
 
-- `DATABASE_URL` → new **Transaction** pooler (6543) **+ `?pgbouncer=true`**
-- `DIRECT_URL` → new **Session** pooler (5432)
+If you get an error about `dblink`, extensions, or outbound connections → use **Path B** below.
 
-Then **redeploy** — env var changes do not reach the already-running deployment.
+### Step 3 — Verify row counts
 
-Confirm with `/healthz`: expect `"ok": true` and `"db": "ok"`.
+1. On **new US** → SQL Editor → paste and run `3-verify-counts.sql`. Note the counts.
+2. On **old Sydney** → SQL Editor → run the **same** SQL. Counts must match table-by-table.
+3. Especially check **`Session`** (Shopify OAuth) and **`Configurator`**.
 
-## If step 2 fails to connect
+---
 
-The old project is restricted for exceeding its free-plan egress quota, and a restricted project
-may refuse connections outright. If dblink cannot reach it, upgrade the OLD project to Pro just
-long enough to copy off it, then downgrade or delete it.
+## Path B — Local Node script (recommended if dblink fails)
 
-## Notes
+From the repo root (PowerShell), with **both Session pooler (5432)** URLs:
 
-- `_prisma_migrations` is copied too, so future `prisma migrate deploy` runs know these migrations
-  are already applied instead of trying to re-run them.
-- The `Session` table carries the Shopify OAuth session, so the app stays authenticated — no
-  reinstall needed.
-- Keep the old project for a week before deleting it.
+```powershell
+$env:OLD_DATABASE_URL="postgresql://postgres.OLDREF:OLD_PASSWORD@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres"
+$env:NEW_DATABASE_URL="postgresql://postgres.vvgukncmqnlbiddljmfe:te-configurator@aws-0-<REGION>.pooler.supabase.com:5432/postgres"
+node scripts/migrate-database.mjs
+```
 
-## Regenerating
+The script copies all 11 tables and prints old vs new row counts.
 
-    npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script
+---
+
+## After data matches
+
+1. Confirm Vercel Production `DATABASE_URL` / `DIRECT_URL` point at the **new** project (already done if you finished that step).
+2. Redeploy if needed.
+3. Hit `/healthz` → `"db": "ok"`.
+4. Open Shopify admin embed; place a test order.
+5. Keep Sydney ~1 week, then delete.

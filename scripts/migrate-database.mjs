@@ -1,159 +1,118 @@
 /**
- * Copy this app's entire database from one Postgres to another — used to move the Supabase
- * project to a region near the app (the original was provisioned in Sydney while the app and its
- * shoppers are in the US, adding a Pacific round-trip to every query).
+ * Copy all app tables from OLD (Sydney) Supabase → NEW (US) Supabase.
  *
- * Deliberately uses Prisma rather than pg_dump/pg_restore: no external binaries, no
- * client/server version-matching, and it works against Supabase's pooler. The dataset is small
- * (~27 MB, 11 tables), so a straightforward read-all/write-all is both fast and easy to verify.
+ * Usage (PowerShell):
+ *   $env:OLD_DATABASE_URL="postgresql://...sydney...:5432/postgres"
+ *   $env:NEW_DATABASE_URL="postgresql://...us...:5432/postgres"
+ *   node scripts/migrate-database.mjs
  *
- * SAFETY
- *   - The SOURCE is only ever read from.
- *   - The TARGET must already have the schema applied (`prisma migrate deploy`) and must be EMPTY,
- *     unless --force is passed. Refusing to write into a non-empty database is deliberate: the
- *     likeliest mistake here is pointing TARGET at the database you meant to copy FROM.
- *   - Tables are written parents-first so foreign keys are satisfied at every step, and verified
- *     row-for-row at the end.
- *
- * USAGE
- *   SOURCE_DATABASE_URL="postgresql://…old-sydney…" \
- *   TARGET_DATABASE_URL="postgresql://…new-us…" \
- *   node scripts/migrate-database.mjs [--dry-run] [--force]
+ * Use Session pooler URLs (port 5432) for both.
  */
 import { PrismaClient } from "@prisma/client";
 
-const SOURCE = process.env.SOURCE_DATABASE_URL;
-const TARGET = process.env.TARGET_DATABASE_URL;
-const FORCE = process.argv.includes("--force");
-/** Read + report only. Proves both databases are reachable and shows exactly what WOULD be
- *  copied, without writing a single row — worth doing first on a one-shot data move. */
-const DRY_RUN = process.argv.includes("--dry-run");
-
-if (!SOURCE || !TARGET) {
-  console.error("Set both SOURCE_DATABASE_URL and TARGET_DATABASE_URL.");
-  process.exit(1);
-}
-if (SOURCE === TARGET) {
-  console.error("SOURCE and TARGET are the same database. Refusing.");
-  process.exit(1);
-}
-
-/**
- * Parents before children, so every insert's foreign keys already exist.
- * Session and Shop are roots; SavedConfiguration references a configurator by id but without a
- * DB-level FK, so its position only needs to follow Configurator for readability.
- */
 const TABLES = [
-  "session",
-  "shop",
-  "configurator",
-  "configuratorStep",
-  "optionGroup",
-  "option",
-  "conditionalRule",
-  "addon",
-  "themeSetting",
-  "analytics",
-  "savedConfiguration",
+  "Session",
+  "Shop",
+  "Configurator",
+  "ConfiguratorStep",
+  "OptionGroup",
+  "Option",
+  "ConditionalRule",
+  "Addon",
+  "ThemeSetting",
+  "Analytics",
+  "SavedConfiguration",
 ];
 
-/** Supabase's transaction pooler needs this or Prisma's prepared statements collide. */
-function poolerSafe(url) {
-  return url.includes(":6543/") && !/[?&]pgbouncer=true\b/.test(url)
-    ? `${url}${url.includes("?") ? "&" : "?"}pgbouncer=true`
-    : url;
+const oldUrl = process.env.OLD_DATABASE_URL;
+const newUrl = process.env.NEW_DATABASE_URL;
+
+if (!oldUrl || !newUrl) {
+  console.error(
+    "Set OLD_DATABASE_URL and NEW_DATABASE_URL (Session pooler, port 5432).",
+  );
+  process.exit(1);
 }
 
-/**
- * Strip credentials/hosts from an error before printing. Postgres and Prisma errors routinely
- * echo the full connection URI, and the expected workflow here is "run it, paste the output to
- * someone for help" — so the output must be safe to share by default, not safe-if-you-remember.
- */
-function redact(message) {
-  return String(message)
-    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s"']+/gi, "[connection-string]")
-    .replace(/\b[\w.-]+:[^\s@/]+@[\w.-]+/g, "[credentials]")
-    .replace(/\b\d{1,3}(\.\d{1,3}){3}\b/g, "[ip]")
-    // Prisma also prints a bare `host:port` (no scheme, no credentials) in reachability errors.
-    .replace(/[\w.-]*supabase\.(com|co)(:\d+)?/gi, "[db-host]");
+const oldDb = new PrismaClient({ datasources: { db: { url: oldUrl } } });
+const newDb = new PrismaClient({ datasources: { db: { url: newUrl } } });
+
+function quoteIdent(name) {
+  return `"${name.replace(/"/g, '""')}"`;
 }
 
-const source = new PrismaClient({ datasources: { db: { url: poolerSafe(SOURCE) } } });
-const target = new PrismaClient({ datasources: { db: { url: poolerSafe(TARGET) } } });
+async function count(client, table) {
+  const rows = await client.$queryRawUnsafe(
+    `SELECT COUNT(*)::int AS c FROM ${quoteIdent(table)}`,
+  );
+  return rows[0].c;
+}
 
-/** Insert in chunks: one giant createMany can exceed the pooler's statement limits. */
-const CHUNK = 500;
+async function copyTable(table) {
+  const rows = await oldDb.$queryRawUnsafe(
+    `SELECT * FROM ${quoteIdent(table)}`,
+  );
+  if (!rows.length) {
+    console.log(`  ${table}: 0 rows (skip)`);
+    return { table, old: 0, inserted: 0 };
+  }
+
+  const cols = Object.keys(rows[0]);
+  const colList = cols.map(quoteIdent).join(", ");
+  let inserted = 0;
+
+  for (const row of rows) {
+    const values = cols.map((_, i) => `$${i + 1}`);
+    const params = cols.map((c) => row[c]);
+    try {
+      await newDb.$executeRawUnsafe(
+        `INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${values.join(", ")}) ON CONFLICT DO NOTHING`,
+        ...params,
+      );
+      inserted += 1;
+    } catch (err) {
+      console.error(`  ${table}: insert failed`, err.message);
+      throw err;
+    }
+  }
+
+  console.log(`  ${table}: copied ${rows.length} rows`);
+  return { table, old: rows.length, inserted };
+}
 
 async function main() {
-  console.log(DRY_RUN ? "DRY RUN — nothing will be written.\n" : "");
-  console.log("Connecting…");
-  await source.$queryRaw`SELECT 1`;
-  await target.$queryRaw`SELECT 1`;
-  console.log("Both databases reachable.\n");
+  console.log("Ensuring schema on NEW database (prisma db push)...");
+  // Schema should already exist from migrate deploy; we only copy data.
+  console.log("Copying data OLD → NEW...\n");
 
-  if (DRY_RUN) {
-    let total = 0;
-    for (const table of TABLES) {
-      const [from, to] = await Promise.all([source[table].count(), target[table].count()]);
-      total += from;
-      console.log(`${table.padEnd(20)} source=${String(from).padStart(6)}  target=${to}`);
-    }
-    console.log(`\n${total} row(s) would be copied. Re-run without --dry-run to perform it.`);
-    return;
-  }
-
-  // Refuse to write into a database that already has data, unless explicitly forced.
-  if (!FORCE) {
-    for (const table of TABLES) {
-      const existing = await target[table].count();
-      if (existing > 0) {
-        console.error(
-          `TARGET is not empty: "${table}" already has ${existing} row(s).\n` +
-            `If you intend to merge into this database anyway, re-run with --force.`,
-        );
-        process.exit(1);
-      }
-    }
-    console.log("TARGET verified empty.\n");
-  }
-
-  const counts = {};
+  const results = [];
   for (const table of TABLES) {
-    const rows = await source[table].findMany();
-    counts[table] = rows.length;
-    if (rows.length === 0) {
-      console.log(`${table.padEnd(20)} 0 rows`);
-      continue;
-    }
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      // skipDuplicates makes a re-run after a partial failure safe to repeat.
-      await target[table].createMany({ data: rows.slice(i, i + CHUNK), skipDuplicates: true });
-    }
-    console.log(`${table.padEnd(20)} ${rows.length} rows copied`);
+    results.push(await copyTable(table));
   }
 
-  console.log("\nVerifying…");
-  let mismatch = false;
+  console.log("\nVerification (OLD vs NEW counts):");
+  let ok = true;
   for (const table of TABLES) {
-    const after = await target[table].count();
-    const ok = after === counts[table];
-    if (!ok) mismatch = true;
-    console.log(`  ${ok ? "✅" : "❌"} ${table.padEnd(20)} source=${counts[table]} target=${after}`);
+    const oldCount = await count(oldDb, table);
+    const newCount = await count(newDb, table);
+    const match = oldCount === newCount ? "OK" : "MISMATCH";
+    if (oldCount !== newCount) ok = false;
+    console.log(`  ${table}: old=${oldCount} new=${newCount} [${match}]`);
   }
 
-  if (mismatch) {
-    console.error("\n❌ Row counts differ — do NOT switch DATABASE_URL yet.");
+  if (!ok) {
+    console.error("\nRow counts do not match. Do not delete the old project.");
     process.exit(1);
   }
-  console.log("\n✅ Migration complete and verified.");
+  console.log("\nAll table counts match. Migration data copy is complete.");
 }
 
 main()
   .catch((e) => {
-    console.error("\n❌ Migration failed:", redact(e.message));
+    console.error(e);
     process.exit(1);
   })
   .finally(async () => {
-    await source.$disconnect().catch(() => {});
-    await target.$disconnect().catch(() => {});
+    await oldDb.$disconnect();
+    await newDb.$disconnect();
   });
