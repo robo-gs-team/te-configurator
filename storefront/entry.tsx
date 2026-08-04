@@ -557,15 +557,14 @@ function resolveConfigureTrigger(target: Element): HTMLElement | null {
  * sitting above Configure, neutralize it and re-hit-test so the real button can be found.
  */
 function resolveConfigureTriggerFromEvent(event: Event): HTMLElement | null {
-  // Always re-assert first — Alia may have rewritten style="" since the last pass.
-  neutralizeInertOverlays();
-
   const target = event.target;
   if (!(target instanceof Element)) return null;
 
   const direct = resolveConfigureTrigger(target);
   if (direct) return direct;
 
+  // Empty Alia/promo dialogs cover the viewport at max z-index; punch through then peek under.
+  neutralizeInertOverlays();
   if (!("clientX" in event) || !("clientY" in event)) return null;
   const x = (event as PointerEvent | MouseEvent).clientX;
   const y = (event as PointerEvent | MouseEvent).clientY;

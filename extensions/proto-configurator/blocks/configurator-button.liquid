@@ -242,11 +242,10 @@
       pointer-events: none !important;
     }
 
-    /* Empty Alia promo shells — full-viewport, no content — steal Configure clicks at max
-       z-index. JS also neutralizes them; this CSS covers the first paint / style-reset race. */
-    [id^="alia-root"][role="dialog"]:empty,
-    [id^="alia-root"][data-proto-inert-overlay="1"] {
-      pointer-events: none !important;
+    /* Applied by v2-standalone-gate.ts: hidden while Unstrung. Must come AFTER inline-slot so
+       display:none wins when both classes are briefly present. */
+    .proto-v2-standalone-wrapper.proto-v2-hide-unstrung {
+      display: none !important;
     }
   </style>
 {% endif %}

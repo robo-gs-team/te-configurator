@@ -13,7 +13,7 @@
 import {
   syncStandaloneConfigureSlot,
 } from "./configure-placement";
-import { neutralizeInertOverlays, watchInertOverlays, rearmInertOverlayWatch } from "./inert-overlays";
+import { neutralizeInertOverlays, watchInertOverlays } from "./inert-overlays";
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
@@ -166,8 +166,7 @@ function applyVisibility() {
   if (document.documentElement.hasAttribute("data-proto-configuring")) return;
 
   // Empty Alia/promo shells (full-viewport, z-index max, no children) steal clicks from Configure.
-  // Rearm keep-alive so a style-reset from Alia after Strung change gets punched through again.
-  rearmInertOverlayWatch();
+  neutralizeInertOverlays();
 
   const value = getStringingValue();
   // Strung (or no stringing control) → Configure owns the ATC cell. Unstrung → hide Configure and
