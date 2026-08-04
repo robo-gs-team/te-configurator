@@ -143,11 +143,9 @@ export function restoreAddToCartButtons() {
  * Move the Configure button into the theme's Add-to-Cart slot (Strung) or back to its
  * original position (Unstrung).
  *
- * When `showConfigure` is true: records the actions node's original position (once), hides
- * the theme Add to Cart, makes the actions visible + full-width (`--inline`), and inserts it
- * right after the (now hidden) Add to Cart button so Configure sits exactly where Add to Cart
- * was. When false: removes the inline styling, hides the actions, moves it back to its
- * remembered anchor, and restores the theme Add to Cart.
+ * IMPORTANT: never insert inside `.product-buy-buttons` — the theme's product-configurator.js
+ * replaces that node's innerHTML on every Strung/Unstrung change and would destroy our button.
+ * Place as a sibling after that container (same strategy as syncStandaloneConfigureSlot).
  *
  * @param wrapper The gate wrapper whose actions should be relocated.
  * @param showConfigure true for Strung (show Configure in the buy box), false for Unstrung.
@@ -160,10 +158,29 @@ export function syncConfigureButtonSlot(
   if (!actions) return;
 
   if (showConfigure) {
-    const addToCart = findAddToCartButton();
-    const slot = addToCart?.parentElement;
+    const target = findStandaloneSlotTarget();
+    if (!target) {
+      // Fall back to parking beside the ATC button when the theme markup is unfamiliar.
+      const addToCart = findAddToCartButton();
+      const slot = addToCart?.parentElement;
+      if (!slot) return;
 
-    if (!slot) return;
+      if (!actionsAnchors.has(actions)) {
+        actionsAnchors.set(actions, {
+          parent: actions.parentElement ?? wrapper,
+          nextSibling: actions.nextSibling,
+        });
+      }
+
+      suppressAddToCartButtons();
+      actions.hidden = false;
+      actions.setAttribute("aria-hidden", "false");
+      actions.classList.add("proto-configurator-actions--inline");
+      if (actions.parentElement !== slot) {
+        slot.insertBefore(actions, addToCart?.nextSibling ?? null);
+      }
+      return;
+    }
 
     if (!actionsAnchors.has(actions)) {
       actionsAnchors.set(actions, {
@@ -172,18 +189,31 @@ export function syncConfigureButtonSlot(
       });
     }
 
-    suppressAddToCartButtons();
+    // Pull out of a wiped container if a prior pass parked us inside it.
+    if (actions.closest(".product-buy-buttons")) {
+      const anchor = actionsAnchors.get(actions);
+      if (anchor) {
+        anchor.parent.insertBefore(actions, anchor.nextSibling);
+      }
+    }
+
+    document.documentElement.toggleAttribute("data-proto-v2-atc-slot", true);
+    suppressThemeConfigureUi(target.hideRoots);
 
     actions.hidden = false;
     actions.setAttribute("aria-hidden", "false");
     actions.classList.add("proto-configurator-actions--inline");
 
-    if (actions.parentElement !== slot) {
-      slot.insertBefore(actions, addToCart?.nextSibling ?? null);
+    if (
+      actions.parentElement !== target.insertParent ||
+      actions.nextSibling !== target.beforeNode
+    ) {
+      target.insertParent.insertBefore(actions, target.beforeNode);
     }
     return;
   }
 
+  document.documentElement.removeAttribute("data-proto-v2-atc-slot");
   actions.classList.remove("proto-configurator-actions--inline");
   actions.hidden = true;
   actions.setAttribute("aria-hidden", "true");
@@ -193,6 +223,7 @@ export function syncConfigureButtonSlot(
     anchor.parent.insertBefore(actions, anchor.nextSibling);
   }
 
+  restoreThemeBuyButtonsRegion();
   restoreAddToCartButtons();
 }
 

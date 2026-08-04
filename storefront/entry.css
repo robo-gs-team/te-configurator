@@ -22,16 +22,22 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   display: none !important;
 }
 
-/* Inline placement next to the theme's own buy buttons (legacy relocation path).
-   Theme buy row is CSS grid ("quantity buy-buttons"); match that cell + 8px radius.
-   align-self:end lines up with the qty controls under the "Quantity" label. */
+/* Inline placement next to the theme's own buy buttons.
+   Theme buy row is CSS grid ("quantity buy-buttons"). Stretch to own the cell hit-target, then
+   flex-end so the 48px CTA lines up with the quantity +/- controls. */
 .proto-configurator-actions--inline {
   margin-top: 0 !important;
   grid-area: buy-buttons;
-  align-self: end;
+  align-self: stretch;
   --button-border-radius: 8px;
   min-width: 0;
   width: 100%;
+  display: flex !important;
+  flex-direction: column;
+  justify-content: flex-end;
+  position: relative;
+  z-index: 30;
+  pointer-events: auto;
 }
 
 .proto-configurator-actions--inline .proto-configurator-trigger {
@@ -46,18 +52,26 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 31;
 }
 
 .proto-v2-standalone-wrapper.proto-v2-inline-slot {
   margin-top: 0 !important;
   margin-bottom: 0 !important;
   grid-area: buy-buttons;
-  align-self: end;
+  align-self: stretch;
   --button-border-radius: 8px;
   min-width: 0;
   width: 100%;
   visibility: visible !important;
-  display: block !important;
+  display: flex !important;
+  flex-direction: column;
+  justify-content: flex-end;
+  position: relative;
+  z-index: 30;
+  pointer-events: auto;
 }
 
 .proto-v2-inline-slot .proto-v2-configure-trigger {
@@ -72,4 +86,17 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 31;
+}
+
+html[data-proto-v2-atc-slot] .product-buy-buttons,
+html[data-proto-v2-atc-slot] button[name="configure"],
+html[data-proto-v2-atc-slot] #ProductPopup-Configurator,
+html[data-proto-v2-atc-slot] #ProductPopup-Configurator-Hybrid,
+html[data-proto-v2-atc-slot] .product-popup-modal__opener[data-modal*="Configurator"],
+[data-proto-buy-buttons-suppressed="true"] {
+  display: none !important;
+  pointer-events: none !important;
 }

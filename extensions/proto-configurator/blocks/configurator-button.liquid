@@ -175,28 +175,26 @@
       display: none !important;
     }
 
-    /* Applied by v2-standalone-gate.ts: hidden while the shopper's Strung/Unstrung choice is on
-       Unstrung, since there's nothing to configure for an unstrung racquet. */
-    .proto-v2-standalone-wrapper.proto-v2-hide-unstrung {
-      display: none !important;
-    }
-
     /* When Strung, the gear button sits beside quantity (outside .product-buy-buttons so the
        theme's innerHTML swap cannot destroy it). The buy row is a CSS grid
-       ("quantity buy-buttons"). Claim that grid area + the theme's 8px radius. align-self:end
-       drops the CTA to the control row — ATC sits under a visibility-hidden "Buy buttons"
-       label that matches the "Quantity" label height; without that spacer we would top-align
-       with the label instead of the +/- input. */
+       ("quantity buy-buttons"). Stretch to own the full cell hit-target (align-self:end used to
+       shrink-wrap and let the theme buy-buttons layer steal clicks), then flex-end so the 48px
+       CTA still lines up with the quantity +/- row. */
     .proto-v2-standalone-wrapper.proto-v2-inline-slot {
       margin-top: 0 !important;
       margin-bottom: 0 !important;
       grid-area: buy-buttons;
-      align-self: end;
+      align-self: stretch;
       --button-border-radius: 8px;
       min-width: 0;
       width: 100%;
       visibility: visible !important;
-      display: block !important;
+      display: flex !important;
+      flex-direction: column;
+      justify-content: flex-end;
+      position: relative;
+      z-index: 30;
+      pointer-events: auto;
     }
 
     .proto-v2-inline-slot .proto-v2-configure-trigger {
@@ -211,6 +209,9 @@
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
+      pointer-events: auto !important;
+      position: relative;
+      z-index: 31;
     }
 
     .proto-v2-inline-slot .proto-v2-standalone-subtext {
@@ -221,7 +222,15 @@
     html[data-proto-v2-atc-slot] button[name="configure"],
     html[data-proto-v2-atc-slot] #ProductPopup-Configurator,
     html[data-proto-v2-atc-slot] #ProductPopup-Configurator-Hybrid,
-    html[data-proto-v2-atc-slot] .product-popup-modal__opener[data-modal*="Configurator"] {
+    html[data-proto-v2-atc-slot] .product-popup-modal__opener[data-modal*="Configurator"],
+    [data-proto-buy-buttons-suppressed="true"] {
+      display: none !important;
+      pointer-events: none !important;
+    }
+
+    /* Applied by v2-standalone-gate.ts: hidden while Unstrung. Must come AFTER inline-slot so
+       display:none wins when both classes are briefly present. */
+    .proto-v2-standalone-wrapper.proto-v2-hide-unstrung {
       display: none !important;
     }
   </style>

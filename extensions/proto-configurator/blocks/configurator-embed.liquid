@@ -114,10 +114,16 @@
     .proto-configurator-actions--inline {
       margin-top: 0 !important;
       grid-area: buy-buttons;
-      align-self: end;
+      align-self: stretch;
       --button-border-radius: 8px;
       min-width: 0;
       width: 100%;
+      display: flex !important;
+      flex-direction: column;
+      justify-content: flex-end;
+      position: relative;
+      z-index: 30;
+      pointer-events: auto;
     }
 
     .proto-configurator-actions--inline .proto-configurator-trigger {
@@ -132,6 +138,9 @@
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
+      pointer-events: auto !important;
+      position: relative;
+      z-index: 31;
     }
 
     /* Mirror configurator-button.liquid inline-slot rules (embed loads even if the
@@ -140,12 +149,17 @@
       margin-top: 0 !important;
       margin-bottom: 0 !important;
       grid-area: buy-buttons;
-      align-self: end;
+      align-self: stretch;
       --button-border-radius: 8px;
       min-width: 0;
       width: 100%;
       visibility: visible !important;
-      display: block !important;
+      display: flex !important;
+      flex-direction: column;
+      justify-content: flex-end;
+      position: relative;
+      z-index: 30;
+      pointer-events: auto;
     }
 
     .proto-v2-inline-slot .proto-v2-configure-trigger {
@@ -160,6 +174,9 @@
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
+      pointer-events: auto !important;
+      position: relative;
+      z-index: 31;
     }
 
     /* Hide theme legacy Configure while our gear CTA is slotted beside quantity. */
@@ -167,8 +184,10 @@
     html[data-proto-v2-atc-slot] button[name="configure"],
     html[data-proto-v2-atc-slot] #ProductPopup-Configurator,
     html[data-proto-v2-atc-slot] #ProductPopup-Configurator-Hybrid,
-    html[data-proto-v2-atc-slot] .product-popup-modal__opener[data-modal*="Configurator"] {
+    html[data-proto-v2-atc-slot] .product-popup-modal__opener[data-modal*="Configurator"],
+    [data-proto-buy-buttons-suppressed="true"] {
       display: none !important;
+      pointer-events: none !important;
     }
 
     .proto-configurator-button-wrapper {
