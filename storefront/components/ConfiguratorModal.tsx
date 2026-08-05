@@ -96,6 +96,23 @@ export function ConfiguratorModal() {
     };
   }, [isOpen, appProxyUrl, configurator?.id, productId]);
 
+  // Escape closes the modal — the convention every dialog is expected to follow, and the only
+  // dismissal a keyboard user has without tabbing to the close button.
+  //
+  // Bound on `document` in the BUBBLE phase deliberately: a capture-phase listener would fire
+  // before the focused control saw the key, so Escape would tear the modal down mid-interaction
+  // instead of letting an open <select> or a search field cancel itself first. Anything that
+  // handles Escape locally can stop propagation and keep the modal open.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      close();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, close]);
+
   // Build + submit the cart from current store state. On success: track add_to_cart and close
   // the modal. On failure: surface the error in the store (shown in the modal). Passes the
   // stringing bed selections only when the stringing UI is active.
