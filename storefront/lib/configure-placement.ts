@@ -465,7 +465,7 @@ function findStandaloneSlotTarget(): {
 
 /** Snapshot of Unstrung ATC markup so we can restore it after the theme swaps in Configure. */
 let cachedAtcBuyButtonsHtml: string | null = null;
-/** Prevent restore ↔ theme wipe MutationObserver loops. */
+/** Prevent restore ↔ theme wipe MutationObserver loops (keeps Configure clickable/stable). */
 let atcRestoreLockUntil = 0;
 
 function cacheAddToCartBuyButtonsIfPresent() {
@@ -479,10 +479,11 @@ function cacheAddToCartBuyButtonsIfPresent() {
 
 /**
  * On Strung the theme replaces Add to cart with its legacy Configure popup. Keep ATC visible
- * by restoring the last known ATC markup — without hiding/replacing the buy-buttons cell with
- * our gear button (Configure lives in its own grid row above).
+ * by restoring the last known ATC markup — without moving our Configure button (which lives in
+ * its own grid row). Heavy debounce so theme MutationObservers cannot thrash the buy box and
+ * steal Configure clicks.
  */
-function ensureAddToCartBuyButtons() {
+export function keepThemeAddToCartAlive() {
   cacheAddToCartBuyButtonsIfPresent();
   restoreThemeBuyButtonsRegion();
   restoreAddToCartButtons();
@@ -503,12 +504,18 @@ function ensureAddToCartBuyButtons() {
     'button[name="configure"], #ProductPopup-Configurator, .product-popup-modal__opener[data-modal*="Configurator"]',
   );
 
-  // Only rewrite when the theme actually swapped ATC → Configure (avoids pointless churn).
   if (!hasRealAtc && themeConfigure && cachedAtcBuyButtonsHtml) {
     const now = Date.now();
     if (now >= atcRestoreLockUntil) {
-      atcRestoreLockUntil = now + 800;
-      buyButtons.innerHTML = cachedAtcBuyButtonsHtml;
+      atcRestoreLockUntil = now + 2500;
+      document.documentElement.setAttribute("data-proto-atc-restoring", "1");
+      try {
+        buyButtons.innerHTML = cachedAtcBuyButtonsHtml;
+      } finally {
+        window.setTimeout(() => {
+          document.documentElement.removeAttribute("data-proto-atc-restoring");
+        }, 100);
+      }
     }
   }
 
@@ -527,6 +534,11 @@ function ensureAddToCartBuyButtons() {
   } else {
     ensureStickyAtcSentinel();
   }
+}
+
+/** @deprecated use keepThemeAddToCartAlive */
+function ensureAddToCartBuyButtons() {
+  keepThemeAddToCartAlive();
 }
 
 /** Hide the theme's legacy Configure popup triggers without touching Add to cart. */
@@ -640,13 +652,12 @@ export function syncStandaloneConfigureSlot(showConfigure: boolean) {
     standalone.dataset.protoGridArea = "proto-configure";
     standalone.style.gridArea = "proto-configure";
 
-    if (
-      standalone.parentElement !== target.insertParent ||
-      standalone.nextSibling !== target.beforeNode
-    ) {
+    // Only relocate when the parent is wrong — checking nextSibling caused constant re-inserts
+    // as inventory/theme siblings shifted, which made Configure appear unclickable.
+    if (standalone.parentElement !== target.insertParent) {
       target.insertParent.insertBefore(standalone, target.beforeNode);
     }
-    ensureAddToCartBuyButtons();
+    keepThemeAddToCartAlive();
     return;
   }
 

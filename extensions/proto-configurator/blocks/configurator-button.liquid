@@ -218,8 +218,9 @@
       flex-direction: column;
       justify-content: flex-start;
       position: relative;
-      z-index: 40;
-      pointer-events: auto;
+      z-index: 200;
+      pointer-events: auto !important;
+      isolation: isolate;
     }
 
     .proto-v2-below-dropdown .proto-v2-configure-trigger,

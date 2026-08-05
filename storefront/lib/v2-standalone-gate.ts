@@ -12,6 +12,7 @@
 
 import {
   syncStandaloneConfigureSlot,
+  keepThemeAddToCartAlive,
 } from "./configure-placement";
 
 function normalize(value: string): string {
@@ -157,7 +158,6 @@ export function ensureStringingIsStrung(): boolean {
   return false;
 }
 
-/** Show Configure below the stringing dropdown when Strung; hide it when Unstrung. */
 function applyVisibility() {
   // Skip class + slot updates while Configure is opening — relocating the button mid-open races
   // the click handler and can drop the modal open / loading feedback (see data-proto-configuring
@@ -167,6 +167,8 @@ function applyVisibility() {
   // mouseup cancels the click the shopper is in the middle of making. See
   // initConfigurePointerGuard in entry.tsx.
   if (document.documentElement.hasAttribute("data-proto-pointer-down")) return;
+  // Skip while we rewrite buy-buttons HTML — that mutation must not re-enter placement.
+  if (document.documentElement.hasAttribute("data-proto-atc-restoring")) return;
 
   const value = getStringingValue();
   // Strung (or no stringing control) → show Configure above quantity/ATC. Unstrung → hide it.
@@ -203,9 +205,33 @@ function watchForLateRenders() {
 
   if (typeof MutationObserver === "undefined" || domObserver) return;
   let queued = false;
-  domObserver = new MutationObserver(() => {
-    // Coalesce bursts (a theme re-render fires many records) into ONE pass per frame — and run it
-    // off the observer callback so our own DOM writes can't re-enter it synchronously.
+  let onlyBuyButtonsQueued = false;
+  domObserver = new MutationObserver((records) => {
+    if (document.documentElement.hasAttribute("data-proto-atc-restoring")) return;
+    if (document.documentElement.hasAttribute("data-proto-configuring")) return;
+
+    const onlyBuyButtons = records.every((record) => {
+      const node =
+        record.target instanceof Element
+          ? record.target
+          : record.target.parentElement;
+      return !!node?.closest?.(
+        ".product-buy-buttons, [data-proto-sticky-atc-sentinel], [data-proto-atc-suppressed]",
+      );
+    });
+
+    // Buy-buttons churn (theme ATC ↔ Configure swap): only keep ATC alive — do NOT re-place
+    // Configure, or the button jumps every frame and clicks miss.
+    if (onlyBuyButtons && document.documentElement.hasAttribute("data-proto-v2-strung")) {
+      if (onlyBuyButtonsQueued) return;
+      onlyBuyButtonsQueued = true;
+      window.requestAnimationFrame(() => {
+        onlyBuyButtonsQueued = false;
+        keepThemeAddToCartAlive();
+      });
+      return;
+    }
+
     if (queued) return;
     queued = true;
     window.requestAnimationFrame(() => {
