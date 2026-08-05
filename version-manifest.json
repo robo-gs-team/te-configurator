@@ -1,5 +1,5 @@
 {
-  "current": "v2",
+  "current": "v3",
   "history": [
     {
       "version": "v1",
@@ -12,6 +12,12 @@
       "commit": "18cd90cbf6aa68a4be5203897c990d14c6beb4b3",
       "promotedAt": "2026-07-23T19:16:29.653Z",
       "label": "PDP perf fixes + rem/margin CSS isolation fixes (Beta-tested, confirmed working)"
+    },
+    {
+      "version": "v3",
+      "commit": "7ea86816b3ac8698a414278d1e9f4189a5b272f5",
+      "promotedAt": "2026-08-05T14:08:08.737Z",
+      "label": "Fix Configure button unclickable — hold placement during press (verified live)"
     }
   ]
 }
