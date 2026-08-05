@@ -24,6 +24,8 @@ import modalStyles from "./styles.css?inline";
 
 export interface ProtoConfiguratorModalApi {
   open: (productId: string, configurator: StorefrontConfigurator) => void;
+  /** Show the modal shell immediately, before the catalog has been fetched. */
+  openLoading: (productId: string) => void;
   close: () => void;
   restoreShare: (
     productId: string,
@@ -78,6 +80,15 @@ function mount() {
   }
 }
 
+/**
+ * Mount and show the modal before any catalog data exists. Pairs with `open`, which is called
+ * with the real payload once it arrives; until then the modal renders its loading shell.
+ */
+function openLoading(productId: string) {
+  mount();
+  useConfiguratorStore.getState().openLoading(productId);
+}
+
 function open(productId: string, configurator: StorefrontConfigurator) {
   mount();
   useConfiguratorStore.getState().open(productId, configurator);
@@ -108,4 +119,4 @@ function restoreShare(
 }
 
 // Assign in the module body so it survives regardless of the IIFE's return value.
-window.ProtoConfiguratorModal = { open, close, restoreShare };
+window.ProtoConfiguratorModal = { open, openLoading, close, restoreShare };

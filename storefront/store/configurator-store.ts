@@ -38,6 +38,8 @@ interface ConfiguratorStore {
   hybridBeds: { mains: BedSelection; crosses: BedSelection };
 
   open: (productId: string, configurator: StorefrontConfigurator) => void;
+  /** Open with no data yet — paints the shell while the catalog is still in flight. */
+  openLoading: (productId: string) => void;
   close: () => void;
   selectOption: (groupId: string, optionId: string) => void;
   toggleAddon: (addonId: string) => void;
@@ -99,6 +101,22 @@ export const useConfiguratorStore = create<ConfiguratorStore>()((set, get) => ({
             : defaultHybridBeds(catalog, tensionRange),
         });
       },
+
+      /**
+       * Show the modal BEFORE the catalog has arrived. The full payload is ~250KB over the App
+       * Proxy, and `open` cannot run until it lands — so a click produced nothing on screen for
+       * the whole fetch and read as a dead button. This paints the shell immediately; `open`
+       * still does the real work once the data is here, and its sameProduct branch keeps a
+       * shopper's in-progress selections when it does.
+       */
+      openLoading: (productId) =>
+        set({
+          isOpen: true,
+          productId,
+          configurator: null,
+          cartError: null,
+          shareUrl: null,
+        }),
 
       close: () => set({ isOpen: false, cartError: null }),
 
