@@ -45,6 +45,49 @@ const PROXY_HEADERS = {
   "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
 } as const;
 
+/**
+ * Per-stage timings, emitted as a standard `Server-Timing` header so a slow Configure click can
+ * be attributed from the browser's own Network panel instead of guessed at. Chrome renders these
+ * in the request's Timing tab; `X-Proto-Timing` carries the same string for anyone reading raw
+ * headers or a log line.
+ *
+ * This exists because the paths here differ by orders of magnitude — a snapshot hit is a couple
+ * of DB reads, while a snapshot MISS walks an entire product catalog through sequential Shopify
+ * Admin calls — and from outside they are indistinguishable: same URL, same JSON shape, only the
+ * duration differs. `X-Cache` already says WHICH path ran; this says where the time inside it
+ * went, which is the part that actually directs a fix.
+ */
+function startTimings() {
+  const t0 = Date.now();
+  let last = t0;
+  const marks: string[] = [];
+  return {
+    /** Record elapsed time since the previous mark (or request start). */
+    mark(name: string) {
+      const now = Date.now();
+      marks.push(`${name};dur=${now - last}`);
+      last = now;
+    },
+    /** Serialize, appending a total. Safe to call once per response. */
+    header(): string {
+      return [...marks, `total;dur=${Date.now() - t0}`].join(", ");
+    },
+  };
+}
+
+type Timings = ReturnType<typeof startTimings>;
+
+/** Merge the standard proxy headers, a cache-path label, and the timing marks. */
+function proxyHeaders(cache: "HIT" | "SNAPSHOT" | "MISS", timings: Timings) {
+  const timing = timings.header();
+  return {
+    ...PROXY_HEADERS,
+    "X-Cache": cache,
+    "Server-Timing": timing,
+    "X-Proto-Timing": timing,
+  };
+}
+
 async function resolveShopDomain(request: Request): Promise<string | null> {
   const url = new URL(request.url);
   const fromQuery = url.searchParams.get("shop");
@@ -71,7 +114,9 @@ async function resolveShopDomain(request: Request): Promise<string | null> {
 export const config = { maxDuration: 60 };
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
+  const timings = startTimings();
   const shopDomain = await resolveShopDomain(request);
+  timings.mark("shop");
   if (!shopDomain) {
     return json({ error: "Missing shop parameter" }, { status: 400 });
   }
@@ -90,7 +135,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const cacheKey = `${productId}:link`;
     const cached = getCachedProxyResponse(shopDomain, cacheKey);
     if (cached) {
-      return json(cached, { headers: { ...PROXY_HEADERS, "X-Cache": "HIT" } });
+      return json(cached, { headers: proxyHeaders("HIT", timings) });
     }
 
     let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
@@ -100,10 +145,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       // Collection-based matching needs an installed app session; explicit product-id matching
       // (the common case) doesn't.
     }
+    timings.mark("session");
 
     const linkage = await checkProductLinkage(shopDomain, productId, admin);
+    timings.mark("linkage");
     setCachedProxyResponse(shopDomain, cacheKey, linkage);
-    return json(linkage, { headers: PROXY_HEADERS });
+    return json(linkage, { headers: proxyHeaders("MISS", timings) });
   }
 
   if (path.startsWith("product/")) {
@@ -112,7 +159,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // Serve from server-side cache when available — skips all DB + Shopify calls
     const cached = getCachedProxyResponse(shopDomain, productId);
     if (cached) {
-      return json(cached, { headers: { ...PROXY_HEADERS, "X-Cache": "HIT" } });
+      return json(cached, { headers: proxyHeaders("HIT", timings) });
     }
 
     let admin: Awaited<ReturnType<typeof unauthenticated.admin>>["admin"] | undefined;
@@ -122,6 +169,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     } catch {
       // Collection lookup and product images require an installed app session.
     }
+    timings.mark("session");
 
     // Preorder metafields are a Shopify round-trip that neither depends on nor feeds the
     // configurator lookup, so start it NOW and collect it further down. Awaited in sequence it
@@ -135,6 +183,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       : Promise.resolve([]);
 
     const lookup = await lookupConfiguratorForProduct(shopDomain, productId, admin);
+    timings.mark("lookup");
 
     if (lookup.status === "inactive") {
       return json({
@@ -167,6 +216,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // snapshot without going stale per racquet; resolved per request instead (started above,
     // overlapping the lookup), then cached with the response below like everything else here.
     const preorderVariantIds = await preorderPromise;
+    timings.mark("preorder");
 
     if (snap) {
       try {
@@ -191,7 +241,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           },
         };
         setCachedProxyResponse(shopDomain, productId, responseData);
-        return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "SNAPSHOT" } });
+        timings.mark("snapshot");
+        return json(responseData, { headers: proxyHeaders("SNAPSHOT", timings) });
       } catch (err) {
         // Corrupt/truncated snapshot — don't 500 the page; fall through to live enrichment.
         console.error(`Corrupt enrichedSnapshot for product ${productId}:`, err);
@@ -249,7 +300,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     }
 
-    return json(responseData, { headers: { ...PROXY_HEADERS, "X-Cache": "MISS" } });
+    return json(responseData, { headers: proxyHeaders("MISS", timings) });
   }
 
   if (path.startsWith("share/")) {
