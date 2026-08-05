@@ -57,13 +57,29 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   z-index: 31;
 }
 
-/* Configure below the stringing dropdown (full width). Do not replace the ATC cell. */
+/* Configure in its own row above quantity + ATC — never replaces Add to cart. */
+html[data-proto-v2-strung] .product-configurator-quantity-buy-buttons,
+html[data-proto-v2-strung] .thb-product-detail .product-configurator-quantity-buy-buttons {
+  grid-template-areas:
+    "configurator configurator"
+    "proto-configure proto-configure"
+    "quantity buy-buttons" !important;
+  grid-template-columns: 1fr 2fr;
+}
+
+html[data-proto-v2-strung] .product-quantity-buy-buttons:not(.product-configurator-quantity-buy-buttons),
+html[data-proto-v2-strung] .thb-product-detail .product-quantity-buy-buttons:not(.product-configurator-quantity-buy-buttons) {
+  grid-template-areas:
+    "proto-configure proto-configure"
+    "quantity buy-buttons" !important;
+  grid-template-columns: 1fr 2fr;
+}
+
 .proto-v2-standalone-wrapper.proto-v2-below-dropdown,
 .proto-v2-standalone-wrapper.proto-v2-inline-slot {
-  margin-top: 10px !important;
+  margin-top: 8px !important;
   margin-bottom: 12px !important;
-  grid-column: 1 / -1;
-  grid-area: auto;
+  grid-area: proto-configure !important;
   width: 100%;
   max-width: 100%;
   align-self: stretch;

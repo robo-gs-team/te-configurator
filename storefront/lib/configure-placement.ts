@@ -375,59 +375,69 @@ const THEME_CONFIGURE_SELECTORS = [
 ];
 
 /**
- * Tennis Express buy row is a CSS grid (`quantity` | `buy-buttons`). The stringing
- * dropdown lives in `product-configurator` within/near that block.
+ * Tennis Express buy grid (racquet PDPs):
+ *   "configurator configurator"
+ *   "quantity buy-buttons"
  *
- * Place Configure **below the stringing dropdown** and **above** quantity + Add to cart —
- * never in the `buy-buttons` cell (ATC stays visible). Theme `product-configurator.js`
- * still wipes `.product-buy-buttons` on Strung, so we never mount inside that node.
+ * We insert a dedicated `proto-configure` row BETWEEN those so Configure sits above
+ * quantity + Add to cart and never occupies the buy-buttons cell.
  */
 function findStandaloneSlotTarget(): {
   insertParent: HTMLElement;
   beforeNode: ChildNode | null;
   hideRoots: HTMLElement[];
-  /** The whole buy grid — used as a fallback park host. */
   buyGrid: HTMLElement;
 } | null {
   const buyButtons = document.querySelector<HTMLElement>(".product-buy-buttons");
   const grid =
-    buyButtons?.closest<HTMLElement>(
-      ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons",
-    ) ??
     document.querySelector<HTMLElement>(
+      ".product-configurator-quantity-buy-buttons, .product-quantity-buy-buttons",
+    ) ??
+    buyButtons?.closest<HTMLElement>(
       ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons",
     ) ??
     buyButtons?.parentElement;
 
-  // Prefer right after the theme stringing control (below the dropdown).
-  const stringing =
-    document.querySelector<HTMLElement>("product-configurator") ??
-    document.querySelector<HTMLElement>(".product-configurator") ??
-    document
-      .querySelector<HTMLElement>(
-        'select[name="properties[Stringing]"], select[id*="Stringing"]',
-      )
-      ?.closest<HTMLElement>("fieldset, .product-form__input, .select, product-configurator");
+  if (grid) {
+    const stringing =
+      grid.querySelector<HTMLElement>("product-configurator, .product-configurator") ??
+      document.querySelector<HTMLElement>("product-configurator, .product-configurator");
+    const quantity = grid.querySelector<HTMLElement>(".product-quantity");
 
-  if (stringing?.parentElement) {
+    // After stringing (preferred) so we sit under the dropdown; else before quantity/ATC.
+    if (stringing && stringing.parentElement === grid) {
+      return {
+        insertParent: grid,
+        beforeNode: stringing.nextSibling,
+        hideRoots: [],
+        buyGrid: grid,
+      };
+    }
+    if (quantity && quantity.parentElement === grid) {
+      return {
+        insertParent: grid,
+        beforeNode: quantity,
+        hideRoots: [],
+        buyGrid: grid,
+      };
+    }
+    if (buyButtons && buyButtons.parentElement === grid) {
+      return {
+        insertParent: grid,
+        beforeNode: buyButtons,
+        hideRoots: [],
+        buyGrid: grid,
+      };
+    }
     return {
-      insertParent: stringing.parentElement,
-      beforeNode: stringing.nextSibling,
-      hideRoots: [],
-      buyGrid: grid ?? stringing.parentElement,
-    };
-  }
-
-  // Fallback: park above the quantity / ATC grid so ATC is never replaced.
-  if (grid?.parentElement) {
-    return {
-      insertParent: grid.parentElement,
-      beforeNode: grid,
+      insertParent: grid,
+      beforeNode: grid.firstChild,
       hideRoots: [],
       buyGrid: grid,
     };
   }
 
+  // Fallback outside TE markup: park above ATC, never inside buy-buttons.
   if (buyButtons?.parentElement) {
     return {
       insertParent: buyButtons.parentElement,
@@ -455,6 +465,8 @@ function findStandaloneSlotTarget(): {
 
 /** Snapshot of Unstrung ATC markup so we can restore it after the theme swaps in Configure. */
 let cachedAtcBuyButtonsHtml: string | null = null;
+/** Prevent restore ↔ theme wipe MutationObserver loops. */
+let atcRestoreLockUntil = 0;
 
 function cacheAddToCartBuyButtonsIfPresent() {
   const buyButtons = document.querySelector<HTMLElement>(".product-buy-buttons");
@@ -467,7 +479,8 @@ function cacheAddToCartBuyButtonsIfPresent() {
 
 /**
  * On Strung the theme replaces Add to cart with its legacy Configure popup. Keep ATC visible
- * by restoring the last known ATC markup and only suppressing the legacy Configure UI.
+ * by restoring the last known ATC markup — without hiding/replacing the buy-buttons cell with
+ * our gear button (Configure lives in its own grid row above).
  */
 function ensureAddToCartBuyButtons() {
   cacheAddToCartBuyButtonsIfPresent();
@@ -486,8 +499,17 @@ function ensureAddToCartBuyButtons() {
     atc.getAttribute(STICKY_SENTINEL_ATTR) !== "true" &&
     atc.getAttribute("name") !== "configure";
 
-  if (!hasRealAtc && cachedAtcBuyButtonsHtml) {
-    buyButtons.innerHTML = cachedAtcBuyButtonsHtml;
+  const themeConfigure = buyButtons.querySelector(
+    'button[name="configure"], #ProductPopup-Configurator, .product-popup-modal__opener[data-modal*="Configurator"]',
+  );
+
+  // Only rewrite when the theme actually swapped ATC → Configure (avoids pointless churn).
+  if (!hasRealAtc && themeConfigure && cachedAtcBuyButtonsHtml) {
+    const now = Date.now();
+    if (now >= atcRestoreLockUntil) {
+      atcRestoreLockUntil = now + 800;
+      buyButtons.innerHTML = cachedAtcBuyButtonsHtml;
+    }
   }
 
   suppressLegacyConfigureOnly();
@@ -503,7 +525,6 @@ function ensureAddToCartBuyButtons() {
     patchStickyAtcSelectors();
     startStickySelectorPatchLoop();
   } else {
-    // Theme wiped ATC and we have no snapshot yet — keep a measurable sentinel for satcb.
     ensureStickyAtcSentinel();
   }
 }
@@ -607,11 +628,11 @@ export function syncStandaloneConfigureSlot(showConfigure: boolean) {
   }
 
   if (showConfigure) {
-    // Strung → below stringing dropdown, ATC stays.
+    // Strung → own row above quantity + ATC (never the buy-buttons cell).
     standalone.classList.remove("proto-v2-hide-unstrung", "proto-v2-inline-slot");
     standalone.classList.add("proto-v2-below-dropdown");
-    standalone.style.removeProperty("grid-area");
-    delete standalone.dataset.protoGridArea;
+    standalone.dataset.protoGridArea = "proto-configure";
+    standalone.style.gridArea = "proto-configure";
 
     if (
       standalone.parentElement !== target.insertParent ||
