@@ -43,6 +43,10 @@ const SNAPSHOT_REBUILD_COOLDOWN_MS = 10 * 60 * 1000;
 const PROXY_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
+  // Without this, browsers hide X-Cache/X-Proto-Timing from JS on any cross-origin read — which
+  // is every read that bypasses the App Proxy. Diagnosing a slow response then requires guessing
+  // which of three wildly different code paths served it, when the server already says so.
+  "Access-Control-Expose-Headers": "X-Cache, X-Proto-Timing, Server-Timing",
 } as const;
 
 /**
