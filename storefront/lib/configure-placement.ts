@@ -586,6 +586,12 @@ export function syncStandaloneConfigureSlot(showConfigure: boolean) {
   // was a common cause of "I tapped Configure and nothing happened" (trigger detached, feedback
   // host lost, or visibility check racing the MutationObserver).
   if (document.documentElement.hasAttribute("data-proto-configuring")) return;
+  // Same reasoning one step EARLIER in the interaction: a click only fires if mousedown and
+  // mouseup land on the same element, so moving the wrapper mid-press cancels it outright. The
+  // theme rebuilding its buy box on mousedown re-entered this via the MutationObserver and did
+  // exactly that — the button looked and tested perfectly while never responding to a real click.
+  // See initConfigurePointerGuard in entry.tsx.
+  if (document.documentElement.hasAttribute("data-proto-pointer-down")) return;
 
   const standalone = document.querySelector<HTMLElement>(
     ".proto-v2-standalone-wrapper",

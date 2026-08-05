@@ -751,6 +751,62 @@ function handleConfigureClick(trigger: HTMLElement, event: Event) {
  * for any `[data-proto-configurator-trigger]`. Delegation (rather than per-button listeners)
  * keeps it working even after the button is relocated in the DOM. Bound at most once.
  */
+/**
+ * Attribute set on <html> from the moment a press starts on a Configure trigger until shortly
+ * after it ends. Relocation passes check it and stand down while it is present.
+ *
+ * WHY: a browser only fires `click` if mousedown and mouseup resolve to the SAME element. Our own
+ * placement logic MOVES the trigger's wrapper in the DOM (syncStandaloneConfigureSlot), and it is
+ * driven by a MutationObserver — so the theme rebuilding its buy box in response to the very same
+ * mousedown re-entered our relocation, moved the button out from under the press, and the click
+ * was silently cancelled. Nothing looked wrong from outside: no error, no overlay, correct
+ * pointer-events, and elementFromPoint still returned the button. A synthetic click worked
+ * (nothing moves in between), while a real one never landed — which is exactly how this was found.
+ *
+ * The existing `data-proto-configuring` guard covers the window AFTER a click is accepted; this
+ * covers the window BEFORE it, which is where the click was being lost.
+ */
+const POINTER_GUARD_ATTR = "data-proto-pointer-down";
+
+/**
+ * Hold relocation still for the duration of a press on a trigger. Armed only when the press
+ * starts inside a trigger, so ordinary interactions elsewhere (variant swatches, quantity) still
+ * relocate normally.
+ */
+function initConfigurePointerGuard() {
+  if (document.documentElement.dataset.protoPointerGuard) return;
+  document.documentElement.dataset.protoPointerGuard = "true";
+
+  let releaseTimer = 0;
+
+  const arm = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.closest("[data-proto-configurator-trigger]")) return;
+    window.clearTimeout(releaseTimer);
+    document.documentElement.setAttribute(POINTER_GUARD_ATTR, "true");
+  };
+
+  // Release on a short delay, not immediately: `click` is dispatched AFTER mouseup, so lifting
+  // the guard synchronously would reopen the exact race this closes.
+  const release = () => {
+    window.clearTimeout(releaseTimer);
+    releaseTimer = window.setTimeout(() => {
+      document.documentElement.removeAttribute(POINTER_GUARD_ATTR);
+    }, 150);
+  };
+
+  document.addEventListener("pointerdown", arm, true);
+  document.addEventListener("mousedown", arm, true);
+  document.addEventListener("touchstart", arm, { capture: true, passive: true });
+  for (const end of ["pointerup", "mouseup", "touchend", "pointercancel", "touchcancel"]) {
+    document.addEventListener(end, release, true);
+  }
+  // Safety net: a pointer released outside the document never fires an up event here, and a
+  // permanently stuck guard would freeze placement for the rest of the page's life.
+  window.addEventListener("blur", release);
+}
+
 function initConfigureClickDelegation() {
   if (document.documentElement.dataset.protoClickDelegated) return;
   document.documentElement.dataset.protoClickDelegated = "true";
@@ -1244,6 +1300,7 @@ async function initStorefrontUi() {
  */
 function boot() {
   invalidateThemeBlockCache();
+  initConfigurePointerGuard();
   initConfigureClickDelegation();
   initConfigurePrefetchDelegation();
   // In standalone v2 mode the invasive gate must never run — it reads/writes global stringing
