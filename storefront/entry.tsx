@@ -5,6 +5,7 @@ import {
   showConfigureError,
   startConfigureLoadingNote,
 } from "./lib/configure-feedback";
+import { hideInstantOverlay, showInstantOverlay } from "./lib/instant-overlay";
 import { normalizeProductId } from "./lib/product-id";
 import { createStringingGateWrapper } from "./lib/stringing-gate";
 import { initStringingPageGate } from "./lib/stringing-page-gate";
@@ -583,6 +584,13 @@ function resolveConfigureTriggerIncludingTheme(target: Element): HTMLElement | n
 async function openConfigurator(productId: string, trigger: HTMLElement) {
   clearConfigureError(trigger);
   setTriggerLoading(trigger, true);
+  // Painted synchronously, before any await: the React shell below cannot appear until the modal
+  // bundle has parsed, which is precisely what gets starved when a click lands while the page is
+  // still loading third-party scripts. See lib/instant-overlay.
+  let dismissed = false;
+  showInstantOverlay(() => {
+    dismissed = true;
+  });
   // Freeze v2 buy-box relocation while we open — MutationObserver re-runs can move/hide the
   // trigger mid-click and make the open look like a no-op, or detach the feedback host.
   document.documentElement.dataset.protoConfiguring = "1";
@@ -616,7 +624,11 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
     // Note this adds NO extra loading to the page: both requests were already in flight at this
     // point. It only stops the UI waiting on the second one before showing anything.
     const modal = await withDeadline(modalPromise, remaining(), deadlineMsg);
+    // The shopper dismissed the overlay while we were loading — treat that as cancelling the
+    // open rather than yanking a modal up underneath them seconds later.
+    if (dismissed) return;
     if (modal.openLoading) modal.openLoading(productId);
+    hideInstantOverlay();
 
     const result = await withDeadline(catalogPromise, remaining(), deadlineMsg);
 
@@ -643,6 +655,7 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
       err instanceof Error ? err.message : "Failed to open configurator.",
     );
   } finally {
+    hideInstantOverlay();
     delete document.documentElement.dataset.protoConfiguring;
     // Always clear loading UI — even if the trigger node was relocated mid-open, wipe any
     // leftover "Loading your options…" notes still in the buy box.
