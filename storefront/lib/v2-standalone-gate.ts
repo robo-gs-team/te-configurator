@@ -163,6 +163,10 @@ function applyVisibility() {
   // the click handler and can drop the modal open / loading feedback (see data-proto-configuring
   // in entry.tsx openConfigurator).
   if (document.documentElement.hasAttribute("data-proto-configuring")) return;
+  // Likewise while a press is still in progress ON the trigger: relocating between mousedown and
+  // mouseup cancels the click the shopper is in the middle of making. See
+  // initConfigurePointerGuard in entry.tsx.
+  if (document.documentElement.hasAttribute("data-proto-pointer-down")) return;
 
   const value = getStringingValue();
   // Strung (or no stringing control) → show Configure above quantity/ATC. Unstrung → hide it.
