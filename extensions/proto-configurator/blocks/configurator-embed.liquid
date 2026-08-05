@@ -143,25 +143,28 @@
       z-index: 31;
     }
 
-    /* Mirror configurator-button.liquid inline-slot rules (embed loads even if the
-       button block's <style> is absent on a given template). */
+    /* Mirror configurator-button.liquid: Configure below stringing dropdown, ATC stays. */
+    .proto-v2-standalone-wrapper.proto-v2-below-dropdown,
     .proto-v2-standalone-wrapper.proto-v2-inline-slot {
-      margin-top: 0 !important;
-      margin-bottom: 0 !important;
-      grid-area: buy-buttons;
+      margin-top: 10px !important;
+      margin-bottom: 12px !important;
+      grid-column: 1 / -1;
+      grid-area: auto;
+      width: 100%;
+      max-width: 100%;
       align-self: stretch;
       --button-border-radius: 8px;
       min-width: 0;
-      width: 100%;
       visibility: visible !important;
       display: flex !important;
       flex-direction: column;
-      justify-content: flex-end;
+      justify-content: flex-start;
       position: relative;
       z-index: 40;
       pointer-events: auto;
     }
 
+    .proto-v2-below-dropdown .proto-v2-configure-trigger,
     .proto-v2-inline-slot .proto-v2-configure-trigger {
       width: 100% !important;
       border-radius: var(--button-border-radius, 8px) !important;
@@ -179,15 +182,11 @@
       z-index: 31;
     }
 
-    /* Hide theme legacy Configure while our gear CTA is slotted beside quantity.
-       Keep .product-buy-buttons in the grid (visibility:hidden) so auto-placed siblings
-       cannot steal the buy-buttons cell and block Configure clicks. */
-    html[data-proto-v2-atc-slot] .product-buy-buttons,
-    [data-proto-buy-buttons-suppressed="true"] {
-      visibility: hidden !important;
-      pointer-events: none !important;
-    }
-
+    /* Hide theme legacy Configure only — Add to cart stays visible. */
+    html[data-proto-v2-strung] button[name="configure"],
+    html[data-proto-v2-strung] #ProductPopup-Configurator,
+    html[data-proto-v2-strung] #ProductPopup-Configurator-Hybrid,
+    html[data-proto-v2-strung] .product-popup-modal__opener[data-modal*="Configurator"],
     html[data-proto-v2-atc-slot] button[name="configure"],
     html[data-proto-v2-atc-slot] #ProductPopup-Configurator,
     html[data-proto-v2-atc-slot] #ProductPopup-Configurator-Hybrid,

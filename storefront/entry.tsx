@@ -560,7 +560,7 @@ function resolveConfigureTriggerIncludingTheme(target: Element): HTMLElement | n
   const ours = resolveConfigureTrigger(target);
   if (ours) return ours;
 
-  if (!document.documentElement.hasAttribute("data-proto-v2-atc-slot")) return null;
+  if (!document.documentElement.hasAttribute("data-proto-v2-strung")) return null;
   const themeCfg = target.closest<HTMLElement>(
     'button[name="configure"], #ProductPopup-Configurator, #ProductPopup-Configurator-Hybrid, .product-popup-modal__opener[data-modal*="Configurator"], .product-buy-buttons',
   );

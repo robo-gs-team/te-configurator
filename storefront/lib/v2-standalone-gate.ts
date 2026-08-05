@@ -157,7 +157,7 @@ export function ensureStringingIsStrung(): boolean {
   return false;
 }
 
-/** Show Configure in the ATC slot when Strung; hide it and restore ATC when Unstrung. */
+/** Show Configure below the stringing dropdown when Strung; hide it when Unstrung. */
 function applyVisibility() {
   // Skip class + slot updates while Configure is opening — relocating the button mid-open races
   // the click handler and can drop the modal open / loading feedback (see data-proto-configuring
@@ -165,14 +165,13 @@ function applyVisibility() {
   if (document.documentElement.hasAttribute("data-proto-configuring")) return;
 
   const value = getStringingValue();
-  // Strung (or no stringing control) → Configure owns the ATC cell. Unstrung → hide Configure and
-  // leave the theme Add to cart alone so shoppers can buy without a string job.
-  const replaceAddToCart = value === null || value === "strung";
+  // Strung (or no stringing control) → show Configure above quantity/ATC. Unstrung → hide it.
+  const showConfigure = value === null || value === "strung";
   const hideOnUnstrung = value === "unstrung";
   document.querySelectorAll<HTMLElement>(".proto-v2-standalone-wrapper").forEach((wrapper) => {
     wrapper.classList.toggle("proto-v2-hide-unstrung", hideOnUnstrung);
   });
-  syncStandaloneConfigureSlot(replaceAddToCart);
+  syncStandaloneConfigureSlot(showConfigure);
 }
 
 let delegatedChangeBound = false;

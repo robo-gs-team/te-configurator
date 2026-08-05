@@ -119,7 +119,7 @@ function startStickySelectorPatchLoop() {
   patchStickyAtcSelectors();
   if (stickySelectorPatchTimer != null) return;
   stickySelectorPatchTimer = window.setInterval(() => {
-    if (!document.documentElement.hasAttribute("data-proto-v2-atc-slot")) {
+    if (!document.documentElement.hasAttribute("data-proto-v2-strung")) {
       stopStickySelectorPatchLoop();
       return;
     }
@@ -329,8 +329,9 @@ export function syncConfigureButtonSlot(
       }
     }
 
-    document.documentElement.toggleAttribute("data-proto-v2-atc-slot", true);
-    suppressThemeConfigureUi(target.hideRoots);
+    document.documentElement.toggleAttribute("data-proto-v2-strung", true);
+    suppressLegacyConfigureOnly();
+    ensureAddToCartBuyButtons();
 
     actions.hidden = false;
     actions.setAttribute("aria-hidden", "false");
@@ -345,7 +346,7 @@ export function syncConfigureButtonSlot(
     return;
   }
 
-  document.documentElement.removeAttribute("data-proto-v2-atc-slot");
+  document.documentElement.removeAttribute("data-proto-v2-strung");
   actions.classList.remove("proto-configurator-actions--inline");
   actions.hidden = true;
   actions.setAttribute("aria-hidden", "true");
@@ -374,41 +375,65 @@ const THEME_CONFIGURE_SELECTORS = [
 ];
 
 /**
- * Tennis Express buy row is a CSS grid (`quantity` | `buy-buttons`, sometimes with a
- * `configurator` row above). Theme `product-configurator.js` wipes `.product-buy-buttons`
- * innerHTML on Strung/Unstrung, so we never mount inside that node.
+ * Tennis Express buy row is a CSS grid (`quantity` | `buy-buttons`). The stringing
+ * dropdown lives in `product-configurator` within/near that block.
  *
- * Do NOT use `grid-area: configurator` — on TE that row is shared with "Choose Your Stringing"
- * and stacking there overlaps the dropdown (see live PDP).
+ * Place Configure **below the stringing dropdown** and **above** quantity + Add to cart —
+ * never in the `buy-buttons` cell (ATC stays visible). Theme `product-configurator.js`
+ * still wipes `.product-buy-buttons` on Strung, so we never mount inside that node.
  */
 function findStandaloneSlotTarget(): {
   insertParent: HTMLElement;
   beforeNode: ChildNode | null;
   hideRoots: HTMLElement[];
-  /** The whole buy grid — used to park Configure above it when Unstrung. */
+  /** The whole buy grid — used as a fallback park host. */
   buyGrid: HTMLElement;
 } | null {
   const buyButtons = document.querySelector<HTMLElement>(".product-buy-buttons");
   const grid =
     buyButtons?.closest<HTMLElement>(
       ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons",
-    ) ?? buyButtons?.parentElement;
+    ) ??
+    document.querySelector<HTMLElement>(
+      ".product-quantity-buy-buttons, .product-configurator-quantity-buy-buttons",
+    ) ??
+    buyButtons?.parentElement;
 
-  if (grid && buyButtons) {
+  // Prefer right after the theme stringing control (below the dropdown).
+  const stringing =
+    document.querySelector<HTMLElement>("product-configurator") ??
+    document.querySelector<HTMLElement>(".product-configurator") ??
+    document
+      .querySelector<HTMLElement>(
+        'select[name="properties[Stringing]"], select[id*="Stringing"]',
+      )
+      ?.closest<HTMLElement>("fieldset, .product-form__input, .select, product-configurator");
+
+  if (stringing?.parentElement) {
     return {
-      insertParent: grid,
-      beforeNode: buyButtons.nextSibling,
-      hideRoots: [buyButtons],
+      insertParent: stringing.parentElement,
+      beforeNode: stringing.nextSibling,
+      hideRoots: [],
+      buyGrid: grid ?? stringing.parentElement,
+    };
+  }
+
+  // Fallback: park above the quantity / ATC grid so ATC is never replaced.
+  if (grid?.parentElement) {
+    return {
+      insertParent: grid.parentElement,
+      beforeNode: grid,
+      hideRoots: [],
       buyGrid: grid,
     };
   }
 
-  if (grid) {
+  if (buyButtons?.parentElement) {
     return {
-      insertParent: grid,
-      beforeNode: grid.firstChild,
+      insertParent: buyButtons.parentElement,
+      beforeNode: buyButtons,
       hideRoots: [],
-      buyGrid: grid,
+      buyGrid: buyButtons.parentElement,
     };
   }
 
@@ -419,13 +444,68 @@ function findStandaloneSlotTarget(): {
   if (holder?.parentElement) {
     return {
       insertParent: holder.parentElement,
-      beforeNode: holder.nextSibling,
-      hideRoots: [holder],
+      beforeNode: holder,
+      hideRoots: [],
       buyGrid: holder.parentElement,
     };
   }
 
   return null;
+}
+
+/** Snapshot of Unstrung ATC markup so we can restore it after the theme swaps in Configure. */
+let cachedAtcBuyButtonsHtml: string | null = null;
+
+function cacheAddToCartBuyButtonsIfPresent() {
+  const buyButtons = document.querySelector<HTMLElement>(".product-buy-buttons");
+  const atc = document.getElementById("AddToCart");
+  if (!buyButtons || !atc) return;
+  if (atc.getAttribute(STICKY_SENTINEL_ATTR) === "true") return;
+  if (atc.getAttribute("name") === "configure") return;
+  cachedAtcBuyButtonsHtml = buyButtons.innerHTML;
+}
+
+/**
+ * On Strung the theme replaces Add to cart with its legacy Configure popup. Keep ATC visible
+ * by restoring the last known ATC markup and only suppressing the legacy Configure UI.
+ */
+function ensureAddToCartBuyButtons() {
+  cacheAddToCartBuyButtonsIfPresent();
+  restoreThemeBuyButtonsRegion();
+  restoreAddToCartButtons();
+
+  const buyButtons = document.querySelector<HTMLElement>(".product-buy-buttons");
+  if (!buyButtons) {
+    suppressLegacyConfigureOnly();
+    return;
+  }
+
+  const atc = document.getElementById("AddToCart");
+  const hasRealAtc =
+    !!atc &&
+    atc.getAttribute(STICKY_SENTINEL_ATTR) !== "true" &&
+    atc.getAttribute("name") !== "configure";
+
+  if (!hasRealAtc && cachedAtcBuyButtonsHtml) {
+    buyButtons.innerHTML = cachedAtcBuyButtonsHtml;
+  }
+
+  suppressLegacyConfigureOnly();
+
+  const atcAfter = document.getElementById("AddToCart");
+  const restored =
+    !!atcAfter &&
+    atcAfter.getAttribute(STICKY_SENTINEL_ATTR) !== "true" &&
+    atcAfter.getAttribute("name") !== "configure";
+
+  if (restored) {
+    removeStickyAtcSentinel();
+    patchStickyAtcSelectors();
+    startStickySelectorPatchLoop();
+  } else {
+    // Theme wiped ATC and we have no snapshot yet — keep a measurable sentinel for satcb.
+    ensureStickyAtcSentinel();
+  }
 }
 
 /** Hide the theme's legacy Configure popup triggers without touching Add to cart. */
@@ -473,13 +553,14 @@ function restoreThemeBuyButtonsRegion() {
 /**
  * Place the v2 gear Configure button for the current Strung/Unstrung choice.
  *
- * - Strung: sit in the `buy-buttons` grid cell (beside quantity), hide theme ATC/legacy Configure.
- * - Unstrung: park above the buy grid and hide Configure (`proto-v2-hide-unstrung`); ATC returns.
+ * - Strung: show Configure below the stringing dropdown (above quantity + Add to cart).
+ *   Keep Add to cart visible; only suppress the theme's legacy Configure popup.
+ * - Unstrung: hide Configure (`proto-v2-hide-unstrung`); leave ATC alone.
  *
  * IMPORTANT: never insert inside `.product-buy-buttons` — the theme replaces that node's
  * innerHTML on every Strung/Unstrung change and would destroy our button.
  */
-export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
+export function syncStandaloneConfigureSlot(showConfigure: boolean) {
   // While a Configure open is in flight, do not relocate/hide the button — mid-open DOM surgery
   // was a common cause of "I tapped Configure and nothing happened" (trigger detached, feedback
   // host lost, or visibility check racing the MutationObserver).
@@ -490,7 +571,9 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
   );
   if (!standalone || !standalone.isConnected) return;
 
-  document.documentElement.toggleAttribute("data-proto-v2-atc-slot", replaceAddToCart);
+  document.documentElement.toggleAttribute("data-proto-v2-strung", showConfigure);
+  // Legacy attr cleared so old CSS that hid buy-buttons cannot stick around after deploy.
+  document.documentElement.removeAttribute("data-proto-v2-atc-slot");
 
   if (!actionsAnchors.has(standalone)) {
     actionsAnchors.set(standalone, {
@@ -507,26 +590,28 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
     }
   }
 
+  // Always cache ATC while it exists (Unstrung paint / before theme wipe).
+  cacheAddToCartBuyButtonsIfPresent();
+
   const target = findStandaloneSlotTarget();
   standalone.hidden = false;
   standalone.style.removeProperty("display");
-  // Inline visibility must clear so CSS (linked / hide-unstrung / inline-slot) can win.
   standalone.style.removeProperty("visibility");
 
   if (!target) {
     suppressLegacyConfigureOnly();
-    standalone.classList.remove("proto-v2-inline-slot");
+    standalone.classList.remove("proto-v2-below-dropdown", "proto-v2-inline-slot");
     standalone.style.removeProperty("grid-area");
     delete standalone.dataset.protoGridArea;
     return;
   }
 
-  if (replaceAddToCart) {
-    // Strung → own the ATC cell beside quantity.
-    standalone.classList.remove("proto-v2-hide-unstrung");
-    standalone.classList.add("proto-v2-inline-slot");
-    standalone.dataset.protoGridArea = "buy-buttons";
-    standalone.style.gridArea = "buy-buttons";
+  if (showConfigure) {
+    // Strung → below stringing dropdown, ATC stays.
+    standalone.classList.remove("proto-v2-hide-unstrung", "proto-v2-inline-slot");
+    standalone.classList.add("proto-v2-below-dropdown");
+    standalone.style.removeProperty("grid-area");
+    delete standalone.dataset.protoGridArea;
 
     if (
       standalone.parentElement !== target.insertParent ||
@@ -534,28 +619,19 @@ export function syncStandaloneConfigureSlot(replaceAddToCart: boolean) {
     ) {
       target.insertParent.insertBefore(standalone, target.beforeNode);
     }
-    suppressThemeConfigureUi(target.hideRoots);
-    // Theme may have just wiped #AddToCart; keep a sentinel + retarget Sticky ATC selectors.
-    ensureStickyAtcSentinel();
+    ensureAddToCartBuyButtons();
     return;
   }
 
-  // Unstrung → park above the buy grid, restore ATC, hide Configure (nothing to configure).
+  // Unstrung → hide Configure; leave / restore theme ATC.
   removeStickyAtcSentinel();
   restoreThemeBuyButtonsRegion();
   restoreAddToCartButtons();
   suppressLegacyConfigureOnly();
-  // Real ATC is back — still retarget satcb away from missing `.product-info` selectors.
   patchStickyAtcSelectors();
 
-  standalone.classList.remove("proto-v2-inline-slot");
+  standalone.classList.remove("proto-v2-below-dropdown", "proto-v2-inline-slot");
   standalone.classList.add("proto-v2-hide-unstrung");
   standalone.style.removeProperty("grid-area");
   delete standalone.dataset.protoGridArea;
-
-  const grid = target.buyGrid;
-  const host = grid.parentElement;
-  if (host && (standalone.parentElement !== host || standalone.nextSibling !== grid)) {
-    host.insertBefore(standalone, grid);
-  }
 }

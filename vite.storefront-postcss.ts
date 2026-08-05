@@ -22,7 +22,7 @@ import autoprefixer from "autoprefixer";
 // Unscoped: the modal root's own rules, and the PAGE-level rules (button visibility gate + the
 // inline buy-box layout classes) that target the merchant's page, not the modal subtree.
 const EXCLUDE =
-  /proto-configurator-root|proto-configurator-button-wrapper|proto-configurator-actions--inline|proto-v2-inline-slot|proto-v2-standalone-wrapper|data-proto-v2-atc-slot|data-proto-buy-buttons-suppressed/;
+  /proto-configurator-root|proto-configurator-button-wrapper|proto-configurator-actions--inline|proto-v2-below-dropdown|proto-v2-inline-slot|proto-v2-standalone-wrapper|data-proto-v2-strung|data-proto-v2-atc-slot|data-proto-buy-buttons-suppressed/;
 const scopeToModalRoot = {
   postcssPlugin: "proto-scope-to-modal-root",
   Rule(rule: { parent?: { type?: string; name?: string }; selectors: string[] }) {
