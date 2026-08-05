@@ -3,8 +3,10 @@ import { json } from "@vercel/remix";
 import {
   checkProductLinkage,
   ensureShop,
+  getConfiguratorById,
   getConfiguratorForProduct,
   lookupConfiguratorForProduct,
+  lookupConfiguratorSnapshotForProduct,
   getSavedConfiguration,
   getShopThemeSettings,
   saveConfiguration,
@@ -186,7 +188,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       ? getPreorderVariantIds(admin, productId).catch(() => [])
       : Promise.resolve([]);
 
-    const lookup = await lookupConfiguratorForProduct(shopDomain, productId, admin);
+    // Scalars only. The snapshot branch below needs id/name/enrichedSnapshot and nothing else;
+    // the full relation tree is fetched further down ONLY if we fall through to live enrichment.
+    const lookup = await lookupConfiguratorSnapshotForProduct(shopDomain, productId, admin);
     timings.mark("lookup");
 
     if (lookup.status === "inactive") {
@@ -257,16 +261,36 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // this path does real Shopify Admin API work, so it must be a self-terminating state: below,
     // after responding, we rebuild the snapshot in the background (see runAfterResponse) so
     // subsequent requests take the fast snapshot path above instead.
+    //
+    // The relation tree is fetched HERE rather than by the lookup, because this is the only
+    // branch that reads it. Hoisting it into the lookup meant every snapshot hit — effectively
+    // all storefront traffic — also dragged every step, option group and option (each with its
+    // own metadata blob) out of Postgres just to discard them.
+    const full = await getConfiguratorById(lookup.configurator.id);
+    timings.mark("relations");
+    if (!full) {
+      return json(
+        {
+          configurator: null,
+          error:
+            "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
+          productId,
+          code: "not_linked",
+        },
+        { headers: proxyHeaders("MISS", timings) },
+      );
+    }
+
     const [enrichedConfigurator, shop, tensionMap, recommendedMap] = await Promise.all([
       admin
-        ? enrichConfiguratorWithShopifyData(admin, lookup.configurator)
-        : Promise.resolve(lookup.configurator),
+        ? enrichConfiguratorWithShopifyData(admin, full)
+        : Promise.resolve(full),
       ensureShop(shopDomain),
       admin
-        ? resolveRacquetTensionMap(admin, lookup.configurator)
+        ? resolveRacquetTensionMap(admin, full)
         : Promise.resolve<Record<string, TensionRange>>({}),
       admin
-        ? resolveRecommendedStringsMap(admin, lookup.configurator)
+        ? resolveRecommendedStringsMap(admin, full)
         : Promise.resolve({ standard: {}, hybrid: {} } as RecommendedStringsMaps),
     ]);
 
