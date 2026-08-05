@@ -194,8 +194,40 @@ export function ConfiguratorModal() {
 
   const hasAddons = (configurator?.addons.length ?? 0) > 0;
   const isStringing = usesStringingUi(configurator);
-  if (!isOpen || !configurator) {
-    return null;
+
+  if (!isOpen) return null;
+
+  // Open, but the catalog is still in flight (see store.openLoading). Paint the shell now rather
+  // than leaving the shopper on an unchanged page for the length of a ~250KB App Proxy fetch —
+  // that gap is what made a click look like it did nothing. Geometry deliberately matches the
+  // stringing panel below, so the real content replaces this without the dialog resizing.
+  if (!configurator) {
+    return createPortal(
+      <div
+        className="fixed inset-0 flex items-center justify-center proto-anim-fade"
+        style={{ zIndex: 2147483647 }}
+      >
+        <div
+          className="absolute inset-0 proto-anim-fade"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)", backdropFilter: "blur(12px)" }}
+          onClick={close}
+        />
+        <div
+          className="relative w-full overflow-hidden flex flex-col items-center justify-center proto-anim-panel h-full md:h-auto md:min-h-[420px] md:max-h-[92vh] md:max-w-[960px] md:mx-4 md:rounded-[10px] bg-white shadow-2xl"
+          role="dialog"
+          aria-modal="true"
+          aria-busy="true"
+          aria-label="Loading your stringing options"
+        >
+          <div
+            className="w-8 h-8 rounded-full border-2 border-neutral-200 border-t-neutral-800 proto-anim-spin"
+            aria-hidden="true"
+          />
+          <p className="mt-4 text-sm text-neutral-500">Loading your stringing options…</p>
+        </div>
+      </div>,
+      document.body,
+    );
   }
 
   const modal = (

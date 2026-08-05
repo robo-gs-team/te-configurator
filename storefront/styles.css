@@ -115,6 +115,15 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   animation: proto-panel-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Spinner for the shell shown while the catalog is still loading. */
+@keyframes proto-spin {
+  to { transform: rotate(360deg); }
+}
+
+.proto-anim-spin {
+  animation: proto-spin 0.7s linear infinite;
+}
+
 /* Interactive press/hover (replaces Framer whileHover / whileTap) */
 .proto-press {
   transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
@@ -152,6 +161,11 @@ html.proto-configurator-unlinked .proto-configurator-button-wrapper {
   .proto-anim-fade,
   .proto-anim-panel {
     animation-duration: 0.01ms;
+  }
+  /* Slowed, not stopped: the spinner is the only signal that work is in progress, and a frozen
+     ring reads as a broken image rather than as loading. */
+  .proto-anim-spin {
+    animation-duration: 2s;
   }
   .proto-press,
   .proto-swatch-press,

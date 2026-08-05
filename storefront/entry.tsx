@@ -607,16 +607,28 @@ async function openConfigurator(productId: string, trigger: HTMLElement) {
     const catalogPromise = fetchAndCacheFullCatalog(productId);
     const modalPromise = loadModal();
 
-    const [result, modal] = await Promise.all([
-      withDeadline(catalogPromise, remaining(), deadlineMsg),
-      withDeadline(modalPromise, remaining(), deadlineMsg),
-    ]);
+    // Await the modal bundle ALONE first, then paint its shell — rather than awaiting both and
+    // showing nothing until the slower one lands. The bundle is prefetched and parsed during
+    // idle, so it is usually already resident and this resolves in ~0ms; the catalog is the slow
+    // half (~250KB over the App Proxy). Previously a click produced no visible change for that
+    // entire fetch, which is indistinguishable from a dead button.
+    //
+    // Note this adds NO extra loading to the page: both requests were already in flight at this
+    // point. It only stops the UI waiting on the second one before showing anything.
+    const modal = await withDeadline(modalPromise, remaining(), deadlineMsg);
+    if (modal.openLoading) modal.openLoading(productId);
 
+    const result = await withDeadline(catalogPromise, remaining(), deadlineMsg);
+
+    // On failure the shell must come down before the inline error is shown — that error renders
+    // under the trigger, which the open modal covers.
     if (result.error) {
+      modal.close();
       showConfigureError(trigger, result.error);
       return;
     }
     if (!result.configurator) {
+      modal.close();
       showConfigureError(
         trigger,
         "Stringing configuration isn't available for this product right now. Please contact us for assistance.",
