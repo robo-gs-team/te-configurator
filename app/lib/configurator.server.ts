@@ -153,6 +153,44 @@ async function findMatchingConfigurator(
   return undefined;
 }
 
+/**
+ * Same match as lookupConfiguratorForProduct, but WITHOUT the relation tree.
+ *
+ * The snapshot path — which serves virtually every storefront request — reads only `id`, `name`
+ * and `enrichedSnapshot`, then renders from the snapshot's own parsed copy of the catalog. It
+ * still went through the full lookup, so every cache miss dragged the entire
+ * steps -> optionGroups -> options tree out of Postgres (each option carrying its own `metadata`
+ * JSON blob), had Prisma materialise all of it, and discarded the lot. Measured live: 7.4s on a
+ * miss versus ~0.2s on a hit, on a request whose payload is 32KB gzipped.
+ *
+ * Only live enrichment genuinely needs those relations, so it keeps using the full lookup below.
+ */
+export async function lookupConfiguratorSnapshotForProduct(
+  shopDomain: string,
+  productId: string,
+  admin?: ShopifyAdmin,
+): Promise<
+  | {
+      status: "found" | "inactive";
+      configurator: { id: string; name: string; enrichedSnapshot: string | null };
+    }
+  | { status: "not_linked" }
+> {
+  const shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
+  if (!shop) return { status: "not_linked" };
+
+  const winner = await findMatchingConfigurator(shop.id, productId, shopDomain, admin);
+  if (!winner) return { status: "not_linked" };
+
+  const configurator = await prisma.configurator.findUnique({
+    where: { id: winner.id },
+    select: { id: true, name: true, enrichedSnapshot: true },
+  });
+  if (!configurator) return { status: "not_linked" };
+
+  return { status: winner.isActive ? "found" : "inactive", configurator };
+}
+
 export async function lookupConfiguratorForProduct(
   shopDomain: string,
   productId: string,
