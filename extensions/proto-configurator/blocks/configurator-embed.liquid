@@ -11,45 +11,43 @@
   collection / cart / blog / search / 404 pages ALL downloaded our JS + CSS (and evaluated the
   inline styles) for nothing. Guarding here means every non-product page ships ZERO of our code.
 
-  RACQUET_TEMPLATES is the maintained list of product template suffixes that carry racquets (the
-  only products the configurator is ever relevant for). This used to be a per-theme, freeform
-  "Limit to product templates" text setting — but that meant every theme (the live theme AND every
-  draft) needed the exact same list typed in independently, and the live theme's copy silently
-  never got set, so production fell back to "load on every product page" while a draft theme where
-  someone HAD filled the field in was correctly scoped. Hardcoding the list here instead enforces
-  it identically on every theme the instant this extension is deployed — no per-theme setup step
-  to forget.
+  Which product templates count as racquets is merchant-editable (below), so adding a new racquet
+  template does not require a code change and a deploy.
 
-  UPDATING: when a new racquet product template is created, add its suffix to this list and
-  deploy. The "Restrict to racquet templates" toggle below is an escape hatch for testing only —
-  turning it off reverts to loading on every product page (the old blank-field behavior).
+  BLANK MUST NEVER MEAN "EVERYWHERE". That was the original bug in both directions: first as a
+  freeform field whose blank default loaded the configurator on every PDP, then as a checkbox
+  whose schema default silently did not apply to themes saved before the setting existed (Liquid
+  read nil, nil is falsy, the restriction was skipped). Both failed OPEN, and non-racquet product
+  pages started carrying our JS. Here an empty or absent value falls back to the built-in racquet
+  list, so the worst case of a missing/lost/never-configured setting is "correctly scoped", never
+  "loaded on the whole catalogue". Loading everywhere is possible, but only by typing `all`.
 {%- endcomment -%}
-{%- assign proto_racquet_templates = 'racquet,racquet-pdp-v2' | split: ',' -%}
+{%- assign proto_default_templates = 'racquet, racquet-pdp-v2' -%}
 {%- assign proto_should_load = false -%}
 {%- if block.settings.enabled and request.page_type == 'product' -%}
-  {%- assign proto_should_load = true -%}
-  {%- comment -%}
-    `!= false`, NOT a plain truthiness test. A theme saved before this setting existed has no
-    value for it, so Liquid reads nil — and a plain `{% if %}` treats nil as false, silently
-    skipping the restriction and loading the configurator on EVERY product page. That is the
-    opposite of the intended default and is what happened when this replaced the old
-    `product_templates` text field: themes that had it scoped to racquet templates lost the
-    scoping entirely, because the schema default only applies to settings a theme has never
-    saved, not to blocks whose saved data predates the key.
+  {%- assign proto_templates = block.settings.product_templates | default: '' | strip -%}
+  {%- if proto_templates == blank -%}
+    {%- assign proto_templates = proto_default_templates -%}
+  {%- endif -%}
+  {%- assign proto_templates = proto_templates | downcase -%}
 
-    Comparing against `false` inverts the failure: nil (never configured) and true both restrict,
-    and only an explicit opt-out disables it. Scoping can then never be lost by accident — only
-    by someone deliberately unticking the box.
-  {%- endcomment -%}
-  {%- if block.settings.restrict_to_racquet_templates != false -%}
+  {%- if proto_templates == 'all' -%}
+    {%- assign proto_should_load = true -%}
+  {%- else -%}
+    {%- comment -%} A product on the standard template reports a blank suffix. {%- endcomment -%}
     {%- if template.suffix != blank -%}
       {%- assign proto_suffix = template.suffix | downcase | strip -%}
     {%- else -%}
       {%- assign proto_suffix = 'default' -%}
     {%- endif -%}
-    {%- assign proto_should_load = false -%}
-    {%- for proto_t in proto_racquet_templates -%}
-      {%- if proto_t == proto_suffix -%}
+    {%- comment -%}
+      Liquid allows no filters inside a `for` collection or an `if` condition, so both the split
+      and the per-entry strip have to be assigned first.
+    {%- endcomment -%}
+    {%- assign proto_allowed = proto_templates | split: ',' -%}
+    {%- for proto_t in proto_allowed -%}
+      {%- assign proto_t_trim = proto_t | strip -%}
+      {%- if proto_t_trim == proto_suffix -%}
         {%- assign proto_should_load = true -%}
       {%- endif -%}
     {%- endfor -%}
@@ -348,11 +346,11 @@
       "info": "Stable = the frozen, tested bundle. Beta = the latest build, for trying new changes on a draft theme without affecting your live theme. Set Beta ONLY on a duplicate/test theme."
     },
     {
-      "type": "checkbox",
-      "id": "restrict_to_racquet_templates",
-      "label": "Restrict to racquet product templates",
-      "default": true,
-      "info": "When on (recommended), the configurator only loads on product pages using a racquet template — currently 'racquet' and 'racquet-pdp-v2', maintained in code (ask a developer to add a new one). Turn off only for testing; it reverts to loading on every product page. (The button still only appears on products actually linked to a configurator.)"
+      "type": "text",
+      "id": "product_templates",
+      "label": "Racquet product templates",
+      "default": "racquet, racquet-pdp-v2",
+      "info": "Comma-separated product template names the configurator loads on — everything else (shoes, apparel, bags) loads none of its code. Leave blank to use the built-in racquet templates. Use 'default' for the standard product template, or 'all' to load on every product page (not recommended: it adds weight to non-racquet pages)."
     },
     {
       "type": "text",
