@@ -22,6 +22,11 @@
   list, so the worst case of a missing/lost/never-configured setting is "correctly scoped", never
   "loaded on the whole catalogue". Loading everywhere is possible, but only by typing `all`.
 {%- endcomment -%}
+{%- comment -%}
+  KEEP IN SYNC with the `product_templates` schema default AND the paragraph above it, which
+  quotes this list to the merchant verbatim. If they drift, the theme editor tells merchants the
+  wrong thing about what an empty field does — and this is the value that actually decides.
+{%- endcomment -%}
 {%- assign proto_default_templates = 'racquet, racquet-pdp-v2' -%}
 {%- assign proto_should_load = false -%}
 {%- if block.settings.enabled and request.page_type == 'product' -%}
@@ -340,17 +345,27 @@
       "label": "Version",
       "default": "stable",
       "options": [
-        { "value": "stable", "label": "Stable (recommended for your live theme)" },
-        { "value": "beta", "label": "Beta (latest — for a test/draft theme only)" }
+        {
+          "value": "stable",
+          "label": "Stable (recommended for your live theme)"
+        },
+        {
+          "value": "beta",
+          "label": "Beta (latest \u2014 for a test/draft theme only)"
+        }
       ],
       "info": "Stable = the frozen, tested bundle. Beta = the latest build, for trying new changes on a draft theme without affecting your live theme. Set Beta ONLY on a duplicate/test theme."
+    },
+    {
+      "type": "paragraph",
+      "content": "If the field below is left EMPTY, the configurator falls back to a list built into the app \u2014 currently \"racquet, racquet-pdp-v2\". That fallback exists so an empty field can never load the configurator across your whole catalogue, but it is fixed in the app's code and only a developer can change it. So any template you add below is lost if this field is ever cleared. Keep it filled in."
     },
     {
       "type": "text",
       "id": "product_templates",
       "label": "Racquet product templates",
       "default": "racquet, racquet-pdp-v2",
-      "info": "Comma-separated product template names the configurator loads on — everything else (shoes, apparel, bags) loads none of its code. Leave blank to use the built-in racquet templates. Use 'default' for the standard product template, or 'all' to load on every product page (not recommended: it adds weight to non-racquet pages)."
+      "info": "Comma-separated product templates the configurator loads on \u2014 every other product page (shoes, apparel, bags) loads none of its code. Use 'default' for the standard product template, or 'all' to load on every product page (not recommended: it adds weight to non-racquet pages). Empty falls back to the built-in list above."
     },
     {
       "type": "text",
