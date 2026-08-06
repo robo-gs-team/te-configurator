@@ -28,7 +28,20 @@
 {%- assign proto_should_load = false -%}
 {%- if block.settings.enabled and request.page_type == 'product' -%}
   {%- assign proto_should_load = true -%}
-  {%- if block.settings.restrict_to_racquet_templates -%}
+  {%- comment -%}
+    `!= false`, NOT a plain truthiness test. A theme saved before this setting existed has no
+    value for it, so Liquid reads nil — and a plain `{% if %}` treats nil as false, silently
+    skipping the restriction and loading the configurator on EVERY product page. That is the
+    opposite of the intended default and is what happened when this replaced the old
+    `product_templates` text field: themes that had it scoped to racquet templates lost the
+    scoping entirely, because the schema default only applies to settings a theme has never
+    saved, not to blocks whose saved data predates the key.
+
+    Comparing against `false` inverts the failure: nil (never configured) and true both restrict,
+    and only an explicit opt-out disables it. Scoping can then never be lost by accident — only
+    by someone deliberately unticking the box.
+  {%- endcomment -%}
+  {%- if block.settings.restrict_to_racquet_templates != false -%}
     {%- if template.suffix != blank -%}
       {%- assign proto_suffix = template.suffix | downcase | strip -%}
     {%- else -%}
