@@ -56,6 +56,34 @@
         );
       } catch (err) { /* no-op — fall back to the reserve-then-resolve default */ }
     })();
+
+    /* Collapse the reserved space if the app never loads on this template.
+     *
+     * This block is `enabled_on: product`, so it can be placed on ANY product template — but the
+     * App Embed only loads on the templates configured in its settings. Place it on a template
+     * the embed excludes and the markup renders, the CSS below reserves a button-sized gap, and
+     * nothing ever fills it: no script arrives to add the linked/unlinked class. A permanent
+     * blank space, with no error anywhere to explain it.
+     *
+     * The check waits for DOMContentLoaded rather than gating the CSS on an "app present" class,
+     * because the embed is a `target: body` block injected at the END of the document while this
+     * one renders wherever the merchant placed it — usually far earlier. Keying `display` off a
+     * class that only appears at end-of-parse would collapse the space and then re-expand it on
+     * EVERY working page, which is precisely the layout shift the CSS comment below exists to
+     * prevent. By DOMContentLoaded that end-of-body script has definitely run, so absence of all
+     * three classes is conclusive rather than a race. */
+    (function () {
+      var collapseIfOrphaned = function () {
+        var cls = document.documentElement.className;
+        if (/proto-configurator-(pending|linked|unlinked)/.test(cls)) return;
+        document.documentElement.classList.add('proto-configurator-absent');
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', collapseIfOrphaned, { once: true });
+      } else {
+        collapseIfOrphaned();
+      }
+    })();
   </script>
   <div
     class="proto-configurator-button-wrapper proto-v2-standalone-wrapper"
@@ -181,6 +209,12 @@
     }
 
     html.proto-configurator-unlinked .proto-v2-standalone-wrapper {
+      display: none !important;
+    }
+
+    /* Set only when this block was placed on a template the App Embed does not load on, so the
+       reserved space would otherwise stay blank forever. See the DOMContentLoaded check above. */
+    html.proto-configurator-absent .proto-v2-standalone-wrapper {
       display: none !important;
     }
 
