@@ -1,6 +1,11 @@
 name: Deploy Shopify
 
 on:
+  # Manual re-run. Deploys are the only route our extension changes take to the live storefront,
+  # and a run can fail for reasons that have nothing to do with the commit — GitHub's own action
+  # CDN returning "Service Unavailable" before checkout has already dropped one release on the
+  # floor. Without this, recovering meant pushing an empty commit to re-trigger.
+  workflow_dispatch:
   push:
     branches:
       - main
