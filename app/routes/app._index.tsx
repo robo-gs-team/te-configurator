@@ -36,6 +36,7 @@ import { detectAppEmbedStatus, type AppEmbedStatus } from "~/lib/theme-detection
 import { themeEditorEmbedUrl } from "~/lib/theme-embed";
 import { refreshShopSnapshots } from "~/lib/snapshot.server";
 import { getVersionInfo } from "~/lib/version.server";
+import { startTimings, timingHeaders } from "~/lib/server-timing.server";
 import { authenticate } from "~/shopify.server";
 
 /**
@@ -48,21 +49,30 @@ import { authenticate } from "~/shopify.server";
  * behind their own <Suspense> boundaries instead of blocking the whole page.
  */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const timings = startTimings();
   const { session, admin } = await authenticate.admin(request);
+  timings.mark("auth");
   const shop = await ensureShop(session.shop);
+  timings.mark("shop");
   const [configurators, theme] = await Promise.all([
     listConfigurators(shop.id),
     getShopThemeSettings(shop.id),
   ]);
+  timings.mark("db");
 
-  return defer({
-    shop: session.shop,
-    configurators,
-    theme,
-    versions: getVersionInfo(),
-    analytics: getAnalyticsSummary(shop.id, 30),
-    embed: detectAppEmbedStatus(admin, session.shop),
-  });
+  return defer(
+    {
+      shop: session.shop,
+      configurators,
+      theme,
+      versions: getVersionInfo(),
+      analytics: getAnalyticsSummary(shop.id, 30),
+      embed: detectAppEmbedStatus(admin, session.shop),
+    },
+    // Covers the BLOCKING part only — the deferred promises above resolve after these headers are
+    // already on the wire, which is the point of deferring them.
+    { headers: timingHeaders(timings) },
+  );
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {

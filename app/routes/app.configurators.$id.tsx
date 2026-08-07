@@ -38,6 +38,7 @@ import prisma from "~/db.server";
 import {
   ensureShop,
   getConfiguratorById,
+  getConfiguratorForEditor,
 } from "~/lib/configurator.server";
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
 import { runAfterResponse } from "~/lib/after-response.server";
@@ -60,12 +61,17 @@ import { parseCollectionIdsField } from "~/lib/collection-id";
 import { parseProductIdsField } from "~/lib/product-id";
 import { getCollectionsByIds } from "~/lib/shopify-collections.server";
 import { getProductsByIds } from "~/lib/shopify-products.server";
+import { startTimings, timingHeaders } from "~/lib/server-timing.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
+  const timings = startTimings();
   const { admin, session } = await authenticate.admin(request);
+  timings.mark("auth");
   const shop = await ensureShop(session.shop);
-  const configurator = await getConfiguratorById(params.id!);
+  timings.mark("shop");
+  const configurator = await getConfiguratorForEditor(params.id!);
+  timings.mark("db");
 
   if (!configurator || configurator.shopId !== shop.id) {
     throw new Response("Not found", { status: 404 });
@@ -129,6 +135,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       : Promise.resolve([]),
   ]);
 
+  // Every entry above is a Shopify Admin GraphQL round trip. They run together, so this mark is
+  // the slowest single call, not their sum — if it dominates, the fix is upstream at Shopify, not
+  // in our queries.
+  timings.mark("shopify");
+
   // Partition the batched results back to each group in memory.
   const collectionById = new Map(allGroupCollections.map((c) => [c.id, c]));
   const productById = new Map(allGroupProducts.map((p) => [p.id, p]));
@@ -153,32 +164,26 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     : null;
 
-  // Strip the two big server-only blobs before sending to the browser: the enriched storefront
-  // snapshot (the full variant matrix for every string — hundreds of KB on a large catalog) and
-  // the per-variant inventory-policy backup. Neither is rendered by this page; they're read only
-  // server-side by the action's diagnostic/maintenance intents (which re-fetch the configurator).
-  const {
-    enrichedSnapshot: _enrichedSnapshot,
-    inventoryPolicyBackup: _inventoryPolicyBackup,
-    ...configuratorForClient
-  } = configurator as typeof configurator & {
-    enrichedSnapshot?: string | null;
-    inventoryPolicyBackup?: string | null;
-  };
-  void _enrichedSnapshot;
-  void _inventoryPolicyBackup;
-
-  return json({
-    configurator: configuratorForClient,
-    collections,
-    stringCollections,
-    products,
-    stringProducts,
-    excludedProducts,
-    groupCollections,
-    groupProducts,
-    labor,
-  });
+  // The two big server-only blobs — the enriched storefront snapshot (the full variant matrix for
+  // every string, hundreds of KB on a large catalog) and the per-variant inventory-policy backup —
+  // are excluded by `getConfiguratorForEditor` at the query itself. This used to delete them from
+  // the object here instead, which kept them off the wire to the BROWSER but still made Postgres
+  // serialize them and ship them to this function on every editor load. They're read only
+  // server-side by the action's maintenance intents, which re-fetch via `getConfiguratorById`.
+  return json(
+    {
+      configurator,
+      collections,
+      stringCollections,
+      products,
+      stringProducts,
+      excludedProducts,
+      groupCollections,
+      groupProducts,
+      labor,
+    },
+    { headers: timingHeaders(timings) },
+  );
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {

@@ -28,7 +28,19 @@ export const configuratorInclude = {
   rules: { orderBy: { sortOrder: "asc" as const } },
 };
 
+/**
+ * Read-first, for the same reason `getShopThemeSettings` below is: EVERY admin loader calls this
+ * before it can do anything else, and the old unconditional upsert paid a write round-trip (plus
+ * a row lock) on every page view, every navigation, every action — to insert a row that has
+ * existed since the app was installed. The write also can't overlap anything: the shop id it
+ * returns is the input to every query that follows, so its full latency lands on the critical
+ * path of each admin request.
+ *
+ * Kept as an upsert on the miss path so two concurrent first-requests can't both insert.
+ */
 export async function ensureShop(domain: string) {
+  const existing = await prisma.shop.findUnique({ where: { domain } });
+  if (existing) return existing;
   return prisma.shop.upsert({
     where: { domain },
     create: { domain, name: domain },
@@ -55,6 +67,28 @@ export async function getConfiguratorById(
 ): Promise<ConfiguratorWithRelations | null> {
   return prisma.configurator.findUnique({
     where: { id },
+    include: configuratorInclude,
+  });
+}
+
+/**
+ * The editor's view of a configurator: everything `getConfiguratorById` returns EXCEPT the two
+ * write-only blob columns.
+ *
+ * `enrichedSnapshot` is the full variant matrix for every string in the catalog and
+ * `inventoryPolicyBackup` is a per-variant map — together the largest values in the row by orders
+ * of magnitude. The editor page never renders either; it already deleted them from the payload
+ * before returning, but only AFTER Postgres had serialized them, shipped them over the wire, and
+ * Prisma had materialized them in the function's memory. Omitting them in the query means they
+ * are never read at all.
+ *
+ * (Same class of mistake as the storefront's snapshot path fetching a relation tree it never
+ * read — the cost is invisible in the code that discards the data, because by then it's paid.)
+ */
+export async function getConfiguratorForEditor(id: string) {
+  return prisma.configurator.findUnique({
+    where: { id },
+    omit: { enrichedSnapshot: true, inventoryPolicyBackup: true },
     include: configuratorInclude,
   });
 }
@@ -388,13 +422,80 @@ async function computeAnalyticsSummary(
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const where = { shopId, createdAt: { gte: since } };
 
-  // Counts via a groupBy aggregate — accurate over the whole window (the old code counted
-  // in JS over a 500-row cap, which was both wasteful and wrong for busy shops).
-  const grouped = await prisma.analytics.groupBy({
-    by: ["eventType"],
-    where,
-    _count: { _all: true },
-  });
+  // ALL FIVE queries issue together. None of them feeds another — every one reads the same table
+  // over the same window and is reduced independently in JS below — but they used to be five
+  // sequential `await`s, so the page waited for the SUM of five round trips when it only ever
+  // needed the slowest. That is the whole latency of the Analytics page and the dashboard's
+  // deferred card, paid four times over for nothing.
+  const [grouped, sessionGroups, aggRows, racquetGroups, events] = await Promise.all([
+    // Counts via a groupBy aggregate — accurate over the whole window (the old code counted
+    // in JS over a 500-row cap, which was both wasteful and wrong for busy shops).
+    prisma.analytics.groupBy({
+      by: ["eventType"],
+      where,
+      _count: { _all: true },
+    }),
+
+    // Unique sessions per funnel stage (sessionId is a real column, stamped by the storefront on
+    // every event). Distinct-count per stage → open → add-to-cart → purchase conversion.
+    //
+    // ONE groupBy, not three findMany+distinct. Prisma's `distinct` on findMany is applied by the
+    // query engine in memory, NOT as SQL DISTINCT — so the old shape fetched every matching row's
+    // sessionId across the whole window and deduplicated in JS, three times over. On a shop that
+    // has been live for a while, `modal_open` alone is one row per configurator open, so this was
+    // the query that degraded fastest as the table filled up. `groupBy` compiles to a real SQL
+    // GROUP BY: Postgres does the deduplication against the index and returns one row per distinct
+    // pair instead of one per event.
+    prisma.analytics.groupBy({
+      by: ["eventType", "sessionId"],
+      where: {
+        ...where,
+        eventType: { in: ["modal_open", "add_to_cart", "purchase"] },
+        NOT: { sessionId: null },
+      },
+    }),
+
+    // Revenue / AOV / incremental / mode / device / daily-trend all derive from one plain findMany
+    // over the four relevant event types, aggregated in JS. (An earlier version computed these via
+    // $queryRaw for efficiency; that raw SQL turned out to be unreliable against the real database
+    // and was silently swallowed by its own defensive try/catch, so these sections quietly showed
+    // nothing real. Plain Prisma calls are the same proven approach the rest of this function
+    // already uses — slower on paper, but correct, and this table's volume is nowhere near where
+    // that would matter.)
+    prisma.analytics.findMany({
+      where: {
+        ...where,
+        eventType: { in: ["modal_open", "add_to_cart", "purchase", "order_other"] },
+      },
+      select: { eventType: true, productId: true, metadata: true, createdAt: true },
+    }),
+
+    // Top racquets by add-to-cart (productId is a column).
+    prisma.analytics.groupBy({
+      by: ["productId", "eventType"],
+      where: {
+        ...where,
+        eventType: { in: ["modal_open", "add_to_cart", "purchase"] },
+        NOT: { productId: null },
+      },
+      _count: { _all: true },
+    }),
+
+    // Only the analytics table needs actual rows (and only shows 50). The dashboard uses the
+    // aggregates above, so it skips this query entirely.
+    options.includeEvents
+      ? prisma.analytics.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          take: 50,
+        })
+      : // Typed empty, not a bare `[]`. An untyped literal infers `never[]`, which widens the
+        // field to `never[] | Analytics[]` — and once that crosses `defer()` the serializer turns
+        // the `never` arm into `null`, so every consumer has to null-check rows that can never be
+        // null. Naming the element type keeps the field a plain `Analytics[]` on both sides.
+        Promise.resolve<Awaited<ReturnType<typeof prisma.analytics.findMany>>>([]),
+  ]);
+
   const counts: Record<string, number> = {};
   let total = 0;
   for (const g of grouped) {
@@ -402,36 +503,14 @@ async function computeAnalyticsSummary(
     total += g._count._all;
   }
 
-  // Unique sessions per funnel stage (sessionId is a real column, stamped by the storefront on
-  // every event). Distinct-count per stage → open → add-to-cart → purchase conversion.
-  const uniqueSessions = async (eventType: string) => {
-    const rows = await prisma.analytics.findMany({
-      where: { ...where, eventType, NOT: { sessionId: null } },
-      distinct: ["sessionId"],
-      select: { sessionId: true },
-    });
-    return rows.length;
-  };
-  const [openSessions, cartSessions, purchaseSessions] = await Promise.all([
-    uniqueSessions("modal_open"),
-    uniqueSessions("add_to_cart"),
-    uniqueSessions("purchase"),
-  ]);
-
-  // Revenue / AOV / incremental / mode / device / daily-trend all derive from one plain findMany
-  // over the four relevant event types, aggregated in JS. (An earlier version computed these via
-  // $queryRaw for efficiency; that raw SQL turned out to be unreliable against the real database
-  // and was silently swallowed by its own defensive try/catch, so these sections quietly showed
-  // nothing real. Plain Prisma calls are the same proven approach the rest of this function
-  // already uses — slower on paper, but correct, and this table's volume is nowhere near where
-  // that would matter.)
-  const aggRows = await prisma.analytics.findMany({
-    where: {
-      ...where,
-      eventType: { in: ["modal_open", "add_to_cart", "purchase", "order_other"] },
-    },
-    select: { eventType: true, productId: true, metadata: true, createdAt: true },
-  });
+  let openSessions = 0;
+  let cartSessions = 0;
+  let purchaseSessions = 0;
+  for (const g of sessionGroups) {
+    if (g.eventType === "modal_open") openSessions++;
+    else if (g.eventType === "add_to_cart") cartSessions++;
+    else if (g.eventType === "purchase") purchaseSessions++;
+  }
 
   let cartValue = 0;
   let purchValue = 0;
@@ -498,16 +577,6 @@ async function computeAnalyticsSummary(
   const byDevice = Array.from(byDeviceMap.values());
   const trend = Array.from(trendMap.values()).sort((a, b) => a.day.localeCompare(b.day));
 
-  // Top racquets by add-to-cart (productId is a column).
-  const racquetGroups = await prisma.analytics.groupBy({
-    by: ["productId", "eventType"],
-    where: {
-      ...where,
-      eventType: { in: ["modal_open", "add_to_cart", "purchase"] },
-      NOT: { productId: null },
-    },
-    _count: { _all: true },
-  });
   const byRacquetMap = new Map<
     string,
     { productId: string; opens: number; addToCarts: number; purchases: number }
@@ -525,16 +594,6 @@ async function computeAnalyticsSummary(
   const byRacquet = Array.from(byRacquetMap.values())
     .sort((a, b) => b.addToCarts - a.addToCarts)
     .slice(0, 15);
-
-  // Only the analytics table needs actual rows (and only shows 50). The dashboard uses the
-  // aggregates above, so it skips this query entirely.
-  const events = options.includeEvents
-    ? await prisma.analytics.findMany({
-        where,
-        orderBy: { createdAt: "desc" },
-        take: 50,
-      })
-    : [];
 
   return {
     events,

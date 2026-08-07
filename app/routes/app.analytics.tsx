@@ -1,7 +1,7 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { Suspense, useMemo, useState, type ReactNode } from "react";
 import type { LoaderFunctionArgs } from "@vercel/remix";
-import { json } from "@vercel/remix";
-import { useLoaderData } from "@remix-run/react";
+import { defer } from "@vercel/remix";
+import { Await, useLoaderData } from "@remix-run/react";
 import {
   BlockStack,
   Card,
@@ -10,17 +10,35 @@ import {
   InlineStack,
   Layout,
   Page,
+  SkeletonBodyText,
   Text,
 } from "@shopify/polaris";
 import { ensureShop, getAnalyticsSummary } from "~/lib/configurator.server";
 import { parseJson } from "~/lib/configurator.types";
+import { startTimings, timingHeaders } from "~/lib/server-timing.server";
 import { authenticate } from "~/shopify.server";
 
+/**
+ * The summary is passed to `defer()` UNAWAITED — same posture as the Dashboard.
+ *
+ * It is several aggregate reads over the whole 30-day event window, and awaiting it here meant the
+ * page rendered NOTHING until the slowest of them came back: no title, no nav, no skeleton, just a
+ * blank frame inside the Shopify admin chrome. Deferring lets the shell paint on the first byte
+ * and the numbers stream in behind a skeleton.
+ *
+ * `getAnalyticsSummary` catches its own errors and degrades to an empty-but-renderable summary, so
+ * this promise does not reject and cannot take the page down through <Await>.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const timings = startTimings();
   const { session } = await authenticate.admin(request);
+  timings.mark("auth");
   const shop = await ensureShop(session.shop);
-  const analytics = await getAnalyticsSummary(shop.id, 30, { includeEvents: true });
-  return json({ analytics });
+  timings.mark("shop");
+  return defer(
+    { analytics: getAnalyticsSummary(shop.id, 30, { includeEvents: true }) },
+    { headers: timingHeaders(timings) },
+  );
 };
 
 /* ---------------------------------------------------------------------------------------------
@@ -409,6 +427,40 @@ function TrendChart({ data }: { data: TrendPoint[] }) {
 
 export default function AnalyticsPage() {
   const { analytics } = useLoaderData<typeof loader>();
+
+  return (
+    <Page
+      title="Configurator analytics"
+      subtitle="Last 30 days"
+      backAction={{ content: "Dashboard", url: "/app" }}
+    >
+      <Suspense
+        fallback={
+          <Layout>
+            <Layout.Section>
+              <Card>
+                <SkeletonBodyText lines={12} />
+              </Card>
+            </Layout.Section>
+          </Layout>
+        }
+      >
+        <Await resolve={analytics}>
+          {(resolved) => <AnalyticsBody analytics={resolved} />}
+        </Await>
+      </Suspense>
+    </Page>
+  );
+}
+
+/**
+ * Derived from the loader rather than from `AnalyticsSummary` directly: what reaches the browser
+ * is the JSON-serialized form (Date fields arrive as strings), so the server-side type would be a
+ * lie here — and `events` is only present when the loader asked for it.
+ */
+type DeferredAnalytics = Awaited<ReturnType<typeof useLoaderData<typeof loader>>["analytics"]>;
+
+function AnalyticsBody({ analytics }: { analytics: DeferredAnalytics }) {
   const { funnel, revenue, byMode, byDevice, byRacquet, trend, counts } = analytics;
 
   // Each of these is genuinely empty (no rows at all for that dimension) vs. real data that
@@ -433,11 +485,7 @@ export default function AnalyticsPage() {
   });
 
   return (
-    <Page
-      title="Configurator analytics"
-      subtitle="Last 30 days"
-      backAction={{ content: "Dashboard", url: "/app" }}
-    >
+    <>
       <Layout>
         {/* KPI hero row — always real: 0 is a true result, not a placeholder. */}
         <Layout.Section>
@@ -606,6 +654,6 @@ export default function AnalyticsPage() {
           </Card>
         </Layout.Section>
       </Layout>
-    </Page>
+    </>
   );
 }
