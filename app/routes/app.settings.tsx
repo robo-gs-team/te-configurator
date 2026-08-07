@@ -91,6 +91,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // instead of from server logs nobody can see. 0-of-N is the diagnostic that matters: it
         // means the order scan ran and matched nothing, which points at the read_orders grant
         // rather than at the rebuild.
+        // Presence of this key (not its value) is what the UI gates on, so the line renders even
+        // when the numbers are zero — a 0-of-0 result is a finding, not a reason to stay silent.
+        salesRefreshed: build?.salesRefreshed ?? false,
         stringCatalogSize: build?.stringCatalogSize ?? 0,
         stringsWithSales: build?.stringsWithSales ?? 0,
       },
@@ -172,6 +175,7 @@ export default function ThemeSettings() {
             total: number;
             refreshed: number;
             failed: string[];
+            salesRefreshed?: boolean;
             stringCatalogSize?: number;
             stringsWithSales?: number;
           };
@@ -350,18 +354,21 @@ export default function ThemeSettings() {
                     configurator{snapshotResult.total === 1 ? "" : "s"}.
                     {snapshotResult.failed.length > 0 &&
                       ` Failed: ${snapshotResult.failed.join(", ")}. Check that these are linked to products and try again.`}
-                    {typeof snapshotResult.stringCatalogSize === "number" &&
-                      snapshotResult.stringCatalogSize > 0 && (
-                        <>
-                          {" "}
-                          Best-seller data: {snapshotResult.stringsWithSales} of{" "}
-                          {snapshotResult.stringCatalogSize} strings have sales in the last 60 days.
-                          {snapshotResult.stringsWithSales === 0 &&
-                            " None matched — the app may not have permission to read orders yet." +
-                              " Open Apps → TE Configurator and accept the permissions prompt," +
-                              " then rebuild again."}
-                        </>
-                      )}
+                    {typeof snapshotResult.salesRefreshed === "boolean" && (
+                      <>
+                        {" "}
+                        Best-seller data: {snapshotResult.stringsWithSales} of{" "}
+                        {snapshotResult.stringCatalogSize} strings have sales in the last 60 days.
+                        {snapshotResult.stringCatalogSize === 0 &&
+                          " No string products were found on this configurator at all — its string" +
+                            " option group looks empty, so there was nothing to rank."}
+                        {(snapshotResult.stringCatalogSize ?? 0) > 0 &&
+                          snapshotResult.stringsWithSales === 0 &&
+                          " None matched — the app may not have permission to read orders yet." +
+                            " Open Apps → TE Configurator and accept the permissions prompt," +
+                            " then rebuild again."}
+                      </>
+                    )}
                   </p>
                 </Banner>
               )}
