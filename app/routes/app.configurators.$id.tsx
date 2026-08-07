@@ -40,7 +40,10 @@ import {
   getConfiguratorById,
   getConfiguratorForEditor,
 } from "~/lib/configurator.server";
-import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
+import {
+  INTERACTIVE_SALES_MAX_PAGES,
+  refreshConfiguratorSnapshot,
+} from "~/lib/snapshot.server";
 import { runAfterResponse } from "~/lib/after-response.server";
 import {
   detectConfiguratorOverlap,
@@ -187,6 +190,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     { headers: timingHeaders(timings) },
   );
 };
+
+// The "Rebuild snapshot" intent re-scans Shopify orders for the best-seller tally.
+export const config = { maxDuration: 60 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -364,7 +370,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   // Rebuild the enriched snapshot from live Shopify data NOW (fresh variant ids/prices/availability
   // for every string), so the merchant can force-refresh what shoppers see without a full Save.
   if (intent === "rebuild_snapshot") {
-    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop);
+    // Explicit merchant action, so it also re-scans orders for the best-seller tally (capped —
+    // see INTERACTIVE_SALES_MAX_PAGES). The automatic post-save refreshes below deliberately do
+    // not, so saving stays fast.
+    await refreshConfiguratorSnapshot(admin, params.id!, shop.id, session.shop, {
+      refreshSales: true,
+      salesMaxPages: INTERACTIVE_SALES_MAX_PAGES,
+    });
     return json({ rebuilt: true });
   }
 

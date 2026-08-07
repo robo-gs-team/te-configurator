@@ -76,6 +76,7 @@ export async function resolveStringUnitsSold(
   admin: ShopifyAdmin,
   stringProductIds: string[],
   now: Date,
+  opts?: { maxPages?: number },
 ): Promise<Record<string, number>> {
   if (stringProductIds.length === 0) return {};
 
@@ -88,9 +89,14 @@ export async function resolveStringUnitsSold(
   let cursor: string | null = null;
   let hasNextPage = true;
   let pages = 0;
+  // Callers on an interactive path (a merchant pressing "Rebuild storefront data now") pass a
+  // smaller cap: the full 300-page walk is a few hundred sequential Shopify round trips and would
+  // outlast the request. Orders are sorted newest-first, so a capped walk still yields a real
+  // best-seller ranking from the most recent orders — the nightly cron then does the full window.
+  const pageLimit = Math.max(1, Math.min(opts?.maxPages ?? MAX_ORDER_PAGES, MAX_ORDER_PAGES));
 
   try {
-    while (hasNextPage && pages < MAX_ORDER_PAGES) {
+    while (hasNextPage && pages < pageLimit) {
       pages++;
       const response = await admin.graphql(ORDER_SALES_QUERY, {
         variables: { cursor, query },

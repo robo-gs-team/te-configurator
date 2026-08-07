@@ -19,7 +19,10 @@ import {
 import { useState } from "react";
 import prisma from "~/db.server";
 import { ensureShop, getShopThemeSettings } from "~/lib/configurator.server";
-import { refreshShopSnapshots } from "~/lib/snapshot.server";
+import {
+  INTERACTIVE_SALES_MAX_PAGES,
+  refreshShopSnapshots,
+} from "~/lib/snapshot.server";
 import {
   getAllLinkedRacquetProductIds,
   migrateLegacyRacquetTension,
@@ -49,6 +52,10 @@ function clampMobileCount(raw: FormDataEntryValue | null): number {
   return Math.min(20, Math.max(1, n));
 }
 
+// The "Rebuild storefront data now" action re-scans Shopify orders for the best-seller tally,
+// which is a bounded but real sequence of Admin API round trips — well past the default budget.
+export const config = { maxDuration: 60 };
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = await ensureShop(session.shop);
@@ -59,7 +66,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // refreshShopSnapshots is best-effort and swallows per-configurator errors, so without this
     // comparison a total failure would report identically to a total success.
     const startedAt = new Date();
-    await refreshShopSnapshots(admin, shop.id, session.shop);
+    // refreshSales: this button is the merchant's explicit "make the storefront current" action,
+    // so it re-scans orders for the best-seller tally rather than carrying the old one forward.
+    // Without it, a shop that had never completed a nightly cron run could press this forever and
+    // still see strings in their raw default order, because carry-forward has nothing to carry.
+    await refreshShopSnapshots(admin, shop.id, session.shop, {
+      refreshSales: true,
+      salesMaxPages: INTERACTIVE_SALES_MAX_PAGES,
+    });
 
     // Deliberately does NOT select enrichedSnapshot — that column holds ~300KB per row, and the
     // timestamp alone answers the question.
