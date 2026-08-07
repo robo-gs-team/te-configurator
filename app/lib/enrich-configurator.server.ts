@@ -391,7 +391,20 @@ export async function enrichConfiguratorWithShopifyData(
           const seen = new Set(
             manualOptions.map((o) => o.productId).filter(Boolean) as string[],
           );
-          const dynamicOptions = [...collectionProducts, ...directProducts, ...extraStringProducts]
+          // ORDER MATTERS — this is the order shoppers see.
+          //
+          // For a string group fed by the top-level "String collections", those products lead, so
+          // the picker reproduces the collection's own Shopify sort order (Best selling, Manual,
+          // …) exactly. Anything attached to the group itself is appended after.
+          //
+          // It used to be the other way round, which meant a handful of products configured on the
+          // group silently pinned themselves above the entire collection — so re-sorting the
+          // collection in Shopify appeared to do nothing to the top of the list.
+          const orderedSources = extraStringProducts.length > 0
+            ? [...extraStringProducts, ...collectionProducts, ...directProducts]
+            : [...collectionProducts, ...directProducts];
+
+          const dynamicOptions = orderedSources
             .filter((product) => {
               if (isExcluded(product.id)) return false;
               if (seen.has(product.id)) return false;

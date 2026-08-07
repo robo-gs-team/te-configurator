@@ -18,6 +18,14 @@ type ShopifyAdmin = {
 export type CollectionSummary = {
   id: string;
   title: string;
+  /** The collection's own sort order in Shopify (BEST_SELLING, MANUAL, ALPHA_ASC, …). Our product
+   *  queries pass no sortKey, so this is what actually decides the order shoppers see — surfaced
+   *  in the admin so that link is visible instead of implicit.
+   *
+   *  Optional because the admin's collection PICKER builds summaries client-side from Shopify's
+   *  resource picker, which doesn't return it; a freshly-picked collection has no sort order until
+   *  the page reloads and the server resolves it. */
+  sortOrder?: string | null;
 };
 
 export type CollectionProduct = {
@@ -50,6 +58,7 @@ type CollectionsByIdsResponse = {
       id?: string;
       title?: string;
       legacyResourceId?: string;
+      sortOrder?: string;
     } | null>;
   };
 };
@@ -141,6 +150,7 @@ async function fetchCollectionBatch(
             id
             title
             legacyResourceId
+            sortOrder
           }
         }
       }
@@ -159,6 +169,7 @@ async function fetchCollectionBatch(
     .map((node) => ({
       id: normalizeCollectionId(String(node.legacyResourceId)),
       title: node.title ?? "Collection",
+      sortOrder: node.sortOrder ?? null,
     }));
 }
 
