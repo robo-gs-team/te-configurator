@@ -71,11 +71,27 @@ function carryForwardUnitsSold(
   return prev.stringUnitsSoldByProductId ?? {};
 }
 
+export type SnapshotBuildOptions = {
+  /** Re-scan Shopify orders for the best-seller tally instead of carrying the previous one
+   *  forward. Off for ordinary saves; on for the nightly cron and the explicit rebuild buttons. */
+  refreshSales?: boolean;
+  /** Page cap for that scan (50 orders per page, newest first). Omit for the full window — only
+   *  the cron should, since a full walk is far longer than any merchant request may last. */
+  salesMaxPages?: number;
+};
+
+/**
+ * Page cap for a merchant-triggered rebuild: 30 pages ≈ the 1,500 most recent orders in the
+ * window. Enough to rank strings by real sales immediately, and bounded so the request finishes;
+ * the nightly cron replaces it with the full-window tally.
+ */
+export const INTERACTIVE_SALES_MAX_PAGES = 30;
+
 export async function buildAndStoreSnapshot(
   admin: ShopifyAdmin,
   configurator: ConfiguratorWithRelations,
   shopId: string,
-  opts?: { refreshSales?: boolean },
+  opts?: SnapshotBuildOptions,
 ): Promise<void> {
   const [enriched, theme, racquetTensionByProductId, recommended] = await Promise.all([
     enrichConfiguratorWithShopifyData(admin, configurator),
@@ -84,11 +100,14 @@ export async function buildAndStoreSnapshot(
     resolveRecommendedStringsMap(admin, configurator),
   ]);
 
-  // Best-seller data is store-wide and only needs to refresh on the daily cron — NOT on every
-  // merchant save. On save we carry the previous snapshot's tally forward so saves stay fast and
-  // never scan 60 days of orders. The cron passes { refreshSales: true }.
+  // Best-seller data is NOT refreshed on an ordinary merchant save — those carry the previous
+  // tally forward so saving stays fast and never scans 60 days of orders. It IS refreshed when a
+  // caller explicitly asks: the nightly cron (full window), and the merchant's explicit "Rebuild
+  // storefront data now" / "Rebuild snapshot" buttons (capped, see salesMaxPages).
   const stringUnitsSoldByProductId = opts?.refreshSales
-    ? await resolveStringUnitsSold(admin, collectStringProductIds(enriched), new Date())
+    ? await resolveStringUnitsSold(admin, collectStringProductIds(enriched), new Date(), {
+        maxPages: opts.salesMaxPages,
+      })
     : carryForwardUnitsSold(configurator);
 
   const payload: StoredSnapshot = {
@@ -120,11 +139,12 @@ export async function refreshConfiguratorSnapshot(
   configuratorId: string,
   shopId: string,
   shopDomain: string,
+  opts?: SnapshotBuildOptions,
 ): Promise<void> {
   try {
     const configurator = await getConfiguratorById(configuratorId);
     if (configurator) {
-      await buildAndStoreSnapshot(admin, configurator, shopId);
+      await buildAndStoreSnapshot(admin, configurator, shopId, opts);
     }
     invalidateProxyCache(shopDomain);
   } catch (err) {
@@ -141,12 +161,22 @@ export async function refreshShopSnapshots(
   admin: ShopifyAdmin,
   shopId: string,
   shopDomain: string,
+  opts?: SnapshotBuildOptions,
 ): Promise<void> {
   try {
     const configurators = await prisma.configurator.findMany({
       where: { shopId },
       select: { id: true },
     });
+    if (opts?.refreshSales) {
+      // SEQUENTIAL when sales are being refreshed: each rebuild walks the orders API, and firing
+      // those walks concurrently would multiply the request rate against Shopify's cost limiter
+      // for no gain — the work is I/O against the same endpoint either way.
+      for (const { id } of configurators) {
+        await refreshConfiguratorSnapshot(admin, id, shopId, shopDomain, opts);
+      }
+      return;
+    }
     // Rebuild all configurators concurrently — each refresh is already best-effort (never
     // throws), so one shop typically has only a handful and this stays well within limits.
     await Promise.all(
