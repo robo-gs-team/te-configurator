@@ -44,9 +44,17 @@ export const loader = async () => {
   // DB check via dynamic import inside try/catch so even a client that throws on first use
   // (missing/invalid DATABASE_URL) reports as a readable status instead of crashing the route.
   let db: string;
+  // Round-trip time for the most trivial query there is. Everything the admin does is some
+  // multiple of this number, so it separates "our queries are slow" from "the database is simply
+  // far from the function" — a single-digit result means the two are colocated, while a
+  // consistently high one means every round trip on every page is paying transit, and no amount
+  // of query tuning will fix it (moving the function's region will).
+  let dbRoundTripMs: number | null = null;
   try {
     const { default: prisma } = await import("~/db.server");
+    const startedAt = Date.now();
     await prisma.$queryRaw`SELECT 1`;
+    dbRoundTripMs = Date.now() - startedAt;
     db = "ok";
   } catch (e) {
     // The error NAME alone proved NOT to be enough: a real outage reported
@@ -75,10 +83,14 @@ export const loader = async () => {
       missingRequiredEnv,
       env,
       db,
+      dbRoundTripMs,
       versions,
       deployment: {
         vercelEnv: process.env.VERCEL_ENV ?? null,
         commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) ?? null,
+        // Which region this function ran in. Paired with dbRoundTripMs it answers "is the
+        // database next door or across an ocean?" — not otherwise visible without Vercel access.
+        region: process.env.VERCEL_REGION ?? null,
       },
       time: new Date().toISOString(),
     },

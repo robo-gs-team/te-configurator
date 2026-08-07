@@ -211,6 +211,14 @@ model Analytics {
 
   shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
+  // Every read in computeAnalyticsSummary filters on the SAME pair — this shop, the last N days —
+  // and neither existing index covers it: [shopId, eventType] has to scan that shop's whole
+  // history and discard anything outside the window, and [createdAt] is global, so it walks every
+  // shop's events in the window. Both degrade as the table grows, which is why the admin got
+  // slower the longer the configurator stayed live rather than being slow from day one.
+  // eventType trails the pair so the queries that also filter on it (the funnel, the aggregate
+  // pull, the per-racquet groupBy) are satisfied by this index alone.
+  @@index([shopId, createdAt, eventType])
   @@index([shopId, eventType])
   @@index([createdAt])
 }

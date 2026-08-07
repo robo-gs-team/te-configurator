@@ -26,6 +26,7 @@ import {
 import type { StoredSnapshot } from "~/lib/snapshot.server";
 import { refreshConfiguratorSnapshot } from "~/lib/snapshot.server";
 import { runAfterResponse } from "~/lib/after-response.server";
+import { startTimings, type Timings } from "~/lib/server-timing.server";
 import {
   getCachedProxyResponse,
   setCachedProxyResponse,
@@ -51,37 +52,6 @@ const PROXY_HEADERS = {
   "Access-Control-Expose-Headers": "X-Cache, X-Proto-Timing, Server-Timing",
 } as const;
 
-/**
- * Per-stage timings, emitted as a standard `Server-Timing` header so a slow Configure click can
- * be attributed from the browser's own Network panel instead of guessed at. Chrome renders these
- * in the request's Timing tab; `X-Proto-Timing` carries the same string for anyone reading raw
- * headers or a log line.
- *
- * This exists because the paths here differ by orders of magnitude — a snapshot hit is a couple
- * of DB reads, while a snapshot MISS walks an entire product catalog through sequential Shopify
- * Admin calls — and from outside they are indistinguishable: same URL, same JSON shape, only the
- * duration differs. `X-Cache` already says WHICH path ran; this says where the time inside it
- * went, which is the part that actually directs a fix.
- */
-function startTimings() {
-  const t0 = Date.now();
-  let last = t0;
-  const marks: string[] = [];
-  return {
-    /** Record elapsed time since the previous mark (or request start). */
-    mark(name: string) {
-      const now = Date.now();
-      marks.push(`${name};dur=${now - last}`);
-      last = now;
-    },
-    /** Serialize, appending a total. Safe to call once per response. */
-    header(): string {
-      return [...marks, `total;dur=${Date.now() - t0}`].join(", ");
-    },
-  };
-}
-
-type Timings = ReturnType<typeof startTimings>;
 
 /** Merge the standard proxy headers, a cache-path label, and the timing marks. */
 function proxyHeaders(cache: "HIT" | "SNAPSHOT" | "MISS", timings: Timings) {

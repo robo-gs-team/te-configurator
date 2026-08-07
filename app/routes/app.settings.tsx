@@ -26,14 +26,19 @@ import {
   type TensionMigrationResult,
 } from "~/lib/product-metafields.server";
 import { getVersionInfo } from "~/lib/version.server";
+import { startTimings, timingHeaders } from "~/lib/server-timing.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const timings = startTimings();
   const { session } = await authenticate.admin(request);
+  timings.mark("auth");
   const shop = await ensureShop(session.shop);
+  timings.mark("shop");
   const theme = await getShopThemeSettings(shop.id);
+  timings.mark("db");
   const versions = getVersionInfo();
-  return json({ theme, versions });
+  return json({ theme, versions }, { headers: timingHeaders(timings) });
 };
 
 /** Mobile string count: a small positive integer. Clamp to 1–20 (20 = the desktop count, the

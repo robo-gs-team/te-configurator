@@ -14,13 +14,18 @@ import {
 import { RemoveItemButton } from "~/components/RemoveItemButton";
 import prisma from "~/db.server";
 import { configuratorInclude, ensureShop, listConfigurators } from "~/lib/configurator.server";
+import { startTimings, timingHeaders } from "~/lib/server-timing.server";
 import { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const timings = startTimings();
   const { session } = await authenticate.admin(request);
+  timings.mark("auth");
   const shop = await ensureShop(session.shop);
+  timings.mark("shop");
   const configurators = await listConfigurators(shop.id);
-  return json({ configurators });
+  timings.mark("db");
+  return json({ configurators }, { headers: timingHeaders(timings) });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {

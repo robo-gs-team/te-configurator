@@ -1,4 +1,5 @@
 import { normalizeCollectionId, toCollectionGid } from "~/lib/collection-id";
+import { fetchInBatches } from "~/lib/graphql-batch";
 import { normalizeProductId } from "~/lib/product-id";
 import {
   mapProductVariants,
@@ -123,6 +124,15 @@ export async function getCollectionsByIds(
 ): Promise<CollectionSummary[]> {
   if (collectionIds.length === 0) return [];
 
+  // Batched: `nodes(ids:)` caps at 250. Far less likely to bite for collections than for products,
+  // but the failure mode is identical and the guard costs nothing.
+  return fetchInBatches(collectionIds, (batch) => fetchCollectionBatch(admin, batch));
+}
+
+async function fetchCollectionBatch(
+  admin: ShopifyAdmin,
+  collectionIds: string[],
+): Promise<CollectionSummary[]> {
   const response = await admin.graphql(
     `#graphql
       query ProtoCollectionsByIds($ids: [ID!]!) {
