@@ -67,6 +67,28 @@ import { getProductsByIds } from "~/lib/shopify-products.server";
 import { startTimings, timingHeaders } from "~/lib/server-timing.server";
 import { authenticate } from "~/shopify.server";
 
+/**
+ * Shopify's CollectionSortOrder enum in the merchant's own words — the same phrases the Shopify
+ * collection page uses, so the two screens agree. Unknown values fall through verbatim rather than
+ * being hidden, since a wrong label is worse than an unfamiliar one.
+ */
+function collectionSortLabel(sortOrder: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    BEST_SELLING: "Best selling",
+    MANUAL: "Manually",
+    ALPHA_ASC: "Product title A–Z",
+    ALPHA_DESC: "Product title Z–A",
+    PRICE_ASC: "Lowest price",
+    PRICE_DESC: "Highest price",
+    CREATED: "Oldest",
+    CREATED_DESC: "Newest",
+    MOST_RELEVANT: "Most relevant",
+  };
+  // Newly-picked, not yet saved: the picker had no sort order to give us.
+  if (!sortOrder) return "not loaded yet — save and reload to see it";
+  return labels[sortOrder] ?? sortOrder;
+}
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const timings = startTimings();
   const { admin, session } = await authenticate.admin(request);
@@ -936,6 +958,30 @@ export default function EditConfigurator() {
                     selected={selectedStringCollections}
                     onChange={setSelectedStringCollections}
                   />
+                  {stringCollections.length > 0 && (
+                    <Banner tone="info">
+                      <BlockStack gap="100">
+                        <Text as="p" variant="bodySm">
+                          <strong>String order follows each collection&rsquo;s own sort setting in
+                          Shopify.</strong>{" "}
+                          Change the sort on the collection and the picker follows it after the next
+                          rebuild — there is no separate ordering control here.
+                        </Text>
+                        {stringCollections.map((c) => (
+                          <Text as="p" variant="bodySm" key={c.id}>
+                            • <strong>{c.title}</strong> — sorted by{" "}
+                            <strong>{collectionSortLabel(c.sortOrder)}</strong>
+                            {c.sortOrder === "MANUAL" &&
+                              " (drag-and-drop order set on the collection)"}
+                          </Text>
+                        ))}
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Products added under &ldquo;Individual string products&rdquo; below appear
+                          after everything from these collections.
+                        </Text>
+                      </BlockStack>
+                    </Banner>
+                  )}
                   <ProductPicker
                     label={<FieldLabel facing="shopper">Individual string products</FieldLabel>}
                     helpText="Select one or many string products (use Add more products to keep growing the list). These appear as string options in addition to any string collections above. Remember to Save changes."
