@@ -70,7 +70,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // so it re-scans orders for the best-seller tally rather than carrying the old one forward.
     // Without it, a shop that had never completed a nightly cron run could press this forever and
     // still see strings in their raw default order, because carry-forward has nothing to carry.
-    await refreshShopSnapshots(admin, shop.id, session.shop, {
+    const build = await refreshShopSnapshots(admin, shop.id, session.shop, {
       refreshSales: true,
       salesMaxPages: INTERACTIVE_SALES_MAX_PAGES,
     });
@@ -87,6 +87,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         total: rows.length,
         refreshed: rows.filter((r) => isFresh(r.snapshotUpdatedAt)).length,
         failed: rows.filter((r) => !isFresh(r.snapshotUpdatedAt)).map((r) => r.name),
+        // Reported so "did the best-seller analysis actually work?" is answerable from this screen
+        // instead of from server logs nobody can see. 0-of-N is the diagnostic that matters: it
+        // means the order scan ran and matched nothing, which points at the read_orders grant
+        // rather than at the rebuild.
+        stringCatalogSize: build?.stringCatalogSize ?? 0,
+        stringsWithSales: build?.stringsWithSales ?? 0,
       },
     });
   }
@@ -161,7 +167,15 @@ export default function ThemeSettings() {
     navigation.state !== "idle" && navigation.formData?.get("intent") === "refresh_snapshots";
   const snapshotResult = (
     actionData as
-      | { snapshots?: { total: number; refreshed: number; failed: string[] } }
+      | {
+          snapshots?: {
+            total: number;
+            refreshed: number;
+            failed: string[];
+            stringCatalogSize?: number;
+            stringsWithSales?: number;
+          };
+        }
       | undefined
   )?.snapshots;
 
@@ -336,6 +350,18 @@ export default function ThemeSettings() {
                     configurator{snapshotResult.total === 1 ? "" : "s"}.
                     {snapshotResult.failed.length > 0 &&
                       ` Failed: ${snapshotResult.failed.join(", ")}. Check that these are linked to products and try again.`}
+                    {typeof snapshotResult.stringCatalogSize === "number" &&
+                      snapshotResult.stringCatalogSize > 0 && (
+                        <>
+                          {" "}
+                          Best-seller data: {snapshotResult.stringsWithSales} of{" "}
+                          {snapshotResult.stringCatalogSize} strings have sales in the last 60 days.
+                          {snapshotResult.stringsWithSales === 0 &&
+                            " None matched — the app may not have permission to read orders yet." +
+                              " Open Apps → TE Configurator and accept the permissions prompt," +
+                              " then rebuild again."}
+                        </>
+                      )}
                   </p>
                 </Banner>
               )}

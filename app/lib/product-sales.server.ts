@@ -128,6 +128,16 @@ export async function resolveStringUnitsSold(
       cursor = orders?.pageInfo?.endCursor ?? null;
     }
 
+    // Positive confirmation, not just failure logging. Without this line a scan that worked and a
+    // scan that silently matched nothing produce identical output (none), so "did the best-seller
+    // analysis run?" was unanswerable from the logs — which is exactly the question anyone asks
+    // after pressing Rebuild.
+    console.log(
+      `resolveStringUnitsSold: scanned ${pages} order page(s) (<=${pages * ORDERS_PAGE_SIZE} orders) ` +
+        `over ${SALES_WINDOW_DAYS}d; ${Object.keys(tally).length} of ${wanted.size} string products ` +
+        `have sales.`,
+    );
+
     if (hasNextPage && pages >= MAX_ORDER_PAGES) {
       console.warn(
         `resolveStringUnitsSold: reached MAX_ORDER_PAGES (${MAX_ORDER_PAGES}); best-seller tally ` +
