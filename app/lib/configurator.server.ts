@@ -400,6 +400,46 @@ function emptyAnalyticsSummary(): AnalyticsSummary {
  * wrong" boundary). A transient DB hiccup (connection blip, statement timeout) must degrade to an
  * empty-but-renderable summary instead — same resilience posture as detectAppEmbedStatus.
  */
+export type AnalyticsCounts = {
+  counts: Record<string, number>;
+  total: number;
+  error: boolean;
+};
+
+/**
+ * Event counts only — ONE aggregate query.
+ *
+ * The Dashboard card renders exactly three things: modal opens, add-to-carts, and the ratio
+ * between them. All three come from `counts`. It was calling `getAnalyticsSummary`, which also
+ * computes unique-session funnels, revenue/AOV, per-device and per-mode splits, a daily trend and
+ * a top-15 racquet table — five queries, four of whose results were discarded on arrival, one of
+ * them a findMany over every event in the window.
+ *
+ * The full summary still exists for the Analytics page, which actually renders all of it.
+ */
+export async function getAnalyticsCounts(shopId: string, days = 30): Promise<AnalyticsCounts> {
+  try {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const grouped = await prisma.analytics.groupBy({
+      by: ["eventType"],
+      where: { shopId, createdAt: { gte: since } },
+      _count: { _all: true },
+    });
+    const counts: Record<string, number> = {};
+    let total = 0;
+    for (const g of grouped) {
+      counts[g.eventType] = g._count._all;
+      total += g._count._all;
+    }
+    return { counts, total, error: false };
+  } catch (err) {
+    // Same resilience posture as getAnalyticsSummary: the Dashboard awaits this through <Await>,
+    // so a rejection would take down the whole page rather than just this card.
+    console.error("getAnalyticsCounts: query failed:", err);
+    return { counts: {}, total: 0, error: true };
+  }
+}
+
 export async function getAnalyticsSummary(
   shopId: string,
   days = 30,

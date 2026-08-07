@@ -108,13 +108,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
   }
 
+  // Registers the per-racquet tension metafield definitions so they show up in Shopify's native
+  // "Metafields" section on every product page. Idempotent, and nothing on this page renders its
+  // result — so it runs AFTER the response instead of inside it. It used to sit in the Promise.all
+  // below, where on any request that missed its per-instance cache (i.e. every cold start) the
+  // editor page waited on a Shopify round trip that had nothing to do with drawing the page.
+  runAfterResponse(() => ensureTensionMetafieldDefinitions(admin, session.shop));
+
   const [
     collections,
     stringCollections,
     products,
     stringProducts,
     excludedProducts,
-    ,
     allGroupCollections,
     allGroupProducts,
   ] = await Promise.all([
@@ -123,10 +129,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     getProductsByIds(admin, parseJson<string[]>(configurator.productIds, [])),
     getProductsByIds(admin, stringProductIds),
     getProductsByIds(admin, excludedProductIds),
-    // Idempotent — checks existence first (cached per shop after the first call), only creates
-    // on first-ever call. Registers the per-racquet tension metafield definitions so they show
-    // up in Shopify's native "Metafields" section on every product page.
-    ensureTensionMetafieldDefinitions(admin, session.shop),
     allGroupCollectionIds.size > 0
       ? getCollectionsByIds(admin, [...allGroupCollectionIds])
       : Promise.resolve([]),

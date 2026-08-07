@@ -28,7 +28,7 @@ import {
 import prisma from "~/db.server";
 import {
   ensureShop,
-  getAnalyticsSummary,
+  getAnalyticsCounts,
   getShopThemeSettings,
   listConfigurators,
 } from "~/lib/configurator.server";
@@ -66,7 +66,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       configurators,
       theme,
       versions: getVersionInfo(),
-      analytics: getAnalyticsSummary(shop.id, 30),
+      analytics: getAnalyticsCounts(shop.id, 30),
       embed: detectAppEmbedStatus(admin, session.shop),
     },
     // Covers the BLOCKING part only — the deferred promises above resolve after these headers are

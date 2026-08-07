@@ -5,11 +5,13 @@ import {
   Outlet,
   isRouteErrorResponse,
   useLoaderData,
+  useNavigation,
   useRouteError,
 } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
-import { NavMenu } from "@shopify/app-bridge-react";
+import { NavMenu, useAppBridge } from "@shopify/app-bridge-react";
+import { useEffect } from "react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import tailwindStyles from "~/styles/tailwind.css?url";
 
@@ -25,11 +27,39 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({ apiKey: process.env.SHOPIFY_API_KEY || "" });
 };
 
+/**
+ * Drives Shopify's own top loading bar from Remix's navigation state.
+ *
+ * Without this, clicking anything in the admin produced NO visible response until the next page's
+ * data came back: the current page just sat there, fully interactive, looking like the click had
+ * missed. That reads as broken rather than slow, and the reasonable human response — click it
+ * again — makes it worse.
+ *
+ * `shopify.loading()` is the admin's native progress bar, the same one merchants already see
+ * everywhere else in Shopify, so this needs no UI of our own and nothing new to learn. It covers
+ * navigations AND form submissions (`state` is "loading" or "submitting" for both), which is most
+ * of what anyone does in here.
+ */
+function NavigationProgress() {
+  const shopify = useAppBridge();
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+
+  useEffect(() => {
+    shopify.loading(busy);
+    // Clear on unmount so a bar can never be left running by a route that goes away mid-flight.
+    return () => shopify.loading(false);
+  }, [shopify, busy]);
+
+  return null;
+}
+
 export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
+      <NavigationProgress />
       <NavMenu>
         <Link to="/app" rel="home">
           Dashboard

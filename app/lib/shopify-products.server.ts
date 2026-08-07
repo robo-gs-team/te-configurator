@@ -1,3 +1,4 @@
+import { fetchInBatches } from "~/lib/graphql-batch";
 import { normalizeProductId, toProductGid } from "~/lib/product-id";
 
 export type ProductSummary = {
@@ -101,6 +102,14 @@ export async function getProductsByIds(
 ): Promise<ProductSummary[]> {
   if (productIds.length === 0) return [];
 
+  // Batched: `nodes(ids:)` caps at 250, and a configurator's product list can exceed that.
+  return fetchInBatches(productIds, (batch) => fetchProductBatch(admin, batch));
+}
+
+async function fetchProductBatch(
+  admin: ShopifyAdmin,
+  productIds: string[],
+): Promise<ProductSummary[]> {
   const response = await admin.graphql(
     `#graphql
       query ProtoProductsByIds($ids: [ID!]!) {
