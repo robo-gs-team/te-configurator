@@ -87,12 +87,21 @@ export type SnapshotBuildOptions = {
  */
 export const INTERACTIVE_SALES_MAX_PAGES = 30;
 
+/** What a rebuild actually accomplished, so the admin can SHOW it rather than the merchant having
+ *  to infer success from a spinner that stopped. Sizes are the max across a shop's configurators
+ *  (they share one string catalogue in practice). */
+export type SnapshotBuildSummary = {
+  stringCatalogSize: number;
+  stringsWithSales: number;
+  salesRefreshed: boolean;
+};
+
 export async function buildAndStoreSnapshot(
   admin: ShopifyAdmin,
   configurator: ConfiguratorWithRelations,
   shopId: string,
   opts?: SnapshotBuildOptions,
-): Promise<void> {
+): Promise<SnapshotBuildSummary> {
   const [enriched, theme, racquetTensionByProductId, recommended] = await Promise.all([
     enrichConfiguratorWithShopifyData(admin, configurator),
     getShopThemeSettings(shopId),
@@ -125,6 +134,12 @@ export async function buildAndStoreSnapshot(
       snapshotUpdatedAt: new Date(),
     } as Parameters<typeof prisma.configurator.update>[0]["data"],
   });
+
+  return {
+    stringCatalogSize: collectStringProductIds(enriched).length,
+    stringsWithSales: Object.keys(stringUnitsSoldByProductId).length,
+    salesRefreshed: Boolean(opts?.refreshSales),
+  };
 }
 
 /**
@@ -140,15 +155,18 @@ export async function refreshConfiguratorSnapshot(
   shopId: string,
   shopDomain: string,
   opts?: SnapshotBuildOptions,
-): Promise<void> {
+): Promise<SnapshotBuildSummary | null> {
   try {
     const configurator = await getConfiguratorById(configuratorId);
+    let summary: SnapshotBuildSummary | null = null;
     if (configurator) {
-      await buildAndStoreSnapshot(admin, configurator, shopId, opts);
+      summary = await buildAndStoreSnapshot(admin, configurator, shopId, opts);
     }
     invalidateProxyCache(shopDomain);
+    return summary;
   } catch (err) {
     console.error(`Snapshot refresh failed for configurator ${configuratorId}:`, err);
+    return null;
   }
 }
 
@@ -162,7 +180,18 @@ export async function refreshShopSnapshots(
   shopId: string,
   shopDomain: string,
   opts?: SnapshotBuildOptions,
-): Promise<void> {
+): Promise<SnapshotBuildSummary | null> {
+  let aggregate: SnapshotBuildSummary | null = null;
+  const merge = (s: SnapshotBuildSummary | null) => {
+    if (!s) return;
+    aggregate = aggregate
+      ? {
+          stringCatalogSize: Math.max(aggregate.stringCatalogSize, s.stringCatalogSize),
+          stringsWithSales: Math.max(aggregate.stringsWithSales, s.stringsWithSales),
+          salesRefreshed: aggregate.salesRefreshed || s.salesRefreshed,
+        }
+      : s;
+  };
   try {
     const configurators = await prisma.configurator.findMany({
       where: { shopId },
@@ -173,18 +202,20 @@ export async function refreshShopSnapshots(
       // those walks concurrently would multiply the request rate against Shopify's cost limiter
       // for no gain — the work is I/O against the same endpoint either way.
       for (const { id } of configurators) {
-        await refreshConfiguratorSnapshot(admin, id, shopId, shopDomain, opts);
+        merge(await refreshConfiguratorSnapshot(admin, id, shopId, shopDomain, opts));
       }
-      return;
+      return aggregate;
     }
     // Rebuild all configurators concurrently — each refresh is already best-effort (never
     // throws), so one shop typically has only a handful and this stays well within limits.
-    await Promise.all(
+    const summaries = await Promise.all(
       configurators.map(({ id }) =>
         refreshConfiguratorSnapshot(admin, id, shopId, shopDomain),
       ),
     );
+    summaries.forEach(merge);
   } catch (err) {
     console.error(`Shop snapshot refresh failed for shop ${shopId}:`, err);
   }
+  return aggregate;
 }
